@@ -1,22 +1,23 @@
-from firebase_functions import tasks_fn
-from firebase_admin import initialize_app, firestore
-from firebase_functions.options import RetryConfig, RateLimits
-from typing import Any
+from firebase_functions import https_fn
+from firebase_admin import initialize_app, storage
+from io import BytesIO
+from joblib import load
+from deepdanbooru import pretrained_resnet50_model
 
-app = initialize_app()
+initialize_app()
 
-@tasks_fn.on_task_dispatched(
-    rate_limits=RateLimits(
-        max_concurrent_dispatches=6,
-    ),
-    retry_config=RetryConfig(
-        max_attempts=5,
-        max_backoff_seconds=60,
-    ),
-)
-def executeTestFunction2(req: tasks_fn.CallableRequest) -> Any:
-    print('invoked')
-    db = firestore.client(app)
-    artwork_id = req.data.get('artworkId')
-    artwork_doc = db.document('artworks', artwork_id).get()
-    print(artwork_doc.to_dict())
+@https_fn.on_request()
+def executeTestFunction4(req: https_fn.Request) -> https_fn.Response:
+    bucket = storage.bucket()
+
+    model_file = bucket.blob('models/sklearn-multiclass-linear-svc.joblib')
+    model_bytes_io = BytesIO()
+    model_file.download_to_file(model_bytes_io)
+    model_bytes_io.seek(0)
+    clf = load(model_bytes_io)
+    print(clf)
+
+    deepdanbooru_model = pretrained_resnet50_model()
+    print(deepdanbooru_model)
+
+    return https_fn.Response(f"Hello world")
