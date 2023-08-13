@@ -7,15 +7,14 @@ app = initialize_app()
 
 @tasks_fn.on_task_dispatched(
     rate_limits=RateLimits(
-        max_concurrent_dispatches=1,
-        max_dispatches_per_second=1 / 10,
+        max_concurrent_dispatches=6,
     ),
     retry_config=RetryConfig(
-        max_attempts=1,
-        max_backoff_seconds=10,
+        max_attempts=5,
+        max_backoff_seconds=60,
     ),
 )
-def executeTestFunction(req: tasks_fn.CallableRequest) -> Any:
+def executeTestFunction2(req: tasks_fn.CallableRequest) -> Any:
     print('invoked')
     db = firestore.client(app)
     artwork_id = req.data.get('artworkId')
