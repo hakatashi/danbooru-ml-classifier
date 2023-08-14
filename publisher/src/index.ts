@@ -43,7 +43,7 @@ export const downloadPixivImage = tasks.onTaskDispatched(
 		secrets: [pixivSessionId],
 	},
 	async (req) => {
-		const {artworkId, page} = req.data as {artworkId: number; page: number};
+		const {artworkId, page, date} = req.data as {artworkId: number, page: number, date: string};
 		const db = getFirestore();
 
 		const imageDoc = db.collection('images')
@@ -123,6 +123,7 @@ export const downloadPixivImage = tasks.onTaskDispatched(
 			type: 'pixiv',
 			artworkId,
 			page,
+			date,
 			originalUrl: url,
 			key: `pixiv/${filename}`,
 			downloadedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -140,11 +141,13 @@ export const onPixivRankingArtworkCreated = onDocumentCreated('pixivRanking/{ran
 	const ranking = event.data.data();
 	const pageCount = parseInt(ranking.artwork.illust_page_count) || 1;
 	const queue = getFunctions().taskQueue('downloadPixivImage');
+	const date = dayjs(ranking.ranking.date, 'YYYYMMDD').format('YYYY-MM-DD');
 
 	for (const page of Array(pageCount).keys()) {
 		await queue.enqueue({
 			artworkId: ranking.artwork.illust_id,
 			page,
+			date,
 		}, {
 			scheduleDelaySeconds: 0,
 			dispatchDeadlineSeconds: 60 * 5,
@@ -179,6 +182,7 @@ export const fetchPixivDailyRankings = onSchedule({
 					mode,
 					date: dateString,
 					p: page + 1,
+					content: 'all',
 				},
 				headers: {
 					Cookie: `PHPSESSID=${pixivSessionId.value()}`,
