@@ -9,4 +9,7 @@ module.exports = {
 	ignorePatterns: [
 		'/lib/**/*',
 	],
+	rules: {
+		'import/no-namespace': 'off',
+	},
 };

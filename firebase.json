@@ -31,5 +31,11 @@
   },
   "storage": {
     "rules": "storage.rules"
+  },
+  "emulators": {
+    "firestore": {
+      "host": "localhost",
+      "port": 8081
+    }
   }
 }

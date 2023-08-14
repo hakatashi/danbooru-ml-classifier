@@ -9,6 +9,8 @@ from tagger import get_raw_tags
 from PIL import Image
 from urllib.parse import unquote
 from torch_network import get_torch_network
+import json
+from urllib.request import urlopen
 
 initialize_app()
 
@@ -16,6 +18,7 @@ preference_linear_svc_model = None
 preference_ada_boost_model = None
 preference_torch_network_model = None
 deepdanbooru_model = None
+class_names = None
 
 def get_preference_linear_svc_model():
     bucket = storage.bucket('danbooru-ml-classifier')
@@ -63,6 +66,25 @@ def get_deepdanbooru_model():
 
     return model
 
+def get_top_tag_probs(tag_probs: torch.Tensor, threshold = 0.05):
+    global class_names
+
+    if class_names is None:
+        print('Loading class names...')
+        with urlopen("https://github.com/RF5/danbooru-pretrained/raw/master/config/class_names_6000.json") as url:
+            class_names = json.loads(url.read().decode())
+        print('Done loading class names')
+    else:
+        print('Class names already loaded')
+
+    tmp = tag_probs[tag_probs > threshold]
+    inds = tag_probs.argsort(descending=True)
+    tag_dict = {}
+    for i in inds[0:len(tmp)]:
+        tag_dict[class_names[i]] = tag_probs[i].numpy()[()].item()
+
+    return tag_dict
+
 def inference_list_to_dict(inference_list: list):
     return dict(zip(
         ['not_bookmarked', 'bookmarked_public', 'bookmarked_private'],
@@ -108,15 +130,19 @@ def infer_image_preference(image_id: str):
 
     image = Image.open(image_bytes_io)
     tags = get_raw_tags(deepdanbooru_model, image)
+    top_tag_probs = get_top_tag_probs(tags)
 
     linear_svc_preference = preference_linear_svc_model.decision_function(tags.numpy().reshape(1, -1))
     ada_boost_preference = preference_ada_boost_model.decision_function(tags.numpy().reshape(1, -1))
     torch_network_preference = preference_torch_network_model(tags)
 
     return {
-        'sklearn_multiclass_linear_svc': inference_list_to_dict(linear_svc_preference.tolist()[0]),
-        'sklearn_multiclass_ada_boost': inference_list_to_dict(ada_boost_preference.tolist()[0]),
-        'torch_multiclass_onehot_shallow_network_multilayer': inference_list_to_dict(torch_network_preference.tolist()),
+        'top_tag_probs': top_tag_probs,
+        'inferences': {
+            'sklearn_multiclass_linear_svc': inference_list_to_dict(linear_svc_preference.tolist()[0]),
+            'sklearn_multiclass_ada_boost': inference_list_to_dict(ada_boost_preference.tolist()[0]),
+            'torch_multiclass_onehot_shallow_network_multilayer': inference_list_to_dict(torch_network_preference.tolist()),
+        },
     }
 
 @firestore_fn.on_document_created(
@@ -133,5 +159,6 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
 
     event.data.reference.update({
         'status': 'inferred',
-        'inferences': inferences,
+        'topTagProbs': inferences['top_tag_probs'],
+        'inferences': inferences['inferences'],
     })

@@ -1,8 +1,8 @@
-// eslint-disable-next-line import/no-namespace
-import * as assert from 'assert';
 import {basename} from 'path';
 import axios from 'axios';
-// eslint-disable-next-line import/no-namespace
+import dayjs from 'dayjs';
+import timezone from 'dayjs/plugin/timezone';
+import utc from 'dayjs/plugin/utc';
 import * as firebase from 'firebase-admin';
 import {getFirestore} from 'firebase-admin/firestore';
 import {getFunctions} from 'firebase-admin/functions';
@@ -11,6 +11,12 @@ import {info} from 'firebase-functions/logger';
 import {defineSecret} from 'firebase-functions/params';
 import {tasks} from 'firebase-functions/v2';
 import {onDocumentCreated} from 'firebase-functions/v2/firestore';
+import {onSchedule} from 'firebase-functions/v2/scheduler';
+
+// eslint-disable-next-line import/no-named-as-default-member
+dayjs.extend(utc);
+// eslint-disable-next-line import/no-named-as-default-member
+dayjs.extend(timezone);
 
 firebase.initializeApp();
 
@@ -38,20 +44,30 @@ export const downloadPixivImage = tasks.onTaskDispatched(
 	},
 	async (req) => {
 		const {artworkId, page} = req.data as {artworkId: number; page: number};
+		const db = getFirestore();
+
+		const imageDoc = db.collection('images')
+			.where('type', '==', 'pixiv')
+			.where('artworkId', '==', artworkId)
+			.where('page', '==', page);
+		const imageDocSnapshot = await imageDoc.get();
+		if (!imageDocSnapshot.empty) {
+			info(`Image ${artworkId} page ${page} already exists`);
+			return;
+		}
+
 		info(`Downloading and infering artwork ${artworkId} page ${page}`);
 
-		const db = getFirestore();
-		const artworkDataWithPages = await db.runTransaction(async (transaction) => {
-			const artwork = await transaction.get(db.collection('pixivRanking').doc(artworkId.toString()));
-			const artworkData = artwork.data();
-			assert(artworkData !== undefined);
+		const pages = await db.runTransaction(async (transaction) => {
+			const pixivPages = await transaction.get(db.collection('pixivPages').doc(artworkId.toString()));
+			const pixivPagesData = pixivPages.data();
 
-			if (Array.isArray(artworkData.pages)) {
-				return artworkData;
+			if (pixivPagesData) {
+				return pixivPagesData.pages;
 			}
 
 			info(`Fetching pages for artwork ${artworkId}`);
-			const {data: pagesData} = await axios.get(`https://www.pixiv.net/ajax/illust/${artworkData.illust_id}/pages`, {
+			const {data: pagesData} = await axios.get(`https://www.pixiv.net/ajax/illust/${artworkId}/pages`, {
 				headers: {
 					Cookie: `PHPSESSID=${pixivSessionId.value()}`,
 					'User-Agent': USER_AGENT,
@@ -64,19 +80,19 @@ export const downloadPixivImage = tasks.onTaskDispatched(
 				throw new Error(`Unable to fetch pages for artwork ${artworkId}: ${pagesData}`);
 			}
 
-			transaction.update(artwork.ref, {
+			transaction.set(pixivPages.ref, {
 				pages: pagesData.body,
 			});
 
-			return {...artworkData, pages: pagesData.body};
+			return pagesData.body;
 		});
 
-		if (page >= artworkDataWithPages.pages.length) {
+		if (page >= pages.length) {
 			throw new Error(`Page ${page} is out of range for artwork ${artworkId}`);
 		}
 
 		info(`Downloading page ${page} for artwork ${artworkId}`);
-		const pageData = artworkDataWithPages.pages[page];
+		const pageData = pages[page];
 		const url = pageData.urls.original;
 		const filename = basename(url);
 		const response = await axios.get(url, {
@@ -102,34 +118,90 @@ export const downloadPixivImage = tasks.onTaskDispatched(
 		});
 
 		info(`Saving ${filename} to firestore`);
-		await db.collection('images').doc(escapeFirestoreKey(filename)).set({
+		await db.collection('images').doc(escapeFirestoreKey(`pixiv/${filename}`)).set({
 			status: 'pending',
+			type: 'pixiv',
 			artworkId,
 			page,
 			originalUrl: url,
-			filename,
-			date: artworkDataWithPages.date,
+			key: `pixiv/${filename}`,
+			downloadedAt: firebase.firestore.FieldValue.serverTimestamp(),
 			inferences: {},
+			topTagProbs: {},
 		});
 	},
 );
 
-export const onPixivRankingArtworkCreated = onDocumentCreated('pixivRanking/{artworkId}', async (event) => {
+export const onPixivRankingArtworkCreated = onDocumentCreated('pixivRanking/{rankingId}', async (event) => {
 	if (!event.data) {
 		return;
 	}
 
-	const artwork = event.data.data();
-	const pageCount = parseInt(artwork.illust_page_count) || 1;
+	const ranking = event.data.data();
+	const pageCount = parseInt(ranking.artwork.illust_page_count) || 1;
 	const queue = getFunctions().taskQueue('downloadPixivImage');
 
 	for (const page of Array(pageCount).keys()) {
 		await queue.enqueue({
-			artworkId: event.params.artworkId,
+			artworkId: ranking.artwork.illust_id,
 			page,
 		}, {
 			scheduleDelaySeconds: 0,
 			dispatchDeadlineSeconds: 60 * 5,
 		});
+	}
+});
+
+export const fetchPixivDailyRankings = onSchedule({
+	schedule: 'every day 15:00',
+	timeZone: 'Asia/Tokyo',
+	secrets: [pixivSessionId],
+}, async (event) => {
+	const db = getFirestore();
+
+	const dateString = dayjs(event.scheduleTime).tz('Asia/Tokyo').subtract(2, 'days').format('YYYYMMDD');
+	const rankings = [
+		['daily', 8],
+		['male_r18', 6],
+		['female_r18', 6],
+	];
+
+	for (const [mode, pageCount] of rankings) {
+		for (const page of Array(pageCount).keys()) {
+			info(`Fetching ${mode} ranking page ${page + 1}...`);
+			await new Promise((resolve) => {
+				setTimeout(resolve, 10000);
+			});
+			const {data} = await axios.get('https://www.pixiv.net/ranking.php', {
+				params: {
+					format: 'json',
+					mode,
+					date: dateString,
+					p: page + 1,
+				},
+				headers: {
+					Cookie: `PHPSESSID=${pixivSessionId.value()}`,
+					'User-Agent': USER_AGENT,
+				},
+			});
+
+			info(`Fetched ${mode} ranking page ${page + 1} (count = ${data.contents.length})`);
+
+			const batch = db.batch();
+
+			for (const artwork of data.contents) {
+				const rankingId = `${dateString}-${mode}-${artwork.illust_id}`;
+				const rankingRef = db.collection('pixivRanking').doc(rankingId);
+				batch.set(rankingRef, {
+					artwork,
+					ranking: {
+						date: data.date,
+						mode,
+					},
+				});
+			}
+
+			await batch.commit();
+		}
 	}
 });
