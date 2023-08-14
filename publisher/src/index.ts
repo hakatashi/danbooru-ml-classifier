@@ -24,7 +24,7 @@ const escapeFirestoreKey = (key: string) => (
 		.replaceAll(/\./g, '%2E')
 );
 
-export const downloadAndInferPixivImage = tasks.onTaskDispatched(
+export const downloadPixivImage = tasks.onTaskDispatched(
 	{
 		retryConfig: {
 			maxAttempts: 3,
@@ -103,6 +103,7 @@ export const downloadAndInferPixivImage = tasks.onTaskDispatched(
 
 		info(`Saving ${filename} to firestore`);
 		await db.collection('images').doc(escapeFirestoreKey(filename)).set({
+			status: 'pending',
 			artworkId,
 			page,
 			originalUrl: url,
@@ -120,7 +121,7 @@ export const onPixivRankingArtworkCreated = onDocumentCreated('pixivRanking/{art
 
 	const artwork = event.data.data();
 	const pageCount = parseInt(artwork.illust_page_count) || 1;
-	const queue = getFunctions().taskQueue('downloadAndInferPixivImage');
+	const queue = getFunctions().taskQueue('downloadPixivImage');
 
 	for (const page of Array(pageCount).keys()) {
 		await queue.enqueue({
