@@ -156,6 +156,7 @@ export const fetchPixivDailyRankings = onSchedule({
 	schedule: 'every day 15:00',
 	timeZone: 'Asia/Tokyo',
 	secrets: [pixivSessionId],
+	timeoutSeconds: 300,
 }, async (event) => {
 	const db = getFirestore();
 
