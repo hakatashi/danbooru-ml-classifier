@@ -1,98 +1,134 @@
 // eslint-disable-next-line import/no-namespace
+import * as assert from 'assert';
+import {basename} from 'path';
+import axios from 'axios';
+// eslint-disable-next-line import/no-namespace
 import * as firebase from 'firebase-admin';
+import {getFirestore} from 'firebase-admin/firestore';
 import {getFunctions} from 'firebase-admin/functions';
+import {getStorage} from 'firebase-admin/storage';
 import {info} from 'firebase-functions/logger';
+import {defineSecret} from 'firebase-functions/params';
 import {tasks} from 'firebase-functions/v2';
 import {onDocumentCreated} from 'firebase-functions/v2/firestore';
-import {GoogleAuth} from 'google-auth-library';
 
 firebase.initializeApp();
-let auth: GoogleAuth | null = null;
 
-export const executeTestFunction3 = tasks.onTaskDispatched(
+const pixivSessionId = defineSecret('PIXIV_SESSION_ID');
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36';
+
+const escapeFirestoreKey = (key: string) => (
+	key
+		.replaceAll(/%/g, '%25')
+		.replaceAll(/\//g, '%2F')
+		.replaceAll(/\./g, '%2E')
+);
+
+export const downloadAndInferPixivImage = tasks.onTaskDispatched(
 	{
 		retryConfig: {
-			maxAttempts: 5,
-			minBackoffSeconds: 60,
+			maxAttempts: 3,
+			maxBackoffSeconds: 10,
 		},
 		rateLimits: {
-			maxConcurrentDispatches: 6,
+			maxConcurrentDispatches: 1,
+			maxDispatchesPerSecond: 0.1,
 		},
+		secrets: [pixivSessionId],
 	},
-	(req) => {
-		info('Test function 3 dispatched', {structuredData: true});
-		info(req);
+	async (req) => {
+		const {artworkId, page} = req.data as {artworkId: number; page: number};
+		info(`Downloading and infering artwork ${artworkId} page ${page}`);
+
+		const db = getFirestore();
+		const artworkDataWithPages = await db.runTransaction(async (transaction) => {
+			const artwork = await transaction.get(db.collection('pixivRanking').doc(artworkId.toString()));
+			const artworkData = artwork.data();
+			assert(artworkData !== undefined);
+
+			if (Array.isArray(artworkData.pages)) {
+				return artworkData;
+			}
+
+			info(`Fetching pages for artwork ${artworkId}`);
+			const {data: pagesData} = await axios.get(`https://www.pixiv.net/ajax/illust/${artworkData.illust_id}/pages`, {
+				headers: {
+					Cookie: `PHPSESSID=${pixivSessionId.value()}`,
+					'User-Agent': USER_AGENT,
+				},
+			});
+			if (pagesData.error) {
+				throw new Error(`Unable to fetch pages for artwork ${artworkId}: ${pagesData.message}`);
+			}
+			if (!Array.isArray(pagesData.body) || pagesData.body.length === 0) {
+				throw new Error(`Unable to fetch pages for artwork ${artworkId}: ${pagesData}`);
+			}
+
+			transaction.update(artwork.ref, {
+				pages: pagesData.body,
+			});
+
+			return {...artworkData, pages: pagesData.body};
+		});
+
+		if (page >= artworkDataWithPages.pages.length) {
+			throw new Error(`Page ${page} is out of range for artwork ${artworkId}`);
+		}
+
+		info(`Downloading page ${page} for artwork ${artworkId}`);
+		const pageData = artworkDataWithPages.pages[page];
+		const url = pageData.urls.original;
+		const filename = basename(url);
+		const response = await axios.get(url, {
+			responseType: 'arraybuffer',
+			headers: {
+				Cookie: `PHPSESSID=${pixivSessionId.value()}`,
+				'User-Agent': USER_AGENT,
+				Referer: 'https://www.pixiv.net/',
+			},
+		});
+
+		info(`Downloaded ${url}`);
+
+		info(`Uploading ${filename} to storage`);
+		const storage = getStorage();
+		const bucket = storage.bucket('danbooru-ml-classifier-images');
+		const file = bucket.file(`pixiv/${filename}`);
+
+		await file.save(response.data, {
+			metadata: {
+				contentType: response.headers['content-type'],
+			},
+		});
+
+		info(`Saving ${filename} to firestore`);
+		await db.collection('images').doc(escapeFirestoreKey(filename)).set({
+			artworkId,
+			page,
+			originalUrl: url,
+			filename,
+			date: artworkDataWithPages.date,
+			inferences: {},
+		});
 	},
 );
 
-const getFunctionUrl = async (name: string, location = 'us-central1') => {
-	if (!auth) {
-		auth = new GoogleAuth({
-			scopes: 'https://www.googleapis.com/auth/cloud-platform',
+export const onPixivRankingArtworkCreated = onDocumentCreated('pixivRanking/{artworkId}', async (event) => {
+	if (!event.data) {
+		return;
+	}
+
+	const artwork = event.data.data();
+	const pageCount = parseInt(artwork.illust_page_count) || 1;
+	const queue = getFunctions().taskQueue('downloadAndInferPixivImage');
+
+	for (const page of Array(pageCount).keys()) {
+		await queue.enqueue({
+			artworkId: event.params.artworkId,
+			page,
+		}, {
+			scheduleDelaySeconds: 0,
+			dispatchDeadlineSeconds: 60 * 5,
 		});
 	}
-	const projectId = await auth.getProjectId();
-	const url = `https://cloudfunctions.googleapis.com/v2beta/projects/${projectId}/locations/${location}/functions/${name}`;
-
-	const client = await auth.getClient();
-	const res = await client.request({url});
-	const uri = (res.data as any)?.serviceConfig?.uri;
-	if (!uri) {
-		throw new Error(`Unable to retreive uri for function at ${url}`);
-	}
-
-	info(`Retrieved uri for function at ${url}: ${uri}`);
-
-	return uri;
-};
-
-const callFunction = async (name: string, location = 'us-central1') => {
-	if (!auth) {
-		auth = new GoogleAuth({
-			scopes: 'https://www.googleapis.com/auth/cloud-platform',
-		});
-	}
-
-	const projectId = await auth.getProjectId();
-	const url = `https://cloudtasks.googleapis.com/v2/projects/${projectId}/locations/${location}/queues/${name}/tasks`;
-
-	const client = await auth.getClient();
-	const res = await client.request({
-		url,
-		method: 'POST',
-		body: JSON.stringify({
-			task: {
-				httpRequest: {
-					url: await getFunctionUrl(name),
-					body: Buffer.from(JSON.stringify({
-						artworkId: '123',
-					})).toString('base64'),
-					oidcToken: {
-						serviceAccountEmail: `${projectId}@appspot.gserviceaccount.com`,
-						audience: 'danbooru-ml-classifier',
-					},
-				},
-			},
-		}),
-	});
-
-	info(res);
-	info(res.data);
-
-	return res.data;
-};
-
-export const onArtworkCreated = onDocumentCreated('artworks/{artworkId}', async () => {
-	info('Artwork created', {structuredData: true});
-	await callFunction('executeTestFunction2');
-	const queue = getFunctions().taskQueue('executeTestFunction2');
-	info(queue);
-	const result = await queue.enqueue({
-		artworkId: '123',
-	}, {
-		scheduleDelaySeconds: 0,
-		dispatchDeadlineSeconds: 60 * 5,
-		uri: await getFunctionUrl('executeTestFunction2'),
-	});
-	info(result);
 });

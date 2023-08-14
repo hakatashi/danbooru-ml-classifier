@@ -11,12 +11,12 @@ import json
 
 initialize_app()
 
-classifier_model = None
+preference_model = None
 deepdanbooru_model = None
 
-def get_classifier_model():
+def get_preference_model():
     bucket = storage.bucket('danbooru-ml-classifier')
-    model_file = bucket.blob('classifier/sklearn-multiclass-linear-svc.joblib')
+    model_file = bucket.blob('preference/sklearn-multiclass-linear-svc.joblib')
     model_bytes_io = BytesIO()
     model_file.download_to_file(model_bytes_io)
     model_bytes_io.seek(0)
@@ -38,8 +38,8 @@ def get_deepdanbooru_model():
     return model
 
 @https_fn.on_request(memory=options.MemoryOption.GB_1, timeout_sec=600)
-def executeTestFunction4(req: https_fn.Request) -> https_fn.Response:
-    global classifier_model, deepdanbooru_model
+def inferImagePreference(req: https_fn.Request) -> https_fn.Response:
+    global preference_model, deepdanbooru_model
 
     if deepdanbooru_model is None:
         deepdanbooru_model = get_deepdanbooru_model()
@@ -48,12 +48,12 @@ def executeTestFunction4(req: https_fn.Request) -> https_fn.Response:
     else:
         print('DeepDanbooru model already loaded')
 
-    if classifier_model is None:
-        classifier_model = get_classifier_model()
-        print('Classifier model loaded')
-        print(classifier_model)
+    if preference_model is None:
+        preference_model = get_preference_model()
+        print('Preference model loaded')
+        print(preference_model)
     else:
-        print('Classifier model already loaded')
+        print('Preference model already loaded')
 
     bucket = storage.bucket('danbooru-ml-classifier-images')
     image_file = bucket.blob('danbooru/5744585.png')
@@ -62,12 +62,8 @@ def executeTestFunction4(req: https_fn.Request) -> https_fn.Response:
     image_bytes_io.seek(0)
 
     image = Image.open(image_bytes_io)
-    try:
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-    except Exception as e:
-        print('Image conversion failed')
-        print(e)
     tags = get_raw_tags(deepdanbooru_model, image)
 
-    return https_fn.Response(json.dumps(tags.tolist()), mimetype='application/json')
+    inferred_class = preference_model.decision_function(tags.numpy().reshape(1, -1))
+
+    return https_fn.Response(json.dumps(inferred_class.tolist()), mimetype='application/json')
