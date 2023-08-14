@@ -11,6 +11,7 @@ from urllib.parse import unquote
 from torch_network import get_torch_network
 import json
 from urllib.request import urlopen
+from firebase_functions.options import RetryConfig
 
 initialize_app()
 
@@ -146,9 +147,13 @@ def infer_image_preference(image_id: str):
     }
 
 @firestore_fn.on_document_created(
-    memory=options.MemoryOption.GB_1,
+    memory=options.MemoryOption.GB_2,
     timeout_sec=540,
     document='images/{image_id}',
+    retry_config=RetryConfig(
+        max_attempts=3,
+        min_backoff_seconds=1,
+    ),
 )
 def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
     image_id = unquote(event.params['image_id'])
