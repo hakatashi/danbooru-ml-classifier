@@ -1,5 +1,6 @@
 from firebase_functions import firestore_fn, options
-from firebase_admin import initialize_app, storage
+from firebase_admin import initialize_app, storage, firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from io import BytesIO
 from joblib import load
 import torch
@@ -146,20 +147,46 @@ def infer_image_preference(image_id: str):
         },
     }
 
+@firestore.transactional
+def update_status_processing(transaction: firestore.Transaction):
+    db = firestore.client()
+    pending_images_iter = db.collection('images').where(filter=FieldFilter('status', '==', 'pending')).stream(transaction=transaction)
+    pending_images = list(pending_images_iter)
+    for image in pending_images:
+        transaction.update(image.reference, {
+            'status': 'processing',
+        })
+    return pending_images
+
 @firestore_fn.on_document_created(
-    memory=options.MemoryOption.GB_4,
+    memory=options.MemoryOption.GB_2,
+    cpu=1,
     timeout_sec=540,
     document='images/{image_id}',
 )
 def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
-    image_id = unquote(event.params['image_id'])
-    print(f'Image created: {image_id}')
+    db = firestore.client()
 
-    inferences = infer_image_preference(image_id)
-    print(f'Inferences: {inferences}')
+    pending_count_result = db.collection('images').where(filter=FieldFilter('status', '==', 'pending')).count().get()
+    pending_count = pending_count_result[0][0].value
+    print(f'Pending count: {pending_count}')
+    if pending_count < 100:
+        return
 
-    event.data.reference.update({
-        'status': 'inferred',
-        'topTagProbs': inferences['top_tag_probs'],
-        'inferences': inferences['inferences'],
-    })
+    transaction = db.transaction()
+    pending_images = update_status_processing(transaction)
+    print(f'Got pending images: {len(pending_images)}')
+
+    for image in pending_images:
+        image_data = image.to_dict()
+        image_id = image_data['key']
+        print(f'Image created: {image_id}')
+
+        inferences = infer_image_preference(image_id)
+        print(f'Inferences: {inferences}')
+
+        image.reference.update({
+            'status': 'inferred',
+            'topTagProbs': inferences['top_tag_probs'],
+            'inferences': inferences['inferences'],
+        })
