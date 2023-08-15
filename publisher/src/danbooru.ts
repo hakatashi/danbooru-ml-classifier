@@ -126,10 +126,10 @@ export const fetchDanbooruDailyRankings = onSchedule({
 	const dateString = dayjs(event.scheduleTime).tz('Asia/Tokyo').subtract(2, 'days').format('YYYY-MM-DD');
 	const mode = 'popular';
 
-	for (const page of Array(50).keys()) {
+	for (const page of Array(100).keys()) {
 		info(`Fetching danbooru ranking page ${page + 1}...`);
 		await new Promise((resolve) => {
-			setTimeout(resolve, 5000);
+			setTimeout(resolve, 3000);
 		});
 		const {data: posts} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
 			params: {
