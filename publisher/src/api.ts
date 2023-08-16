@@ -1,4 +1,5 @@
-import {getFirestore} from 'firebase-admin/firestore';
+import firebase from 'firebase-admin';
+import {DocumentData, getFirestore} from 'firebase-admin/firestore';
 import {getStorage} from 'firebase-admin/storage';
 import {info} from 'firebase-functions/logger';
 import {defineSecret} from 'firebase-functions/params';
@@ -13,7 +14,13 @@ export const getTopImages = https.onRequest(
 		secrets: [hakatashiApiKey],
 	},
 	async (req, res) => {
-		const {date, model: rawModel = '', category: rawCategory = '', apikey: rawApikey = ''} = req.query;
+		const {
+			date,
+			model: rawModel = '',
+			category: rawCategory = '',
+			apikey: rawApikey = '',
+			cursor: rawCursor = '',
+		} = req.query;
 		if (rawApikey.toString() !== hakatashiApiKey.value()) {
 			res.status(403).send('Invalid API key');
 			return;
@@ -26,14 +33,18 @@ export const getTopImages = https.onRequest(
 			return;
 		}
 
+		const cursor = parseFloat(rawCursor.toString()) || Number.MAX_VALUE;
+
 		const db = getFirestore();
 		const result = await db.collection('images')
 			.where('date', '==', date)
+			.where(`inferences.${model}.${category}`, '<', cursor)
 			.orderBy(`inferences.${model}.${category}`, 'desc')
 			.limit(100)
 			.get();
 
-		const pixivInfos = new Map<number, {width: number, height: number}>();
+		const pixivInfos = new Map<number, DocumentData>();
+		const pixivPages = new Map<number, DocumentData>();
 		const pixivArtworkIds = result.docs
 			.filter((doc) => doc.data().type === 'pixiv')
 			.map((doc) => doc.data().artworkId);
@@ -46,16 +57,20 @@ export const getTopImages = https.onRequest(
 				for (const doc of pixivRankings.docs) {
 					const data = doc.data();
 					if (data?.artwork?.illust_id) {
-						pixivInfos.set(data.artwork.illust_id, {
-							width: data.artwork.width,
-							height: data.artwork.height,
-						});
+						pixivInfos.set(data.artwork.illust_id, data);
 					}
+				}
+				const pixivPageResults = await db.collection('pixivPages')
+					.where(firebase.firestore.FieldPath.documentId(), 'in', artworkIds.map((id) => id.toString()))
+					.get();
+				for (const doc of pixivPageResults.docs) {
+					const data = doc.data();
+					pixivPages.set(parseInt(doc.id), data);
 				}
 			}
 		}
 
-		const danbooruInfos = new Map<number, {width: number, height: number}>();
+		const danbooruInfos = new Map<number, DocumentData>();
 		const danbooruPostIds = result.docs
 			.filter((doc) => doc.data().type === 'danbooru')
 			.map((doc) => doc.data().postId);
@@ -68,10 +83,7 @@ export const getTopImages = https.onRequest(
 				for (const doc of danbooruRankings.docs) {
 					const data = doc.data();
 					if (data?.post?.id) {
-						danbooruInfos.set(data.post.id, {
-							width: data.post.image_width,
-							height: data.post.image_height,
-						});
+						danbooruInfos.set(data.post.id, data);
 					}
 				}
 			}
@@ -80,22 +92,29 @@ export const getTopImages = https.onRequest(
 		const storage = getStorage();
 		const bucket = storage.bucket('danbooru-ml-classifier-images');
 
+		info(`Signing ${result.docs.length} images`);
 		const images = result.docs.map(async (doc) => {
 			const data = doc.data();
 
-			let width = 100;
-			let height = 100;
-			if (data.type === 'pixiv' && data.page === 0) {
+			let width = 0;
+			let height = 0;
+			if (data.type === 'pixiv') {
 				const pixivInfo = pixivInfos.get(data.artworkId);
 				if (pixivInfo) {
-					width = pixivInfo.width;
-					height = pixivInfo.height;
+					Object.assign(data, pixivInfo);
+				}
+
+				const pixivPage = pixivPages.get(data.artworkId);
+				if (pixivPage) {
+					width = pixivPage?.pages?.[data.page]?.width || 0;
+					height = pixivPage?.pages?.[data.page]?.height || 0;
 				}
 			} else if (data.type === 'danbooru') {
 				const danbooruInfo = danbooruInfos.get(data.postId);
 				if (danbooruInfo) {
-					width = danbooruInfo.width;
-					height = danbooruInfo.height;
+					width = danbooruInfo.post.image_width;
+					height = danbooruInfo.post.image_height;
+					Object.assign(data, danbooruInfo);
 				}
 			}
 
