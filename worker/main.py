@@ -100,29 +100,21 @@ def infer_image_preference(image_id: str):
         deepdanbooru_model = get_deepdanbooru_model()
         print('DeepDanbooru model loaded')
         print(deepdanbooru_model)
-    else:
-        print('DeepDanbooru model already loaded')
 
     if preference_linear_svc_model is None:
         preference_linear_svc_model = get_preference_linear_svc_model()
         print('Preference LinearSVC model loaded')
         print(preference_linear_svc_model)
-    else:
-        print('Preference LinearSVC model already loaded')
 
     if preference_ada_boost_model is None:
         preference_ada_boost_model = get_preference_ada_boost_model()
         print('Preference AdaBoost model loaded')
         print(preference_ada_boost_model)
-    else:
-        print('Preference AdaBoost model already loaded')
 
     if preference_torch_network_model is None:
         preference_torch_network_model = get_preference_torch_network_model()
         print('Preference Torch Network model loaded')
         print(preference_torch_network_model)
-    else:
-        print('Preference Torch Network model already loaded')
 
     bucket = storage.bucket('danbooru-ml-classifier-images')
     image_file = bucket.blob(image_id)
@@ -130,6 +122,7 @@ def infer_image_preference(image_id: str):
     image_file.download_to_file(image_bytes_io)
     image_bytes_io.seek(0)
 
+    # TODO: Handle errors
     image = Image.open(image_bytes_io)
     tags = get_raw_tags(deepdanbooru_model, image)
     top_tag_probs = get_top_tag_probs(tags)
@@ -177,10 +170,32 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
     pending_images = update_status_processing(transaction)
     print(f'Got pending images: {len(pending_images)}')
 
+    processing_images_iter = db.collection('images').where(filter=FieldFilter('status', '==', 'processing')).stream()
+    processing_images = list(processing_images_iter)
+    print(f'Processing images: {len(processing_images)}')
+
     for image in pending_images:
         image_data = image.to_dict()
         image_id = image_data['key']
         print(f'Image created: {image_id}')
+
+        inferences = infer_image_preference(image_id)
+        print(f'Inferences: {inferences}')
+
+        image.reference.update({
+            'status': 'inferred',
+            'topTagProbs': inferences['top_tag_probs'],
+            'inferences': inferences['inferences'],
+        })
+
+    new_processing_images_iter = db.collection('images').where(filter=FieldFilter('status', '==', 'processing')).stream()
+    print(f'New processing images: {len(new_processing_images_iter)}')
+    for image in new_processing_images_iter:
+        image_id = image_data['key']
+        if image_id not in processing_images:
+            continue
+        print(f'Image still processing: {image_id}')
+        image_data = image.to_dict()
 
         inferences = infer_image_preference(image_id)
         print(f'Inferences: {inferences}')
