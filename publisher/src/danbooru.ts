@@ -1,6 +1,7 @@
 import assert from 'assert';
 import {extname} from 'path';
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
 import * as firebase from 'firebase-admin';
 import {getFirestore} from 'firebase-admin/firestore';
 import {getFunctions} from 'firebase-admin/functions';
@@ -11,6 +12,17 @@ import {tasks} from 'firebase-functions/v2';
 import {onDocumentCreated} from 'firebase-functions/v2/firestore';
 import {onSchedule} from 'firebase-functions/v2/scheduler';
 import dayjs from './dayjs';
+
+// TODO: Move to common file
+axiosRetry(axios, {
+	retries: 3,
+	retryDelay() {
+		return 5000;
+	},
+	retryCondition(error) {
+		return error.response?.status === 429;
+	},
+});
 
 const danbooruApiUser = defineSecret('DANBOORU_API_USER');
 const danbooruApiKey = defineSecret('DANBOORU_API_KEY');
@@ -104,6 +116,18 @@ export const onDanbooruRankingArtworkCreated = onDocumentCreated('danbooruRankin
 	}
 
 	const ranking = event.data.data();
+
+	const db = getFirestore();
+
+	const imageDoc = db.collection('images')
+		.where('type', '==', 'danbooru')
+		.where('postId', '==', ranking.post.id);
+	const imageDocSnapshot = await imageDoc.get();
+	if (!imageDocSnapshot.empty) {
+		info(`Post ${ranking.post.id} already exists`);
+		return;
+	}
+
 	const queue = getFunctions().taskQueue('downloadDanbooruImage');
 
 	await queue.enqueue({
@@ -119,19 +143,22 @@ export const fetchDanbooruDailyRankings = onSchedule({
 	schedule: 'every day 15:00',
 	timeZone: 'Asia/Tokyo',
 	secrets: [danbooruApiKey, danbooruApiUser],
-	timeoutSeconds: 420,
+	timeoutSeconds: 540,
 }, async (event) => {
 	const db = getFirestore();
 
 	const dateString = dayjs(event.scheduleTime).tz('Asia/Tokyo').subtract(2, 'days').format('YYYY-MM-DD');
 	const mode = 'popular';
 
+	info(`Fetching danbooru ranking for ${dateString}...`);
+
 	for (const page of Array(100).keys()) {
 		info(`Fetching danbooru ranking page ${page + 1}...`);
 		await new Promise((resolve) => {
-			setTimeout(resolve, 3000);
+			setTimeout(resolve, 5000);
 		});
-		const {data: posts} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
+
+		const {data: posts, status} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
 			params: {
 				login: danbooruApiUser.value(),
 				api_key: danbooruApiKey.value(),
@@ -139,7 +166,13 @@ export const fetchDanbooruDailyRankings = onSchedule({
 				page: page + 1,
 				scale: 'day',
 			},
+			validateStatus: null,
 		});
+
+		if (status !== 200) {
+			warn(`Failed to fetch danbooru ranking page ${page + 1} (status = ${status})`);
+			continue;
+		}
 
 		info(`Fetched danbooru ranking page ${page + 1} (count = ${posts.length})`);
 

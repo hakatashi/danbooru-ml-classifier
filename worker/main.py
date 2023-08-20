@@ -7,7 +7,7 @@ import torch
 from torchvision import models
 from danbooru_resnet import _resnet
 from tagger import get_raw_tags
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from urllib.parse import unquote
 from torch_network import get_torch_network
 import json
@@ -116,20 +116,31 @@ def infer_image_preference(image_id: str):
         print('Preference Torch Network model loaded')
         print(preference_torch_network_model)
 
+    print(f'Infering image: {image_id}')
     bucket = storage.bucket('danbooru-ml-classifier-images')
     image_file = bucket.blob(image_id)
     image_bytes_io = BytesIO()
     image_file.download_to_file(image_bytes_io)
     image_bytes_io.seek(0)
 
-    # TODO: Handle errors
-    image = Image.open(image_bytes_io)
+    print(f'Image downloaded: {image_id}')
+
+    try:
+        image = Image.open(image_bytes_io)
+    except UnidentifiedImageError as e:
+        print(f'Error opening image: {e}')
+        return
+    print(f'Image opened: {image_id}')
     tags = get_raw_tags(deepdanbooru_model, image)
     top_tag_probs = get_top_tag_probs(tags)
+    print(f'Top tag probs inferred: {image_id}')
 
     linear_svc_preference = preference_linear_svc_model.decision_function(tags.numpy().reshape(1, -1))
+    print(f'LinearSVC preference inferred: {image_id}')
     ada_boost_preference = preference_ada_boost_model.decision_function(tags.numpy().reshape(1, -1))
+    print(f'AdaBoost preference inferred: {image_id}')
     torch_network_preference = preference_torch_network_model(tags)
+    print(f'Torch Network preference inferred: {image_id}')
 
     return {
         'top_tag_probs': top_tag_probs,
@@ -171,8 +182,8 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
     print(f'Got pending images: {len(pending_images)}')
 
     processing_images_iter = db.collection('images').where(filter=FieldFilter('status', '==', 'processing')).stream()
-    processing_images = list(processing_images_iter)
-    print(f'Processing images: {len(processing_images)}')
+    processing_image_ids = set(processing_image.to_dict()['key'] for processing_image in processing_images_iter)
+    print(f'Processing images: {len(processing_image_ids)}')
 
     for image in pending_images:
         image_data = image.to_dict()
@@ -180,7 +191,14 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
         print(f'Image created: {image_id}')
 
         inferences = infer_image_preference(image_id)
-        print(f'Inferences: {inferences}')
+        print(f'Inferred: {image_id}')
+
+        if inferences is None:
+            print(f'Error inferring image: {image_id}')
+            image.reference.update({
+                'status': 'error',
+            })
+            continue
 
         image.reference.update({
             'status': 'inferred',
@@ -189,16 +207,25 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
         })
 
     new_processing_images_iter = db.collection('images').where(filter=FieldFilter('status', '==', 'processing')).stream()
-    print(f'New processing images: {len(new_processing_images_iter)}')
-    for image in new_processing_images_iter:
+    new_processing_images = list(new_processing_images_iter)
+    print(f'New processing images: {len(new_processing_images)}')
+    for image in new_processing_images:
+        image_data = image.to_dict()
         image_id = image_data['key']
-        if image_id not in processing_images:
+        if image_id not in processing_image_ids:
             continue
         print(f'Image still processing: {image_id}')
         image_data = image.to_dict()
 
         inferences = infer_image_preference(image_id)
-        print(f'Inferences: {inferences}')
+        print(f'Inferred: {image_id}')
+
+        if inferences is None:
+            print(f'Error inferring image: {image_id}')
+            image.reference.update({
+                'status': 'error',
+            })
+            continue
 
         image.reference.update({
             'status': 'inferred',

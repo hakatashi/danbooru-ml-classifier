@@ -40,7 +40,7 @@ export const getTopImages = https.onRequest(
 			.where('date', '==', date)
 			.where(`inferences.${model}.${category}`, '<', cursor)
 			.orderBy(`inferences.${model}.${category}`, 'desc')
-			.limit(100)
+			.limit(30)
 			.get();
 
 		const pixivInfos = new Map<number, DocumentData>();
@@ -132,6 +132,27 @@ export const getTopImages = https.onRequest(
 			};
 		});
 
-		res.json(await Promise.all(images));
+		info('Getting daily image count');
+		const [signedImages, danbooruImagesCount, pixivImagesCount] = await Promise.all([
+			Promise.all(images),
+			db.collection('images')
+				.where('date', '==', date)
+				.where('type', '==', 'danbooru')
+				.count()
+				.get(),
+			db.collection('images')
+				.where('date', '==', date)
+				.where('type', '==', 'pixiv')
+				.count()
+				.get(),
+		]);
+
+		res.json({
+			images: signedImages,
+			counts: {
+				danbooru: danbooruImagesCount.data().count,
+				pixiv: pixivImagesCount.data().count,
+			},
+		});
 	},
 );

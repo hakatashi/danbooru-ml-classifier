@@ -130,11 +130,23 @@ export const onPixivRankingArtworkCreated = onDocumentCreated('pixivRanking/{ran
 	}
 
 	const ranking = event.data.data();
+	const db = getFirestore();
+
+	const imageDoc = db.collection('images')
+		.where('type', '==', 'pixiv')
+		.where('postId', '==', ranking.artwork.illust_id);
+	const imageDocSnapshot = await imageDoc.get();
+
 	const pageCount = parseInt(ranking.artwork.illust_page_count) || 1;
 	const queue = getFunctions().taskQueue('downloadPixivImage');
 	const date = dayjs(ranking.ranking.date, 'YYYYMMDD').format('YYYY-MM-DD');
 
 	for (const page of Array(pageCount).keys()) {
+		const isAlreadyDownloaded = imageDocSnapshot.docs.some((doc) => doc.data().page === page);
+		if (isAlreadyDownloaded) {
+			info(`Page ${page} of post ${ranking.artwork.illust_id} already exists`);
+			continue;
+		}
 		await queue.enqueue({
 			artworkId: ranking.artwork.illust_id,
 			page,
@@ -160,6 +172,8 @@ export const fetchPixivDailyRankings = onSchedule({
 		['male_r18', 6],
 		['female_r18', 6],
 	];
+
+	info(`Fetching pixiv rankings for ${dateString}...`);
 
 	for (const [mode, pageCount] of rankings) {
 		for (const page of Array(pageCount).keys()) {
