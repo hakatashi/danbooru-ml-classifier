@@ -1,10 +1,11 @@
+import assert from 'assert';
 import firebase from 'firebase-admin';
 import {DocumentData, getFirestore} from 'firebase-admin/firestore';
 import {getStorage} from 'firebase-admin/storage';
 import {info} from 'firebase-functions/logger';
 import {defineSecret} from 'firebase-functions/params';
 import {https} from 'firebase-functions/v2';
-import {chunk} from 'lodash';
+import {chunk, zip} from 'lodash';
 
 const hakatashiApiKey = defineSecret('HAKATASHI_API_KEY');
 
@@ -43,57 +44,107 @@ export const getTopImages = https.onRequest(
 			.limit(30)
 			.get();
 
-		const pixivInfos = new Map<number, DocumentData>();
-		const pixivPages = new Map<number, DocumentData>();
-		const pixivArtworkIds = result.docs
-			.filter((doc) => doc.data().type === 'pixiv')
-			.map((doc) => doc.data().artworkId);
-		info(`Fetching ${pixivArtworkIds.length} pixiv artworks`);
-		if (pixivArtworkIds.length > 0) {
-			for (const artworkIds of chunk(pixivArtworkIds, 30)) {
-				const pixivRankings = await db.collection('pixivRanking')
-					.where('artwork.illust_id', 'in', artworkIds)
-					.get();
-				for (const doc of pixivRankings.docs) {
-					const data = doc.data();
-					if (data?.artwork?.illust_id) {
-						pixivInfos.set(data.artwork.illust_id, data);
+		const getPixivInfos = async () => {
+			const pixivInfos = new Map<number, DocumentData>();
+			const pixivPages = new Map<number, DocumentData>();
+			const pixivArtworkIds = result.docs
+				.filter((doc) => doc.data().type === 'pixiv')
+				.map((doc) => doc.data().artworkId);
+			info(`Fetching ${pixivArtworkIds.length} pixiv artworks`);
+			if (pixivArtworkIds.length > 0) {
+				for (const artworkIds of chunk(pixivArtworkIds, 30)) {
+					const pixivRankings = await db.collection('pixivRanking')
+						.where('artwork.illust_id', 'in', artworkIds)
+						.get();
+					for (const doc of pixivRankings.docs) {
+						const data = doc.data();
+						if (data?.artwork?.illust_id) {
+							pixivInfos.set(data.artwork.illust_id, data);
+						}
 					}
-				}
-				const pixivPageResults = await db.collection('pixivPages')
-					.where(firebase.firestore.FieldPath.documentId(), 'in', artworkIds.map((id) => id.toString()))
-					.get();
-				for (const doc of pixivPageResults.docs) {
-					const data = doc.data();
-					pixivPages.set(parseInt(doc.id), data);
-				}
-			}
-		}
-
-		const danbooruInfos = new Map<number, DocumentData>();
-		const danbooruPostIds = result.docs
-			.filter((doc) => doc.data().type === 'danbooru')
-			.map((doc) => doc.data().postId);
-		info(`Fetching ${danbooruPostIds.length} danbooru posts`);
-		if (danbooruPostIds.length > 0) {
-			for (const postIds of chunk(danbooruPostIds, 30)) {
-				const danbooruRankings = await db.collection('danbooruRanking')
-					.where('post.id', 'in', postIds)
-					.get();
-				for (const doc of danbooruRankings.docs) {
-					const data = doc.data();
-					if (data?.post?.id) {
-						danbooruInfos.set(data.post.id, data);
+					const pixivPageResults = await db.collection('pixivPages')
+						.where(firebase.firestore.FieldPath.documentId(), 'in', artworkIds.map((id) => id.toString()))
+						.get();
+					for (const doc of pixivPageResults.docs) {
+						const data = doc.data();
+						pixivPages.set(parseInt(doc.id), data);
 					}
 				}
 			}
-		}
+			return {pixivInfos, pixivPages};
+		};
 
-		const storage = getStorage();
-		const bucket = storage.bucket('danbooru-ml-classifier-images');
+		const getDanbooruInfos = async () => {
+			const danbooruInfos = new Map<number, DocumentData>();
+			const danbooruPostIds = result.docs
+				.filter((doc) => doc.data().type === 'danbooru')
+				.map((doc) => doc.data().postId);
+			info(`Fetching ${danbooruPostIds.length} danbooru posts`);
+			if (danbooruPostIds.length > 0) {
+				for (const postIds of chunk(danbooruPostIds, 30)) {
+					const danbooruRankings = await db.collection('danbooruRanking')
+						.where('post.id', 'in', postIds)
+						.get();
+					for (const doc of danbooruRankings.docs) {
+						const data = doc.data();
+						if (data?.post?.id) {
+							danbooruInfos.set(data.post.id, data);
+						}
+					}
+				}
+			}
+			return {danbooruInfos};
+		};
 
-		info(`Signing ${result.docs.length} images`);
-		const images = result.docs.map(async (doc) => {
+		const getSignedUrls = async () => {
+			const urls = result.docs.map(async (doc) => {
+				const data = doc.data();
+				const storage = getStorage();
+				const bucket = storage.bucket('danbooru-ml-classifier-images');
+				const [url] = await bucket.file(data.key).getSignedUrl({
+					version: 'v4',
+					action: 'read',
+					expires: Date.now() + 15 * 60 * 1000,
+				});
+				return url;
+			});
+			return {signedUrls: await Promise.all(urls)};
+		};
+
+		const getPixivImagesCount = () => (
+			db.collection('images')
+				.where('date', '==', date)
+				.where('type', '==', 'pixiv')
+				.count()
+				.get()
+		);
+
+		const getDanbooruImagesCount = () => (
+			db.collection('images')
+				.where('date', '==', date)
+				.where('type', '==', 'danbooru')
+				.count()
+				.get()
+		);
+
+		const [
+			{pixivInfos, pixivPages},
+			{danbooruInfos},
+			{signedUrls},
+			pixivImagesCount,
+			danbooruImagesCount,
+		] = await Promise.all([
+			getPixivInfos(),
+			getDanbooruInfos(),
+			getSignedUrls(),
+			getPixivImagesCount(),
+			getDanbooruImagesCount(),
+		]);
+
+		const images = zip(result.docs, signedUrls).map(([doc, signedUrl]) => {
+			assert(doc !== undefined, 'doc is undefined');
+			assert(signedUrl !== undefined, 'signedUrl is undefined');
+
 			const data = doc.data();
 
 			let width = 0;
@@ -118,37 +169,17 @@ export const getTopImages = https.onRequest(
 				}
 			}
 
-			const [url] = await bucket.file(data.key).getSignedUrl({
-				version: 'v4',
-				action: 'read',
-				expires: Date.now() + 15 * 60 * 1000,
-			});
 			return {
 				...data,
 				width,
 				height,
-				url,
+				url: signedUrl,
 				score: data.inferences[model][category],
 			};
 		});
 
-		info('Getting daily image count');
-		const [signedImages, danbooruImagesCount, pixivImagesCount] = await Promise.all([
-			Promise.all(images),
-			db.collection('images')
-				.where('date', '==', date)
-				.where('type', '==', 'danbooru')
-				.count()
-				.get(),
-			db.collection('images')
-				.where('date', '==', date)
-				.where('type', '==', 'pixiv')
-				.count()
-				.get(),
-		]);
-
 		res.json({
-			images: signedImages,
+			images,
 			counts: {
 				danbooru: danbooruImagesCount.data().count,
 				pixiv: pixivImagesCount.data().count,
