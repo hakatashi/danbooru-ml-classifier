@@ -66,6 +66,8 @@ def get_deepdanbooru_model():
     model = _resnet(models.resnet50, 6000)
     model.load_state_dict(torch.load(model_bytes_io, map_location=torch.device('cpu')))
 
+    model.eval()
+
     return model
 
 def get_top_tag_probs(tag_probs: torch.Tensor, threshold = 0.05):
