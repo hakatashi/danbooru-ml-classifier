@@ -12,8 +12,8 @@ import {onSchedule} from 'firebase-functions/v2/scheduler';
 import axios from './axios';
 import dayjs from './dayjs';
 
-const danbooruApiUser = defineSecret('DANBOORU_API_USER');
-const danbooruApiKey = defineSecret('DANBOORU_API_KEY');
+const gelbooruApiUser = defineSecret('GELBOORU_API_USER');
+const gelbooruApiKey = defineSecret('GELBOORU_API_KEY');
 
 const escapeFirestoreKey = (key: string) => (
 	key
@@ -22,7 +22,7 @@ const escapeFirestoreKey = (key: string) => (
 		.replaceAll(/\./g, '%2E')
 );
 
-export const downloadDanbooruImage = tasks.onTaskDispatched(
+export const downloadGelbooruImage = tasks.onTaskDispatched(
 	{
 		retryConfig: {
 			maxAttempts: 3,
@@ -32,14 +32,14 @@ export const downloadDanbooruImage = tasks.onTaskDispatched(
 			maxConcurrentDispatches: 1,
 			maxDispatchesPerSecond: 0.1,
 		},
-		secrets: [danbooruApiUser, danbooruApiKey],
+		secrets: [gelbooruApiUser, gelbooruApiKey],
 	},
 	async (req) => {
 		const {postId, date} = req.data as {postId: number, date: string};
 		const db = getFirestore();
 
 		const imageDoc = db.collection('images')
-			.where('type', '==', 'danbooru')
+			.where('type', '==', 'gelbooru')
 			.where('postId', '==', postId);
 		const imageDocSnapshot = await imageDoc.get();
 		if (!imageDocSnapshot.empty) {
@@ -47,12 +47,12 @@ export const downloadDanbooruImage = tasks.onTaskDispatched(
 			return;
 		}
 
-		const rankingInfo = await db.collection('danbooruRanking').doc(`${date}-popular-${postId}`).get();
-		const rankingInfoData = rankingInfo.data();
-		assert(rankingInfoData, 'Ranking info not found');
+		const imageInfo = await db.collection('gelbooruImage').doc(postId.toString()).get();
+		const imageInfoData = imageInfo.data();
+		assert(imageInfoData, 'Image info not found');
 
 		info(`Downloading artwork ${postId}`);
-		const url = rankingInfoData.post.file_url;
+		const url = imageInfoData.post.file_url;
 		if (typeof url !== 'string') {
 			warn(`No file_url for post ${postId}`);
 			return;
@@ -75,7 +75,7 @@ export const downloadDanbooruImage = tasks.onTaskDispatched(
 		info(`Uploading ${filename} to storage`);
 		const storage = getStorage();
 		const bucket = storage.bucket('danbooru-ml-classifier-images');
-		const file = bucket.file(`danbooru/${filename}`);
+		const file = bucket.file(`gelbooru/${filename}`);
 
 		await file.save(response.data, {
 			metadata: {
@@ -84,13 +84,13 @@ export const downloadDanbooruImage = tasks.onTaskDispatched(
 		});
 
 		info(`Saving ${filename} to firestore`);
-		await db.collection('images').doc(escapeFirestoreKey(`danbooru/${filename}`)).set({
+		await db.collection('images').doc(escapeFirestoreKey(`gelbooru/${filename}`)).set({
 			status: 'pending',
-			type: 'danbooru',
+			type: 'gelbooru',
 			postId,
 			date,
 			originalUrl: url,
-			key: `danbooru/${filename}`,
+			key: `gelbooru/${filename}`,
 			downloadedAt: firebase.firestore.FieldValue.serverTimestamp(),
 			inferences: {},
 			topTagProbs: {},
@@ -98,83 +98,88 @@ export const downloadDanbooruImage = tasks.onTaskDispatched(
 	},
 );
 
-export const onDanbooruRankingArtworkCreated = onDocumentCreated('danbooruRanking/{rankingId}', async (event) => {
+export const onGelbooruImageCreated = onDocumentCreated('gelbooruImage/{imageId}', async (event) => {
 	if (!event.data) {
 		return;
 	}
 
-	const ranking = event.data.data();
+	const image = event.data.data();
 
 	const db = getFirestore();
 
 	const imageDoc = db.collection('images')
-		.where('type', '==', 'danbooru')
-		.where('postId', '==', ranking.post.id);
+		.where('type', '==', 'gelbooru')
+		.where('postId', '==', image.post.id);
 	const imageDocSnapshot = await imageDoc.get();
 	if (!imageDocSnapshot.empty) {
-		info(`Post ${ranking.post.id} already exists`);
+		info(`Post ${image.post.id} already exists`);
 		return;
 	}
 
-	const queue = getFunctions().taskQueue('downloadDanbooruImage');
+	const queue = getFunctions().taskQueue('downloadGelbooruImage');
 
 	await queue.enqueue({
-		postId: ranking.post.id,
-		date: ranking.ranking.date,
+		postId: image.post.id,
+		date: image.image.date,
 	}, {
 		scheduleDelaySeconds: 0,
 		dispatchDeadlineSeconds: 60 * 5,
 	});
 });
 
-export const fetchDanbooruDailyRankings = onSchedule({
+export const fetchGelbooruDailyImages = onSchedule({
 	schedule: 'every day 15:00',
 	timeZone: 'Asia/Tokyo',
-	secrets: [danbooruApiKey, danbooruApiUser],
+	secrets: [gelbooruApiKey, gelbooruApiUser],
 	timeoutSeconds: 540,
-}, async (event) => {
+}, async () => {
 	const db = getFirestore();
 
-	const dateString = dayjs(event.scheduleTime).tz('Asia/Tokyo').subtract(2, 'days').format('YYYY-MM-DD');
-	const mode = 'popular';
-
-	info(`Fetching danbooru ranking for ${dateString}...`);
-
-	for (const page of Array(100).keys()) {
-		info(`Fetching danbooru ranking page ${page + 1}...`);
+	for (const page of Array(20).keys()) {
+		info(`Fetching gelbooru image page ${page + 1}...`);
 		await new Promise((resolve) => {
-			setTimeout(resolve, 5000);
+			setTimeout(resolve, 10000);
 		});
 
-		const {data: posts, status} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
+		const {data, status} = await axios.get('https://gelbooru.com/index.php', {
 			params: {
-				login: danbooruApiUser.value(),
-				api_key: danbooruApiKey.value(),
-				date: dateString,
-				page: page + 1,
-				scale: 'day',
+				page: 'dapi',
+				s: 'post',
+				q: 'index',
+				tags: 'score:>1',
+				limit: '100',
+				pid: page + 1,
+				user_id: gelbooruApiUser.value(),
+				api_key: gelbooruApiKey.value(),
+				json: '1',
 			},
 			validateStatus: null,
 		});
 
 		if (status !== 200) {
-			warn(`Failed to fetch danbooru ranking page ${page + 1} (status = ${status})`);
+			warn(`Failed to fetch gelbooru image page ${page + 1} (status = ${status})`);
 			continue;
 		}
 
-		info(`Fetched danbooru ranking page ${page + 1} (count = ${posts.length})`);
+		const posts = data?.post;
+
+		if (!Array.isArray(posts) || posts.length === 0) {
+			warn(`No posts found on gelbooru image page ${page + 1}`);
+			continue;
+		}
+
+		info(`Fetched gelbooru image page ${page + 1} (count = ${posts.length})`);
 
 		const batch = db.batch();
 
 		for (const [index, post] of posts.entries()) {
-			const rankingId = `${dateString}-${mode}-${post.id}`;
-			const rankingRef = db.collection('danbooruRanking').doc(rankingId);
-			batch.set(rankingRef, {
+			const date = dayjs(post.created_at).tz('Asia/Tokyo').format('YYYY-MM-DD');
+			const imageRef = db.collection('gelbooruImage').doc(post.id.toString());
+			batch.set(imageRef, {
 				post,
-				ranking: {
-					date: dateString,
+				image: {
+					date,
 					page,
-					mode,
 					index,
 				},
 			});

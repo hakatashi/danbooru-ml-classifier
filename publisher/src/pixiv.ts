@@ -1,5 +1,4 @@
 import {basename} from 'path';
-import axios from 'axios';
 import * as firebase from 'firebase-admin';
 import {getFirestore} from 'firebase-admin/firestore';
 import {getFunctions} from 'firebase-admin/functions';
@@ -9,6 +8,7 @@ import {defineSecret} from 'firebase-functions/params';
 import {tasks} from 'firebase-functions/v2';
 import {onDocumentCreated} from 'firebase-functions/v2/firestore';
 import {onSchedule} from 'firebase-functions/v2/scheduler';
+import axios from './axios';
 import dayjs from './dayjs';
 
 const pixivSessionId = defineSecret('PIXIV_SESSION_ID');

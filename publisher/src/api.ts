@@ -96,6 +96,28 @@ export const getTopImages = https.onRequest(
 			return {danbooruInfos};
 		};
 
+		const getGelbooruInfos = async () => {
+			const gelbooruInfos = new Map<number, DocumentData>();
+			const gelbooruPostIds = result.docs
+				.filter((doc) => doc.data().type === 'gelbooru')
+				.map((doc) => doc.data().postId);
+			info(`Fetching ${gelbooruPostIds.length} gelbooru posts`);
+			if (gelbooruPostIds.length > 0) {
+				for (const postIds of chunk(gelbooruPostIds, 30)) {
+					const gelbooruImages = await db.collection('gelbooruImage')
+						.where('post.id', 'in', postIds)
+						.get();
+					for (const doc of gelbooruImages.docs) {
+						const data = doc.data();
+						if (data?.post?.id) {
+							gelbooruInfos.set(data.post.id, data);
+						}
+					}
+				}
+			}
+			return {gelbooruInfos};
+		};
+
 		const getSignedUrls = async () => {
 			const urls = result.docs.map(async (doc) => {
 				const data = doc.data();
@@ -127,18 +149,30 @@ export const getTopImages = https.onRequest(
 				.get()
 		);
 
+		const getGelbooruImagesCount = () => (
+			db.collection('images')
+				.where('date', '==', date)
+				.where('type', '==', 'gelbooru')
+				.count()
+				.get()
+		);
+
 		const [
 			{pixivInfos, pixivPages},
 			{danbooruInfos},
+			{gelbooruInfos},
 			{signedUrls},
 			pixivImagesCount,
 			danbooruImagesCount,
+			gelbooruImagesCount,
 		] = await Promise.all([
 			getPixivInfos(),
 			getDanbooruInfos(),
+			getGelbooruInfos(),
 			getSignedUrls(),
 			getPixivImagesCount(),
 			getDanbooruImagesCount(),
+			getGelbooruImagesCount(),
 		]);
 
 		const images = zip(result.docs, signedUrls).map(([doc, signedUrl]) => {
@@ -167,6 +201,13 @@ export const getTopImages = https.onRequest(
 					height = danbooruInfo.post.image_height;
 					Object.assign(data, danbooruInfo);
 				}
+			} else if (data.type === 'gelbooru') {
+				const gelbooruInfo = gelbooruInfos.get(data.postId);
+				if (gelbooruInfo) {
+					width = gelbooruInfo.post.width;
+					height = gelbooruInfo.post.height;
+					Object.assign(data, gelbooruInfo);
+				}
 			}
 
 			return {
@@ -182,6 +223,7 @@ export const getTopImages = https.onRequest(
 			images,
 			counts: {
 				danbooru: danbooruImagesCount.data().count,
+				gelbooru: gelbooruImagesCount.data().count,
 				pixiv: pixivImagesCount.data().count,
 			},
 		});
