@@ -8,11 +8,10 @@ from torchvision import models
 from danbooru_resnet import _resnet
 from tagger import get_raw_tags
 from PIL import Image, UnidentifiedImageError
-from urllib.parse import unquote
 from torch_network import get_torch_network
 import json
 from urllib.request import urlopen
-from firebase_functions.options import RetryConfig
+import tempfile
 
 initialize_app()
 
@@ -21,6 +20,11 @@ preference_ada_boost_model = None
 preference_torch_network_model = None
 deepdanbooru_model = None
 class_names = None
+
+def get_rss():
+    import resource
+    rusage = resource.getrusage(resource.RUSAGE_SELF)
+    return rusage.ru_maxrss
 
 def get_preference_linear_svc_model():
     bucket = storage.bucket('danbooru-ml-classifier')
@@ -98,44 +102,38 @@ def inference_list_to_dict(inference_list: list):
 def infer_image_preference(image_id: str):
     global preference_linear_svc_model, preference_ada_boost_model, preference_torch_network_model, deepdanbooru_model
 
+    print(f'Infering image: {image_id} (mem = {get_rss()})')
+
     if deepdanbooru_model is None:
         deepdanbooru_model = get_deepdanbooru_model()
-        print('DeepDanbooru model loaded')
+        print(f'DeepDanbooru model loaded (mem = {get_rss()})')
         print(deepdanbooru_model)
 
     if preference_linear_svc_model is None:
         preference_linear_svc_model = get_preference_linear_svc_model()
-        print('Preference LinearSVC model loaded')
+        print(f'Preference LinearSVC model loaded (mem = {get_rss()})')
         print(preference_linear_svc_model)
 
     if preference_ada_boost_model is None:
         preference_ada_boost_model = get_preference_ada_boost_model()
-        print('Preference AdaBoost model loaded')
+        print(f'Preference AdaBoost model loaded (mem = {get_rss()})')
         print(preference_ada_boost_model)
 
     if preference_torch_network_model is None:
         preference_torch_network_model = get_preference_torch_network_model()
-        print('Preference Torch Network model loaded')
+        print(f'Preference Torch Network model loaded (mem = {get_rss()})')
         print(preference_torch_network_model)
 
-    print(f'Infering image: {image_id}')
     bucket = storage.bucket('danbooru-ml-classifier-images')
     image_file = bucket.blob(image_id)
-    image_bytes_io = BytesIO()
-    image_file.download_to_file(image_bytes_io)
-    image_bytes_io.seek(0)
+    with tempfile.NamedTemporaryFile() as temp:
+        image_file.download_to_file(temp)
 
-    print(f'Image downloaded: {image_id}')
+        print(f'Image downloaded: {image_id}')
 
-    try:
-        image = Image.open(image_bytes_io)
-    except UnidentifiedImageError as e:
-        print(f'Error opening image: {e}')
-        return
-    print(f'Image opened: {image_id}')
-    tags = get_raw_tags(deepdanbooru_model, image)
-    top_tag_probs = get_top_tag_probs(tags)
-    print(f'Top tag probs inferred: {image_id}')
+        tags = get_raw_tags(deepdanbooru_model, temp.name)
+        top_tag_probs = get_top_tag_probs(tags)
+        print(f'Top tag probs inferred: {image_id}')
 
     linear_svc_preference = preference_linear_svc_model.decision_function(tags.numpy().reshape(1, -1))
     print(f'LinearSVC preference inferred: {image_id}')

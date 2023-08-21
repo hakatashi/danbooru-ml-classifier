@@ -1,8 +1,11 @@
 import torch
 from torchvision import transforms
+from torchvision.io import read_image, ImageReadMode
 
-def get_raw_tags(model, input_image):
+def get_raw_tags(model, image_path):
     print('Start get_raw_tags')
+
+    input_image = read_image(image_path, mode=ImageReadMode.RGB)
 
     preprocess = transforms.Compose([
         transforms.Resize(360),
@@ -11,15 +14,6 @@ def get_raw_tags(model, input_image):
     ])
 
     print('Preprocess initialized')
-
-    try:
-        if input_image.mode != 'RGB':
-            input_image = input_image.convert('RGB')
-    except Exception as e:
-        print('Image conversion failed')
-        print(e)
-
-    print('Image converted to RGB')
 
     input_tensor = preprocess(input_image)
 
