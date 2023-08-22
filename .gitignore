@@ -131,5 +131,6 @@ dist
 
 .ipynb_checkpoints
 temp
+data
 
 .secret.local

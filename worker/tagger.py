@@ -1,14 +1,10 @@
 import torch
 from torchvision import transforms
-from torchvision.io import read_image, ImageReadMode
 
-def get_raw_tags(model, image_path):
+def get_raw_tags(model, input_image):
     print('Start get_raw_tags')
 
-    input_image = read_image(image_path, mode=ImageReadMode.RGB)
-
     preprocess = transforms.Compose([
-        transforms.Resize(360),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.7137, 0.6628, 0.6519], std=[0.2970, 0.3017, 0.2979]),
     ])

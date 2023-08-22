@@ -3,15 +3,16 @@ from firebase_admin import initialize_app, storage, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from io import BytesIO
 from joblib import load
+from PIL import Image, UnidentifiedImageError
 import torch
 from torchvision import models
 from danbooru_resnet import _resnet
 from tagger import get_raw_tags
-from PIL import Image, UnidentifiedImageError
+from downloader import download_images
 from torch_network import get_torch_network
 import json
 from urllib.request import urlopen
-import tempfile
+import os
 
 initialize_app()
 
@@ -99,7 +100,7 @@ def inference_list_to_dict(inference_list: list):
         inference_list
     ))
 
-def infer_image_preference(image_id: str):
+def infer_image_preference(image_id: str, image_path: str):
     global preference_linear_svc_model, preference_ada_boost_model, preference_torch_network_model, deepdanbooru_model
 
     print(f'Infering image: {image_id} (mem = {get_rss()})')
@@ -124,16 +125,20 @@ def infer_image_preference(image_id: str):
         print(f'Preference Torch Network model loaded (mem = {get_rss()})')
         print(preference_torch_network_model)
 
-    bucket = storage.bucket('danbooru-ml-classifier-images')
-    image_file = bucket.blob(image_id)
-    with tempfile.NamedTemporaryFile() as temp:
-        image_file.download_to_file(temp)
+    with open(image_path, 'rb') as image_file:
+        try:
+            image = Image.open(image_file)
+        except UnidentifiedImageError as e:
+            print(f'Error opening image: {e}')
+            return
 
-        print(f'Image downloaded: {image_id}')
+        print(f'Image opened: {image_id}')
+        tags = get_raw_tags(deepdanbooru_model, image)
 
-        tags = get_raw_tags(deepdanbooru_model, temp.name)
-        top_tag_probs = get_top_tag_probs(tags)
-        print(f'Top tag probs inferred: {image_id}')
+    os.remove(image_path)
+
+    top_tag_probs = get_top_tag_probs(tags)
+    print(f'Top tag probs inferred: {image_id}')
 
     linear_svc_preference = preference_linear_svc_model.decision_function(tags.numpy().reshape(1, -1))
     print(f'LinearSVC preference inferred: {image_id}')
@@ -185,12 +190,21 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
     processing_image_ids = set(processing_image.to_dict()['key'] for processing_image in processing_images_iter)
     print(f'Processing images: {len(processing_image_ids)}')
 
-    for image in pending_images:
+    pending_image_paths = download_images([image.to_dict()['key'] for image in pending_images])
+
+    for image, image_path in zip(pending_images, pending_image_paths):
+        if image_path is None:
+            print(f'Error downloading image: {image_id}')
+            image.reference.update({
+                'status': 'error',
+            })
+            continue
+
         image_data = image.to_dict()
         image_id = image_data['key']
         print(f'Image created: {image_id}')
 
-        inferences = infer_image_preference(image_id)
+        inferences = infer_image_preference(image_id, image_path)
         print(f'Inferred: {image_id}')
 
         if inferences is None:
@@ -209,15 +223,24 @@ def onImageCreated(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]):
     new_processing_images_iter = db.collection('images').where(filter=FieldFilter('status', '==', 'processing')).stream()
     new_processing_images = list(new_processing_images_iter)
     print(f'New processing images: {len(new_processing_images)}')
-    for image in new_processing_images:
+
+    new_processing_image_paths = download_images([image.to_dict()['key'] for image in new_processing_images])
+
+    for image, image_path in zip(new_processing_images, new_processing_image_paths):
+        if image_path is None:
+            print(f'Error downloading image: {image_id}')
+            image.reference.update({
+                'status': 'error',
+            })
+            continue
+
         image_data = image.to_dict()
         image_id = image_data['key']
         if image_id not in processing_image_ids:
             continue
         print(f'Image still processing: {image_id}')
-        image_data = image.to_dict()
 
-        inferences = infer_image_preference(image_id)
+        inferences = infer_image_preference(image_id, image_path)
         print(f'Inferred: {image_id}')
 
         if inferences is None:
