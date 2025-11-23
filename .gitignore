@@ -134,3 +134,7 @@ temp
 data
 
 .secret.local
+
+danbooru-ml-classifier-*.json
+*.joblib
+*.zip
