@@ -1,100 +1,111 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
-import { type User } from 'firebase/auth'
-import type { ImageDocument } from '../types'
-import { useImages, type SortOption } from '../composables/useImages'
-import FilterBar from '../components/FilterBar.vue'
-import ImageCard from '../components/ImageCard.vue'
-import Pagination from '../components/Pagination.vue'
+import type {User} from 'firebase/auth';
+import {computed, ref, watch} from 'vue';
+import FilterBar from '../components/FilterBar.vue';
+import ImageCard from '../components/ImageCard.vue';
+import Pagination from '../components/Pagination.vue';
+import {type SortOption, useImages} from '../composables/useImages';
+import type {ImageDocument} from '../types';
 
 const props = defineProps<{
-  user: User | null
-}>()
+	user: User | null;
+}>();
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 20;
 
-const { images, loading, error, hasMore, loadImages, loadMore } = useImages()
-const currentPage = ref(0)
-const currentSort = ref<SortOption | null>(null)
+const {images, loading, error, hasMore, loadImages, loadMore} = useImages();
+const currentPage = ref(0);
+const currentSort = ref<SortOption | null>(null);
 
 const filters = ref({
-  model: 'all',
-  rating: 'all',
-})
+	model: 'all',
+	rating: 'all',
+});
 
-watch(() => props.user, (newUser) => {
-  if (newUser && currentSort.value) {
-    loadImages(currentSort.value)
-  }
-}, { immediate: true })
+watch(
+	() => props.user,
+	(newUser) => {
+		if (newUser && currentSort.value) {
+			loadImages(currentSort.value);
+		}
+	},
+	{immediate: true},
+);
 
-function getModerationRating(image: ImageDocument, modelKey: string): number | null {
-  if (!image.moderations) return null
-  if (image.moderations[modelKey]) {
-    return image.moderations[modelKey].result
-  }
-  return null
+function getModerationRating(
+	image: ImageDocument,
+	modelKey: string,
+): number | null {
+	if (!image.moderations) return null;
+	if (image.moderations[modelKey]) {
+		return image.moderations[modelKey].result;
+	}
+	return null;
 }
 
 const filteredImages = computed(() => {
-  return images.value.filter(img => {
-    // Model filter
-    if (filters.value.model !== 'all') {
-      if (!img.captions || !img.captions[filters.value.model]) {
-        return false
-      }
-    }
+	return images.value.filter((img) => {
+		// Model filter
+		if (filters.value.model !== 'all') {
+			if (!img.captions || !img.captions[filters.value.model]) {
+				return false;
+			}
+		}
 
-    // Rating filter (uses the current sort model for filtering)
-    if (filters.value.rating !== 'all') {
-      // Determine which model's rating to use based on current sort
-      const sortModel = currentSort.value?.field.includes('joycaption') ? 'joycaption' : 'minicpm'
-      const rating = getModerationRating(img, sortModel)
-      if (rating === null) return false
+		// Rating filter (uses the current sort model for filtering)
+		if (filters.value.rating !== 'all') {
+			// Determine which model's rating to use based on current sort
+			const sortModel = currentSort.value?.field.includes('joycaption')
+				? 'joycaption'
+				: 'minicpm';
+			const rating = getModerationRating(img, sortModel);
+			if (rating === null) return false;
 
-      const parts = filters.value.rating.split('-').map(Number)
-      const min = parts[0] ?? 0
-      const max = parts[1] ?? 10
-      if (rating < min || rating > max) return false
-    }
+			const parts = filters.value.rating.split('-').map(Number);
+			const min = parts[0] ?? 0;
+			const max = parts[1] ?? 10;
+			if (rating < min || rating > max) return false;
+		}
 
-    return true
-  })
-})
+		return true;
+	});
+});
 
-const totalPages = computed(() => Math.ceil(filteredImages.value.length / PAGE_SIZE))
+const totalPages = computed(() =>
+	Math.ceil(filteredImages.value.length / PAGE_SIZE),
+);
 
 const paginatedImages = computed(() => {
-  const start = currentPage.value * PAGE_SIZE
-  return filteredImages.value.slice(start, start + PAGE_SIZE)
-})
+	const start = currentPage.value * PAGE_SIZE;
+	return filteredImages.value.slice(start, start + PAGE_SIZE);
+});
 
 async function onSortChange(sort: SortOption) {
-  currentSort.value = sort
-  currentPage.value = 0
-  if (props.user) {
-    await loadImages(sort)
-  }
+	currentSort.value = sort;
+	currentPage.value = 0;
+	if (props.user) {
+		await loadImages(sort);
+	}
 }
 
-function onFilterChange(newFilters: { model: string; rating: string }) {
-  filters.value = newFilters
-  currentPage.value = 0
+function onFilterChange(newFilters: {model: string; rating: string}) {
+	filters.value = newFilters;
+	currentPage.value = 0;
 }
 
 async function onPageChange(page: number) {
-  currentPage.value = page
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+	currentPage.value = page;
+	window.scrollTo({top: 0, behavior: 'smooth'});
 
-  // Load more if we're near the end
-  const neededImages = (page + 2) * PAGE_SIZE
-  if (neededImages > images.value.length && hasMore.value && !loading.value) {
-    await loadMore()
-  }
+	// Load more if we're near the end
+	const neededImages = (page + 2) * PAGE_SIZE;
+	if (neededImages > images.value.length && hasMore.value && !loading.value) {
+		await loadMore();
+	}
 }
 
 async function handleLoadMore() {
-  await loadMore()
+	await loadMore();
 }
 </script>
 

@@ -1,53 +1,56 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { RouterLink } from 'vue-router'
-import type { ImageDocument } from '../types'
-import ThinkBlock from './ThinkBlock.vue'
-import ImageLightbox from './ImageLightbox.vue'
+import {computed, ref} from 'vue';
+import {RouterLink} from 'vue-router';
+import type {ImageDocument} from '../types';
+import ImageLightbox from './ImageLightbox.vue';
+import ThinkBlock from './ThinkBlock.vue';
 
 const props = defineProps<{
-  image: ImageDocument
-}>()
+	image: ImageDocument;
+}>();
 
-const IMAGE_BASE_URL = 'https://matrix.hakatashi.com/images/hakataarchive/twitter/'
+const IMAGE_BASE_URL =
+	'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
 
-const showLightbox = ref(false)
-const models = computed(() => Object.keys(props.image.captions || {}))
-const activeModel = ref(models.value[0] || '')
+const showLightbox = ref(false);
+const models = computed(() => Object.keys(props.image.captions || {}));
+const activeModel = ref(models.value[0] || '');
 
 const filename = computed(() => {
-  return props.image.key ? props.image.key.split('/').pop() : props.image.id
-})
+	return props.image.key ? props.image.key.split('/').pop() : props.image.id;
+});
 
-const imageUrl = computed(() => IMAGE_BASE_URL + filename.value)
+const imageUrl = computed(() => IMAGE_BASE_URL + filename.value);
 
 const currentCaption = computed(() => {
-  return props.image.captions?.[activeModel.value]?.caption || 'No caption available'
-})
+	return (
+		props.image.captions?.[activeModel.value]?.caption || 'No caption available'
+	);
+});
 
 const joycaptionRating = computed(() => {
-  return props.image.moderations?.['joycaption']?.result ?? null
-})
+	return props.image.moderations?.['joycaption']?.result ?? null;
+});
 
 const minicpmRating = computed(() => {
-  return props.image.moderations?.['minicpm']?.result ?? null
-})
+	return props.image.moderations?.['minicpm']?.result ?? null;
+});
 
 function getRatingColorClass(rating: number | null): string {
-  if (rating === null) return 'bg-gray-500'
-  if (rating <= 2) return 'bg-green-500'
-  if (rating <= 4) return 'bg-lime-500'
-  if (rating <= 6) return 'bg-orange-500'
-  if (rating <= 8) return 'bg-red-500'
-  return 'bg-purple-500'
+	if (rating === null) return 'bg-gray-500';
+	if (rating <= 2) return 'bg-green-500';
+	if (rating <= 4) return 'bg-lime-500';
+	if (rating <= 6) return 'bg-orange-500';
+	if (rating <= 8) return 'bg-red-500';
+	return 'bg-purple-500';
 }
 
 function selectModel(model: string) {
-  activeModel.value = model
+	activeModel.value = model;
 }
 
 function openLightbox() {
-  showLightbox.value = true
+	showLightbox.value = true;
 }
 </script>
 

@@ -1,70 +1,70 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import {computed, ref} from 'vue';
 
 const props = defineProps<{
-  text: string
-}>()
+	text: string;
+}>();
 
-const expandedBlocks = ref<Set<number>>(new Set())
+const expandedBlocks = ref<Set<number>>(new Set());
 
 interface TextPart {
-  type: 'text' | 'think'
-  content: string
-  index: number
+	type: 'text' | 'think';
+	content: string;
+	index: number;
 }
 
 const parsedContent = computed<TextPart[]>(() => {
-  const parts: TextPart[] = []
-  const regex = /<think>([\s\S]*?)<\/think>/gi
-  let lastIndex = 0
-  let match
-  let thinkIndex = 0
+	const parts: TextPart[] = [];
+	const regex = /<think>([\s\S]*?)<\/think>/gi;
+	let lastIndex = 0;
+	let match: RegExpExecArray | null = null;
+	let thinkIndex = 0;
 
-  const text = props.text || ''
+	const text = props.text || '';
 
-  while ((match = regex.exec(text)) !== null) {
-    // Add text before the think block
-    if (match.index > lastIndex) {
-      parts.push({
-        type: 'text',
-        content: text.slice(lastIndex, match.index),
-        index: -1
-      })
-    }
+	while ((match = regex.exec(text)) !== null) {
+		// Add text before the think block
+		if (match.index > lastIndex) {
+			parts.push({
+				type: 'text',
+				content: text.slice(lastIndex, match.index),
+				index: -1,
+			});
+		}
 
-    // Add the think block
-    parts.push({
-      type: 'think',
-      content: (match[1] ?? '').trim(),
-      index: thinkIndex++
-    })
+		// Add the think block
+		parts.push({
+			type: 'think',
+			content: (match[1] ?? '').trim(),
+			index: thinkIndex++,
+		});
 
-    lastIndex = match.index + match[0].length
-  }
+		lastIndex = match.index + match[0].length;
+	}
 
-  // Add remaining text
-  if (lastIndex < text.length) {
-    parts.push({
-      type: 'text',
-      content: text.slice(lastIndex),
-      index: -1
-    })
-  }
+	// Add remaining text
+	if (lastIndex < text.length) {
+		parts.push({
+			type: 'text',
+			content: text.slice(lastIndex),
+			index: -1,
+		});
+	}
 
-  return parts
-})
+	return parts;
+});
 
 function toggleBlock(index: number) {
-  if (expandedBlocks.value.has(index)) {
-    expandedBlocks.value.delete(index)
-  } else {
-    expandedBlocks.value.add(index)
-  }
-  expandedBlocks.value = new Set(expandedBlocks.value)
+	if (expandedBlocks.value.has(index)) {
+		expandedBlocks.value.delete(index);
+	} else {
+		expandedBlocks.value.add(index);
+	}
+	expandedBlocks.value = new Set(expandedBlocks.value);
 }
 
 function isExpanded(index: number) {
-  return expandedBlocks.value.has(index)
+	return expandedBlocks.value.has(index);
 }
 </script>
 

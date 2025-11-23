@@ -1,44 +1,70 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import type { SortOption } from '../composables/useImages'
+import {ref, watch} from 'vue';
+import type {SortOption} from '../composables/useImages';
 
 defineProps<{
-  totalCount: number
-}>()
+	totalCount: number;
+}>();
 
 const emit = defineEmits<{
-  (e: 'sort-change', sort: SortOption): void
-  (e: 'filter-change', filters: { model: string; rating: string }): void
-}>()
+	(e: 'sort-change', sort: SortOption): void;
+	(e: 'filter-change', filters: {model: string; rating: string}): void;
+}>();
 
-const model = ref('all')
-const rating = ref('all')
-const sort = ref('joycaption-desc')
+const model = ref('all');
+const rating = ref('all');
+const sort = ref('joycaption-desc');
 
 const sortOptions = [
-  { value: 'joycaption-desc', label: 'JoyCaption Rating (High to Low)', field: 'moderations.joycaption.result', direction: 'desc' as const },
-  { value: 'joycaption-asc', label: 'JoyCaption Rating (Low to High)', field: 'moderations.joycaption.result', direction: 'asc' as const },
-  { value: 'minicpm-desc', label: 'MiniCPM Rating (High to Low)', field: 'moderations.minicpm.result', direction: 'desc' as const },
-  { value: 'minicpm-asc', label: 'MiniCPM Rating (Low to High)', field: 'moderations.minicpm.result', direction: 'asc' as const },
-]
+	{
+		value: 'joycaption-desc',
+		label: 'JoyCaption Rating (High to Low)',
+		field: 'moderations.joycaption.result',
+		direction: 'desc' as const,
+	},
+	{
+		value: 'joycaption-asc',
+		label: 'JoyCaption Rating (Low to High)',
+		field: 'moderations.joycaption.result',
+		direction: 'asc' as const,
+	},
+	{
+		value: 'minicpm-desc',
+		label: 'MiniCPM Rating (High to Low)',
+		field: 'moderations.minicpm.result',
+		direction: 'desc' as const,
+	},
+	{
+		value: 'minicpm-asc',
+		label: 'MiniCPM Rating (Low to High)',
+		field: 'moderations.minicpm.result',
+		direction: 'asc' as const,
+	},
+];
 
 function getSortOption(value: string): SortOption {
-  const option = sortOptions.find(o => o.value === value)
-  return option ? { field: option.field, direction: option.direction } : { field: 'moderations.joycaption.result', direction: 'desc' }
+	const option = sortOptions.find((o) => o.value === value);
+	return option
+		? {field: option.field, direction: option.direction}
+		: {field: 'moderations.joycaption.result', direction: 'desc'};
 }
 
 // Emit sort change
-watch(sort, (newSort) => {
-  emit('sort-change', getSortOption(newSort))
-}, { immediate: true })
+watch(
+	sort,
+	(newSort) => {
+		emit('sort-change', getSortOption(newSort));
+	},
+	{immediate: true},
+);
 
 // Emit filter change
 watch([model, rating], () => {
-  emit('filter-change', {
-    model: model.value,
-    rating: rating.value,
-  })
-})
+	emit('filter-change', {
+		model: model.value,
+		rating: rating.value,
+	});
+});
 </script>
 
 <template>

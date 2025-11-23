@@ -1,28 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import {computed} from 'vue';
 
 const props = defineProps<{
-  currentPage: number
-  totalPages: number
-}>()
+	currentPage: number;
+	totalPages: number;
+}>();
 
-const emit = defineEmits<{
-  (e: 'page-change', page: number): void
-}>()
+const emit = defineEmits<(e: 'page-change', page: number) => void>();
 
-const canGoPrev = computed(() => props.currentPage > 0)
-const canGoNext = computed(() => props.currentPage < props.totalPages - 1)
+const canGoPrev = computed(() => props.currentPage > 0);
+const canGoNext = computed(() => props.currentPage < props.totalPages - 1);
 
 function prev() {
-  if (canGoPrev.value) {
-    emit('page-change', props.currentPage - 1)
-  }
+	if (canGoPrev.value) {
+		emit('page-change', props.currentPage - 1);
+	}
 }
 
 function next() {
-  if (canGoNext.value) {
-    emit('page-change', props.currentPage + 1)
-  }
+	if (canGoNext.value) {
+		emit('page-change', props.currentPage + 1);
+	}
 }
 </script>
 

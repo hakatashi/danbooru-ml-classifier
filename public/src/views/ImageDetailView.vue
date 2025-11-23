@@ -1,95 +1,98 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRoute, RouterLink } from 'vue-router'
-import { type User } from 'firebase/auth'
-import type { ImageDocument } from '../types'
-import { useImages } from '../composables/useImages'
-import ThinkBlock from '../components/ThinkBlock.vue'
-import ImageLightbox from '../components/ImageLightbox.vue'
+import type {User} from 'firebase/auth';
+import {computed, onMounted, ref} from 'vue';
+import {RouterLink, useRoute} from 'vue-router';
+import ImageLightbox from '../components/ImageLightbox.vue';
+import ThinkBlock from '../components/ThinkBlock.vue';
+import {useImages} from '../composables/useImages';
+import type {ImageDocument} from '../types';
 
 defineProps<{
-  user: User | null
-}>()
+	user: User | null;
+}>();
 
-const route = useRoute()
-const { getImageById } = useImages()
+const route = useRoute();
+const {getImageById} = useImages();
 
-const IMAGE_BASE_URL = 'https://matrix.hakatashi.com/images/hakataarchive/twitter/'
+const IMAGE_BASE_URL =
+	'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
 
-const image = ref<ImageDocument | null>(null)
-const loading = ref(true)
-const error = ref<string | null>(null)
-const showLightbox = ref(false)
+const image = ref<ImageDocument | null>(null);
+const loading = ref(true);
+const error = ref<string | null>(null);
+const showLightbox = ref(false);
 
 const filename = computed(() => {
-  if (!image.value) return ''
-  return image.value.key ? image.value.key.split('/').pop() : image.value.id
-})
+	if (!image.value) return '';
+	return image.value.key ? image.value.key.split('/').pop() : image.value.id;
+});
 
-const imageUrl = computed(() => IMAGE_BASE_URL + filename.value)
+const imageUrl = computed(() => IMAGE_BASE_URL + filename.value);
 
-const models = computed(() => Object.keys(image.value?.captions || {}))
+const models = computed(() => Object.keys(image.value?.captions || {}));
 
 function removeThinkBlocks(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+	return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 }
 
-function getTranslateUrls(text: string): { name: string; url: string; icon: string }[] {
-  const cleanText = removeThinkBlocks(text)
-  const encoded = encodeURIComponent(cleanText)
+function getTranslateUrls(
+	text: string,
+): {name: string; url: string; icon: string}[] {
+	const cleanText = removeThinkBlocks(text);
+	const encoded = encodeURIComponent(cleanText);
 
-  return [
-    {
-      name: 'Google Translate',
-      url: `https://translate.google.com/?sl=en&tl=ja&text=${encoded}`,
-      icon: 'G'
-    },
-    {
-      name: 'DeepL',
-      url: `https://www.deepl.com/translator#en/ja/${encoded}`,
-      icon: 'D'
-    },
-    {
-      name: 'Bing Translator',
-      url: `https://www.bing.com/translator?from=en&to=ja&text=${encoded}`,
-      icon: 'B'
-    }
-  ]
+	return [
+		{
+			name: 'Google Translate',
+			url: `https://translate.google.com/?sl=en&tl=ja&text=${encoded}`,
+			icon: 'G',
+		},
+		{
+			name: 'DeepL',
+			url: `https://www.deepl.com/translator#en/ja/${encoded}`,
+			icon: 'D',
+		},
+		{
+			name: 'Bing Translator',
+			url: `https://www.bing.com/translator?from=en&to=ja&text=${encoded}`,
+			icon: 'B',
+		},
+	];
 }
 
 function getRatingColorClass(rating: number | null): string {
-  if (rating === null) return 'bg-gray-500'
-  if (rating <= 2) return 'bg-green-500'
-  if (rating <= 4) return 'bg-lime-500'
-  if (rating <= 6) return 'bg-orange-500'
-  if (rating <= 8) return 'bg-red-500'
-  return 'bg-purple-500'
+	if (rating === null) return 'bg-gray-500';
+	if (rating <= 2) return 'bg-green-500';
+	if (rating <= 4) return 'bg-lime-500';
+	if (rating <= 6) return 'bg-orange-500';
+	if (rating <= 8) return 'bg-red-500';
+	return 'bg-purple-500';
 }
 
 function getRatingLabel(rating: number | null): string {
-  if (rating === null) return 'Unknown'
-  if (rating <= 2) return 'Safe'
-  if (rating <= 4) return 'Slightly Suggestive'
-  if (rating <= 6) return 'Sensitive'
-  if (rating <= 8) return 'Adult'
-  return 'Explicit'
+	if (rating === null) return 'Unknown';
+	if (rating <= 2) return 'Safe';
+	if (rating <= 4) return 'Slightly Suggestive';
+	if (rating <= 6) return 'Sensitive';
+	if (rating <= 8) return 'Adult';
+	return 'Explicit';
 }
 
 onMounted(async () => {
-  const id = route.params.id as string
-  if (id) {
-    try {
-      image.value = await getImageById(id)
-      if (!image.value) {
-        error.value = 'Image not found'
-      }
-    } catch (e) {
-      error.value = (e as Error).message
-    } finally {
-      loading.value = false
-    }
-  }
-})
+	const id = route.params.id as string;
+	if (id) {
+		try {
+			image.value = await getImageById(id);
+			if (!image.value) {
+				error.value = 'Image not found';
+			}
+		} catch (e) {
+			error.value = (e as Error).message;
+		} finally {
+			loading.value = false;
+		}
+	}
+});
 </script>
 
 <template>

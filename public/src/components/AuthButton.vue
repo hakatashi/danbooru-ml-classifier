@@ -1,39 +1,43 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, type User } from 'firebase/auth'
-import { auth } from '../firebase'
+import {
+	GoogleAuthProvider,
+	onAuthStateChanged,
+	signInWithPopup,
+	signOut,
+	type User,
+} from 'firebase/auth';
+import {onMounted, ref} from 'vue';
+import {auth} from '../firebase';
 
-const user = ref<User | null>(null)
-const loading = ref(true)
+const user = ref<User | null>(null);
+const loading = ref(true);
 
-const emit = defineEmits<{
-  (e: 'auth-change', user: User | null): void
-}>()
+const emit = defineEmits<(e: 'auth-change', user: User | null) => void>();
 
 onMounted(() => {
-  onAuthStateChanged(auth, (newUser) => {
-    user.value = newUser
-    loading.value = false
-    emit('auth-change', newUser)
-  })
-})
+	onAuthStateChanged(auth, (newUser) => {
+		user.value = newUser;
+		loading.value = false;
+		emit('auth-change', newUser);
+	});
+});
 
 async function login() {
-  try {
-    const provider = new GoogleAuthProvider()
-    await signInWithPopup(auth, provider)
-  } catch (error) {
-    console.error('Login error:', error)
-    alert('Login failed: ' + (error as Error).message)
-  }
+	try {
+		const provider = new GoogleAuthProvider();
+		await signInWithPopup(auth, provider);
+	} catch (error) {
+		console.error('Login error:', error);
+		alert(`Login failed: ${(error as Error).message}`);
+	}
 }
 
 async function logout() {
-  try {
-    await signOut(auth)
-  } catch (error) {
-    console.error('Logout error:', error)
-  }
+	try {
+		await signOut(auth);
+	} catch (error) {
+		console.error('Logout error:', error);
+	}
 }
 </script>
 

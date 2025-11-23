@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { RouterView, RouterLink } from 'vue-router'
-import { type User } from 'firebase/auth'
-import AuthButton from './components/AuthButton.vue'
-import { useImages } from './composables/useImages'
+import type {User} from 'firebase/auth';
+import {ref} from 'vue';
+import {RouterLink, RouterView} from 'vue-router';
+import AuthButton from './components/AuthButton.vue';
+import {useImages} from './composables/useImages';
 
-const user = ref<User | null>(null)
-const { clearCache } = useImages()
+const user = ref<User | null>(null);
+const {clearCache} = useImages();
 
 function onAuthChange(newUser: User | null) {
-  user.value = newUser
-  if (!newUser) {
-    clearCache()
-  }
+	user.value = newUser;
+	if (!newUser) {
+		clearCache();
+	}
 }
 </script>
 

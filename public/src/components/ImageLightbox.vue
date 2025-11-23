@@ -1,23 +1,21 @@
 <script setup lang="ts">
 defineProps<{
-  src: string
-  alt: string
-}>()
+	src: string;
+	alt: string;
+}>();
 
-const emit = defineEmits<{
-  (e: 'close'): void
-}>()
+const emit = defineEmits<(e: 'close') => void>();
 
 function handleBackdropClick(event: MouseEvent) {
-  if (event.target === event.currentTarget) {
-    emit('close')
-  }
+	if (event.target === event.currentTarget) {
+		emit('close');
+	}
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    emit('close')
-  }
+	if (event.key === 'Escape') {
+		emit('close');
+	}
 }
 </script>
 
