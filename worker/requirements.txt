@@ -3,6 +3,14 @@ firebase_admin~=6.2.0
 google-cloud-firestore~=2.11.1
 joblib~=1.3.2
 scikit-learn~=1.3.0
-torch~=2.0.1
-torchvision~=0.15.2
+# Note: Install PyTorch with ROCm support manually:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.2
+torch>=2.5.0
+torchvision>=0.20.0
 Pillow~=10.0.0
+transformers>=4.50.0
+tokenizers>=0.22.0
+huggingface_hub>=0.20.0
+accelerate>=1.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0

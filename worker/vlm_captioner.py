@@ -1,0 +1,872 @@
+"""
+VLM Captioner Firebase Function
+
+Downloads images from S3, generates captions and moderation ratings using
+local VLM models, and saves results to Firestore.
+"""
+
+import os
+import json
+import random
+import time
+import re
+import subprocess
+import base64
+import torch  # Import torch before transformers to ensure proper detection
+import requests
+from pathlib import Path
+from threading import Thread
+from urllib.parse import quote
+from firebase_functions import https_fn, options
+from firebase_admin import initialize_app, firestore
+
+# Load environment variables from .env file for local development
+from dotenv import load_dotenv
+load_dotenv()
+
+# Set GOOGLE_APPLICATION_CREDENTIALS for Firebase authentication
+cred_path = Path(__file__).parent.parent / "danbooru-ml-classifier-firebase-adminsdk-uivsj-3a07a63db5.json"
+if cred_path.exists() and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(cred_path)
+
+# Initialize Firebase app if not already initialized
+import firebase_admin
+if not firebase_admin._apps:
+    initialize_app()
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+# Local directories
+LOCAL_IMAGE_DIR = Path.home() / "Images" / "hakataarchive" / "twitter"
+S3_FILE_CACHE = Path(__file__).parent.parent / ".cache" / "twitter_s3_files.json"
+
+# llama.cpp server configuration
+JOYCAPTION_DIR = Path.home() / "Documents" / "GitHub" / "joycaption"
+LLAMA_CPP_DIR = JOYCAPTION_DIR / "llama.cpp"
+LLAMA_SERVER = LLAMA_CPP_DIR / "build" / "bin" / "llama-server"
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 8080
+SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+
+# Use joycaption venv for VLM operations (has ROCm PyTorch and latest transformers)
+JOYCAPTION_VENV_PYTHON = JOYCAPTION_DIR / "venv" / "bin" / "python"
+
+# Model configurations
+MODELS = {
+    "minicpm": {
+        "name": "Huihui MiniCPM-V 4.5 Abliterated (F16)",
+        "backend": "llama.cpp",
+        "repository": "huihui-ai/Huihui-MiniCPM-V-4_5-abliterated",
+        "language_file": "GGUF/ggml-model-f16.gguf",
+        "vision_file": "GGUF/mmproj-model-f16.gguf",
+    },
+    "joycaption": {
+        "name": "JoyCaption Beta One (Llava)",
+        "backend": "transformers",
+        "repository": "fancyfeast/llama-joycaption-beta-one-hf-llava",
+        "language_file": None,
+        "vision_file": None,
+    },
+}
+
+# Prompts
+CAPTION_PROMPT = "Please write the longest and most detailed caption possible for this image. Please describe all the elements of the image that you can. If it's a photograph, be sure to include the subject, background, lighting, scene, and overall atmosphere. If it's an illustration, be sure to include the subject, color, brushstrokes, style, and scene. These are just examples, so please be sure to describe all the elements present in the image. If this image depicts a person or character, please describe in detail the clothing and physical features of the person in the image, by body part and clothing item. Include their estimated age. If this image contains any sexual content, include a detailed explanation of the status of every sexual elements (genital, clitoris, breasts, nipples, cleavage, midriff, legs, nudity, penetration, sexual stimulation, sexual tools/adult toys used, and other sexual activities, etc) if they are depicted or implied from this image. If this image contains any sexual content, include additional commentary that focuses on how this image arouses sexual arousal in the viewer."
+
+MODERATION_PROMPT = """
+# VLM Content Moderation Prompt
+
+Please rate on a scale of 0 to 10 whether the image is adult-oriented. Use the detailed criteria below to determine the appropriate rating:
+
+## Rating Scale with Detailed Descriptions
+
+**[[0]] - General non-human images**
+To be classified as this rating, an image MUST meet all of the following criteria:
+- image cannot contain any human or humanoid characters (e.g. Pure landscapes, objects, food, animals, abstract art, text-only images)
+- image cannot contain any anime or cartoon characters
+- image cannot contain any suggestive shapes or arrangements that could be interpreted sexually.
+
+**[[1]] - Minimal Presence**
+To be classified as this rating, an image MUST meet all of the following criteria:
+- All depicted characters MUST be fully clothed
+- Image must be in a completely harmless context, such as children's content, educational materials, or family photos
+- No visible skin beyond hands, face, and neck
+- Completely non-suggestive poses and expressions
+
+**[[2]] - General Content**
+- Completely non-sexual scenes with characters in everyday situations
+- Casual clothing appropriate for public settings
+- Normal social interactions, work environments, sports in standard uniforms
+- No suggestive positioning, expressions, or camera angles
+- Couples holding hands in public settings
+- Clothing that's form-fitting but not revealing (normal t-shirts, jeans)
+
+**[[3]] - Slightly Suggestive**
+- Mild emphasis on attractiveness without overt sexuality
+- Fashion photography with standard poses
+- Fitness content showing normal workout attire
+- Clothing that emphasizes body shape (tight dresses, crop tops, shorts)
+- Light embracing or hugging between couples
+- Anime art style emphasizing cuteness/attractiveness
+- The positioning and angle considered somewhat suggestive, but it's not overtly sexual
+
+**[[4]] - Sensitive Content**
+- Ecchi, sexy, risqué, or suggestive content
+- Suggestive but not explicit poses or expressions
+- Bikinis, lingerie worn as outerwear, or revealing evening wear
+- Focus on cleavage, midriff, or legs without nudity
+
+**[[5]] - Moderately Suggestive**
+- More obvious sexualization without nudity
+- Provocative poses, suggestive facial expressions, or bedroom settings
+- See-through or very tight clothing that clearly outlines body parts
+- Underwear visible through clothing or as primary garment
+- Pin-up style content, glamour photography with sexual undertones
+
+**[[6]] - Questionable Content**
+- Simple non-genital nudity showing areolae and bare buttocks
+- Artistic nudity in clearly artistic, medical, or educational contexts (museums, classical art, medical textbooks)
+- Underwear as primary clothing in obviously suggestive contexts
+- Nude figures where genitals and nipples are obscured or not visible
+- Highly suggestive content that stops just short of showing nipples
+- Fetish scenarios without any nudity or exposure (bondage, restraints, BDSM situations with full clothing)
+- Heavy petting or intimate touching over clothing between partners
+
+**[[7]] - Clearly Adult-Oriented**
+- Nipple visibility (except in clearly artistic, medical, or educational contexts)
+- Topless scenes with clear view of nipples (beaches, changing rooms, non-artistic contexts)
+- Explicit focus on sexual body parts without showing genitals
+- Highly suggestive positioning that strongly implies sexual activity
+- Fetish content that doesn't show genitals but may show nipples
+
+**[[8]] - NSFW Content**
+- Sexual scenarios with obvious erotic purpose, even without genital display
+- Nude content where sexual arousal is the primary intent
+- Genitals clearly depicted but only to a limited extent
+- Masturbation scenes or self-stimulation activities (regardless of nudity level)
+- Adult content that crosses into explicit territory but remains somewhat restrained
+
+**[[9]] - Highly Explicit**
+- Full genital display with clear sexual intent
+- Explicit sexual acts in progress with detailed visibility
+- Pornographic content with full nudity and sexual activity
+- Genitals as primary focus of the image
+- Clear depiction of sexual intercourse or other explicit acts
+
+**[[10]] - Strongly NSFW**
+- Full nudity including detailed genitalia as primary subject matter
+- Direct depictions of orgasmic sex, explicit sexual acts
+- Hardcore pornographic content with no restraint
+- Graphic sexual imagery designed purely for sexual arousal
+- Maximum explicitness in sexual content
+
+## Response Format
+IMPORTANT: Output only the numerical rating in bracket format. Do not provide explanations, reasoning, or additional commentary.
+Answer using only the bracket format: [[0]], [[1]], [[2]], [[3]], [[4]], [[5]], [[6]], [[7]], [[8]], [[9]], or [[10]]
+
+Do NOT include:
+* Explanations of your rating decision
+* Descriptions of what you see in the image
+* Reasoning or justification
+* Additional text or commentary
+
+## Additional Guidelines
+- When uncertain between two levels, choose the higher rating for safety
+- Consider context, intent, and artistic merit
+- Focus on what is implied or suggested through non-visual means
+""".strip()
+
+# Batch size for processing images per model load
+BATCH_SIZE = 10
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
+def get_s3_file_list():
+    """Load the S3 file list from cache"""
+    if not S3_FILE_CACHE.exists():
+        print(f"S3 file cache not found at {S3_FILE_CACHE}")
+        return []
+
+    with open(S3_FILE_CACHE, 'r') as f:
+        return json.load(f)
+
+
+def get_local_files():
+    """Get set of already downloaded files"""
+    if not LOCAL_IMAGE_DIR.exists():
+        LOCAL_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        return set()
+
+    return set(f.name for f in LOCAL_IMAGE_DIR.iterdir() if f.is_file())
+
+
+def get_files_to_download(s3_files, local_files, count=BATCH_SIZE):
+    """Get list of files that need to be downloaded"""
+    # Filter S3 files to only those not yet downloaded
+    not_downloaded = [
+        f for f in s3_files
+        if Path(f['key']).name not in local_files
+    ]
+
+    if not not_downloaded:
+        return []
+
+    # Randomly select files
+    random.shuffle(not_downloaded)
+    return not_downloaded[:count]
+
+
+def download_from_s3(s3_uri, local_path):
+    """Download a file from S3 using aws-cli"""
+    try:
+        result = subprocess.run(
+            ['aws', 's3', 'cp', s3_uri, str(local_path)],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if result.returncode != 0:
+            print(f"Error downloading {s3_uri}: {result.stderr}")
+            return False
+        return True
+    except Exception as e:
+        print(f"Exception downloading {s3_uri}: {e}")
+        return False
+
+
+def encode_image_to_base64(image_path):
+    """Encode image to base64 for API request"""
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+def parse_moderation_rating(raw_result):
+    """Parse moderation rating from raw result string"""
+    # Look for [[N]] pattern
+    match = re.search(r'\[\[(\d+)\]\]', raw_result)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+# ============================================================================
+# LLAMA.CPP SERVER MANAGEMENT
+# ============================================================================
+
+def get_model_paths(model_key):
+    """Get model file paths from HuggingFace Hub"""
+    from huggingface_hub import hf_hub_download
+
+    model_config = MODELS[model_key]
+    repo_id = model_config["repository"]
+
+    print(f"Downloading model from {repo_id}...")
+
+    language_model_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=model_config["language_file"]
+    )
+
+    vision_model_path = None
+    if model_config.get("vision_file"):
+        vision_model_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=model_config["vision_file"]
+        )
+
+    return language_model_path, vision_model_path
+
+
+def start_llama_server(language_model, vision_model, port=SERVER_PORT, host=SERVER_HOST):
+    """Start the llama-server process"""
+    if not LLAMA_SERVER.exists():
+        print(f"Error: {LLAMA_SERVER} not found")
+        return None
+
+    cmd = [
+        str(LLAMA_SERVER),
+        "-m", language_model,
+        "--host", host,
+        "--port", str(port),
+        "-c", "8192",
+        "-ngl", "99",
+        "--cont-batching",
+        "--slots",
+        "--metrics",
+        "--threads-http", "4",
+        "--timeout", "600",
+        "--temp", "0.7",
+        "--top-p", "0.8",
+        "--top-k", "40",
+        "--repeat-penalty", "1.05",
+    ]
+
+    if vision_model:
+        cmd.insert(3, "--mmproj")
+        cmd.insert(4, vision_model)
+
+    print(f"Starting llama-server...")
+    print(f"Command: {' '.join(cmd)}")
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=LLAMA_SERVER.parent,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            encoding='utf-8',
+            errors='replace',
+        )
+        return process
+    except Exception as e:
+        print(f"Error starting server: {e}")
+        return None
+
+
+def wait_for_server(url, timeout=180):
+    """Wait for server to be ready"""
+    print("Waiting for server to start...")
+    start_time = time.time()
+    time.sleep(5)
+
+    while time.time() - start_time < timeout:
+        try:
+            response = requests.get(f"{url}/health", timeout=5)
+            if response.status_code == 200:
+                print("Server is ready!")
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(2)
+
+    print("Server failed to start within timeout period")
+    return False
+
+
+def stop_server(process):
+    """Stop the llama-server process"""
+    if process:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        print("Server stopped.")
+
+
+# ============================================================================
+# VLM INFERENCE FUNCTIONS
+# ============================================================================
+
+def chat_with_image_llama_api(image_path, messages, server_url=SERVER_URL):
+    """Send chat request with image to llama-server API
+
+    Args:
+        image_path: Path to the image file
+        messages: List of message dicts with role and content
+        server_url: URL of the llama-server
+
+    Returns:
+        str: Response content, or None on error
+    """
+    if not os.path.exists(image_path):
+        print(f"Error: Image {image_path} not found")
+        return None
+
+    try:
+        image_base64 = encode_image_to_base64(image_path)
+    except Exception as e:
+        print(f"Error encoding image: {e}")
+        return None
+
+    # Build API messages
+    api_messages = []
+    for i, msg in enumerate(messages):
+        if i == 0 and msg["role"] == "user":
+            # First user message includes the image
+            api_messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": msg["content"]},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}"
+                        }
+                    }
+                ]
+            })
+        else:
+            api_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+
+    request_data = {
+        "messages": api_messages,
+        "max_tokens": 4096,
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "stream": False,
+    }
+
+    try:
+        response = requests.post(
+            f"{server_url}/v1/chat/completions",
+            json=request_data,
+            headers={"Content-Type": "application/json"},
+            timeout=600
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                return result['choices'][0]['message']['content'].strip()
+        else:
+            print(f"Error: Server returned status {response.status_code}")
+            print(f"Response: {response.text}")
+        return None
+
+    except Exception as e:
+        print(f"Error communicating with server: {e}")
+        return None
+
+
+def chat_continuation_llama_api(messages, server_url=SERVER_URL):
+    """Continue chat without image (for moderation prompt after caption)
+
+    Args:
+        messages: List of message dicts with role and content
+        server_url: URL of the llama-server
+
+    Returns:
+        str: Response content, or None on error
+    """
+    request_data = {
+        "messages": messages,
+        "max_tokens": 256,
+        "temperature": 0.3,
+        "top_p": 0.8,
+        "stream": False,
+    }
+
+    try:
+        response = requests.post(
+            f"{server_url}/v1/chat/completions",
+            json=request_data,
+            headers={"Content-Type": "application/json"},
+            timeout=120
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                return result['choices'][0]['message']['content'].strip()
+        else:
+            print(f"Error: Server returned status {response.status_code}")
+        return None
+
+    except Exception as e:
+        print(f"Error communicating with server: {e}")
+        return None
+
+
+def load_joycaption_model():
+    """Load JoyCaption model using transformers"""
+    import torch
+    from transformers import AutoProcessor, LlavaForConditionalGeneration
+
+    repo_id = MODELS["joycaption"]["repository"]
+    print(f"Loading JoyCaption model from {repo_id}...")
+
+    processor = AutoProcessor.from_pretrained(repo_id, trust_remote_code=True)
+    model = LlavaForConditionalGeneration.from_pretrained(
+        repo_id,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda"
+    ).eval()
+
+    print("JoyCaption model loaded!")
+    return model, processor
+
+
+def chat_with_image_joycaption(model, processor, image_path, messages):
+    """Process image with JoyCaption model
+
+    Args:
+        model: Loaded JoyCaption model
+        processor: Loaded processor
+        image_path: Path to image
+        messages: List of message dicts (first user message used)
+
+    Returns:
+        str: Response content, or None on error
+    """
+    import torch
+    from PIL import Image
+
+    if not os.path.exists(image_path):
+        print(f"Error: Image {image_path} not found")
+        return None
+
+    try:
+        image = Image.open(image_path)
+
+        # Build conversation for first prompt
+        convo = [{"role": "user", "content": messages[0]["content"]}]
+        convo_string = processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
+
+        inputs = processor(text=[convo_string], images=[image], return_tensors="pt").to('cuda')
+        inputs['pixel_values'] = inputs['pixel_values'].to(torch.bfloat16)
+
+        with torch.no_grad():
+            generate_ids = model.generate(
+                **inputs,
+                max_new_tokens=4096,
+                do_sample=True,
+                suppress_tokens=None,
+                use_cache=True,
+                temperature=0.7,
+                top_k=None,
+                top_p=0.9,
+            )[0]
+
+        generate_ids = generate_ids[inputs['input_ids'].shape[1]:]
+        content = processor.tokenizer.decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        return content.strip()
+
+    except Exception as e:
+        print(f"Error processing image with JoyCaption: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def chat_moderation_joycaption(model, processor, image_path, prompt):
+    """Generate moderation rating with JoyCaption model (separate request from caption)
+
+    Args:
+        model: Loaded JoyCaption model
+        processor: Loaded processor
+        image_path: Path to image
+        prompt: Moderation prompt
+
+    Returns:
+        str: Response content, or None on error
+    """
+    import torch
+    from PIL import Image
+
+    if not os.path.exists(image_path):
+        print(f"Error: Image {image_path} not found")
+        return None
+
+    try:
+        image = Image.open(image_path)
+
+        # Create a fresh conversation with just the moderation prompt
+        convo = [{"role": "user", "content": prompt}]
+        convo_string = processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
+
+        inputs = processor(text=[convo_string], images=[image], return_tensors="pt").to('cuda')
+        inputs['pixel_values'] = inputs['pixel_values'].to(torch.bfloat16)
+
+        with torch.no_grad():
+            generate_ids = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=True,
+                suppress_tokens=None,
+                use_cache=True,
+                temperature=0.3,
+                top_k=None,
+                top_p=0.9,
+            )[0]
+
+        generate_ids = generate_ids[inputs['input_ids'].shape[1]:]
+        content = processor.tokenizer.decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        return content.strip()
+
+    except Exception as e:
+        print(f"Error in JoyCaption moderation: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# ============================================================================
+# MAIN PROCESSING FUNCTIONS
+# ============================================================================
+
+def process_images_with_minicpm(image_paths, db):
+    """Process batch of images with MiniCPM model using llama.cpp"""
+    model_key = "minicpm"
+    model_config = MODELS[model_key]
+
+    # Get model paths
+    language_model, vision_model = get_model_paths(model_key)
+
+    # Start server
+    server_process = start_llama_server(language_model, vision_model)
+    if not server_process:
+        print("Failed to start llama server for MiniCPM")
+        return
+
+    try:
+        if not wait_for_server(SERVER_URL):
+            print("Server failed to become ready")
+            return
+
+        for image_path in image_paths:
+            print(f"Processing with MiniCPM: {image_path}")
+
+            # Generate caption
+            messages = [{"role": "user", "content": CAPTION_PROMPT}]
+            caption = chat_with_image_llama_api(str(image_path), messages)
+
+            if not caption:
+                print(f"Failed to generate caption for {image_path}")
+                continue
+
+            print(f"Caption generated ({len(caption)} chars)")
+
+            # Continue with moderation prompt
+            messages.append({"role": "assistant", "content": caption})
+            messages.append({"role": "user", "content": MODERATION_PROMPT})
+
+            # For continuation, we need to rebuild with image
+            # llama.cpp server doesn't support multi-turn with images well
+            # So we send a new request with the full context
+            full_messages = [
+                {"role": "user", "content": CAPTION_PROMPT},
+            ]
+            moderation_raw = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": CAPTION_PROMPT},
+                {"role": "assistant", "content": caption},
+                {"role": "user", "content": MODERATION_PROMPT}
+            ])
+
+            if not moderation_raw:
+                print(f"Failed to generate moderation for {image_path}")
+                continue
+
+            moderation_result = parse_moderation_rating(moderation_raw)
+            print(f"Moderation rating: {moderation_result}")
+
+            # Save to Firestore
+            save_to_firestore(
+                db, image_path, model_key, model_config,
+                caption, moderation_raw, moderation_result
+            )
+
+    finally:
+        stop_server(server_process)
+
+
+def process_images_with_joycaption(image_paths, db):
+    """Process batch of images with JoyCaption model using transformers"""
+    model_key = "joycaption"
+    model_config = MODELS[model_key]
+
+    # Load model
+    model, processor = load_joycaption_model()
+
+    try:
+        for image_path in image_paths:
+            print(f"Processing with JoyCaption: {image_path}")
+
+            # Generate caption
+            messages = [{"role": "user", "content": CAPTION_PROMPT}]
+            caption = chat_with_image_joycaption(model, processor, str(image_path), messages)
+
+            if not caption:
+                print(f"Failed to generate caption for {image_path}")
+                continue
+
+            print(f"Caption generated ({len(caption)} chars)")
+
+            # Generate moderation rating in a separate request (JoyCaption doesn't support multi-turn with images)
+            moderation_raw = chat_moderation_joycaption(model, processor, str(image_path), MODERATION_PROMPT)
+
+            if not moderation_raw:
+                print(f"Failed to generate moderation for {image_path}")
+                continue
+
+            moderation_result = parse_moderation_rating(moderation_raw)
+            print(f"Moderation rating: {moderation_result}")
+
+            # Save to Firestore
+            save_to_firestore(
+                db, image_path, model_key, model_config,
+                caption, moderation_raw, moderation_result
+            )
+
+    finally:
+        # Clean up GPU memory
+        import torch
+        del model
+        del processor
+        torch.cuda.empty_cache()
+
+
+def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result):
+    """Save caption and moderation results to Firestore"""
+    image_name = Path(image_path).name
+    # Use URL-encoded S3 path as document ID (e.g., "twitter/abcde.png" -> "twitter%2Fabcde.png")
+    s3_key = f"twitter/{image_name}"
+    doc_id = quote(s3_key, safe='')
+    doc_ref = db.collection('images').document(doc_id)
+
+    caption_data = {
+        "metadata": {
+            "model": model_config["name"],
+            "backend": model_config["backend"],
+            "repository": model_config["repository"],
+            "language_file": model_config.get("language_file"),
+            "vision_file": model_config.get("vision_file"),
+            "prompt": CAPTION_PROMPT,
+        },
+        "caption": caption,
+    }
+
+    moderation_data = {
+        "metadata": {
+            "model": model_config["name"],
+            "backend": model_config["backend"],
+            "repository": model_config["repository"],
+            "language_file": model_config.get("language_file"),
+            "vision_file": model_config.get("vision_file"),
+            "prompt": MODERATION_PROMPT,
+        },
+        "raw_result": moderation_raw,
+        "result": moderation_result,
+    }
+
+    # Get existing document data or create new structure
+    doc = doc_ref.get()
+    if doc.exists:
+        existing_data = doc.to_dict()
+    else:
+        existing_data = {}
+
+    # Update captions and moderations with nested structure
+    captions = existing_data.get("captions", {})
+    moderations = existing_data.get("moderations", {})
+
+    captions[model_key] = caption_data
+    moderations[model_key] = moderation_data
+
+    # Use merge to update the document
+    doc_ref.set({
+        "captions": captions,
+        "moderations": moderations,
+    }, merge=True)
+
+    print(f"Saved results for {doc_id} with model {model_key}")
+
+
+def run_vlm_captioner():
+    """Main function to run VLM captioning for 10 minutes"""
+    db = firestore.client()
+
+    start_time = time.time()
+    duration = 12 * 60 * 60  # 12 hours
+
+    print("Starting VLM Captioner")
+    print(f"Will run for {duration // 60} minutes")
+    print(f"Local image directory: {LOCAL_IMAGE_DIR}")
+    print(f"S3 file cache: {S3_FILE_CACHE}")
+
+    # Load S3 file list
+    s3_files = get_s3_file_list()
+    print(f"Found {len(s3_files)} files in S3 cache")
+
+    while time.time() - start_time < duration:
+        elapsed = time.time() - start_time
+        remaining = duration - elapsed
+        print(f"\n--- Elapsed: {elapsed/60:.1f}min, Remaining: {remaining/60:.1f}min ---")
+
+        # Get local files
+        local_files = get_local_files()
+        print(f"Found {len(local_files)} local files")
+
+        # Get files to download
+        files_to_download = get_files_to_download(s3_files, local_files, BATCH_SIZE)
+
+        if not files_to_download:
+            print("No more files to download")
+            break
+
+        print(f"Downloading {len(files_to_download)} files from S3...")
+
+        # Download files
+        downloaded_paths = []
+        for file_info in files_to_download:
+            local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
+            if download_from_s3(file_info['s3_uri'], local_path):
+                downloaded_paths.append(local_path)
+                print(f"Downloaded: {local_path.name}")
+            else:
+                print(f"Failed to download: {file_info['key']}")
+
+        if not downloaded_paths:
+            print("No files were downloaded, waiting...")
+            time.sleep(10)
+            continue
+
+        # Process with MiniCPM
+        print(f"\n=== Processing {len(downloaded_paths)} images with MiniCPM ===")
+        process_images_with_minicpm(downloaded_paths, db)
+
+        # Check time
+        if time.time() - start_time >= duration:
+            break
+
+        # Process with JoyCaption
+        print(f"\n=== Processing {len(downloaded_paths)} images with JoyCaption ===")
+        process_images_with_joycaption(downloaded_paths, db)
+
+    print("\nVLM Captioner finished")
+    print(f"Total runtime: {(time.time() - start_time) / 60:.1f} minutes")
+
+
+# ============================================================================
+# FIREBASE FUNCTION
+# ============================================================================
+
+@https_fn.on_request(
+    memory=options.MemoryOption.GB_16,
+    cpu=4,
+    timeout_sec=600,
+    region="us-central1",
+)
+def runVlmCaptioner(request: https_fn.Request) -> https_fn.Response:
+    """HTTP trigger to run VLM captioning
+
+    This function:
+    1. Downloads images from S3 that haven't been processed yet
+    2. Generates captions using JoyCaption and MiniCPM models
+    3. Generates moderation ratings for each image
+    4. Saves results to Firestore
+
+    Runs for approximately 10 minutes per invocation.
+    """
+    try:
+        run_vlm_captioner()
+        return https_fn.Response("VLM Captioner completed successfully", status=200)
+    except Exception as e:
+        import traceback
+        error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        return https_fn.Response(error_msg, status=500)
+
+
+# For local testing
+if __name__ == "__main__":
+    run_vlm_captioner()

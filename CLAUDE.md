@@ -44,7 +44,8 @@ npm run serve        # Build + start emulators
 ### Worker (Python)
 ```bash
 cd worker
-pip install -r requirements.txt
+python -m venv venv
+venv/bin/pip install -r requirements.txt
 ```
 
 ### Deployment
