@@ -69,32 +69,37 @@ function isExpanded(index: number) {
 </script>
 
 <template>
-  <div class="whitespace-pre-wrap">
-    <template v-for="(part, i) in parsedContent" :key="i">
-      <span v-if="part.type === 'text'">{{ part.content }}</span>
-      <div v-else class="my-2">
-        <button
-          @click="toggleBlock(part.index)"
-          class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-md transition-colors"
-        >
-          <svg
-            :class="['w-3 h-3 transition-transform', isExpanded(part.index) ? 'rotate-90' : '']"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-          </svg>
-          <span>Thinking...</span>
-          <span class="text-purple-500">({{ part.content.length }} chars)</span>
-        </button>
-        <div
-          v-if="isExpanded(part.index)"
-          class="mt-2 p-3 bg-purple-50 border-l-4 border-purple-300 rounded-r-lg text-sm text-purple-900"
-        >
-          {{ part.content }}
-        </div>
-      </div>
-    </template>
-  </div>
+	<div class="whitespace-pre-wrap">
+		<template v-for="(part, i) in parsedContent" :key="i">
+			<span v-if="part.type === 'text'">{{ part.content }}</span>
+			<div v-else class="my-2">
+				<button
+					@click="toggleBlock(part.index)"
+					class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-md transition-colors"
+				>
+					<svg
+						:class="['w-3 h-3 transition-transform', isExpanded(part.index) ? 'rotate-90' : '']"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M9 5l7 7-7 7"
+						/>
+					</svg>
+					<span>Thinking...</span>
+					<span class="text-purple-500">({{ part.content.length }}chars)</span>
+				</button>
+				<div
+					v-if="isExpanded(part.index)"
+					class="mt-2 p-3 bg-purple-50 border-l-4 border-purple-300 rounded-r-lg text-sm text-purple-900"
+				>
+					{{ part.content }}
+				</div>
+			</div>
+		</template>
+	</div>
 </template>

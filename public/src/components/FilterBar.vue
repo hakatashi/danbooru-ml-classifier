@@ -68,50 +68,56 @@ watch([model, rating], () => {
 </script>
 
 <template>
-  <div class="bg-white rounded-xl shadow-md p-4 mb-6">
-    <div class="flex flex-wrap items-center gap-4">
-      <div class="flex items-center gap-2">
-        <label class="text-sm font-medium text-gray-700">Sort:</label>
-        <select
-          v-model="sort"
-          class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        >
-          <option v-for="option in sortOptions" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
-      </div>
+	<div class="bg-white rounded-xl shadow-md p-4 mb-6">
+		<div class="flex flex-wrap items-center gap-4">
+			<div class="flex items-center gap-2">
+				<label class="text-sm font-medium text-gray-700">Sort:</label>
+				<select
+					v-model="sort"
+					class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+				>
+					<option
+						v-for="option in sortOptions"
+						:key="option.value"
+						:value="option.value"
+					>
+						{{ option.label }}
+					</option>
+				</select>
+			</div>
 
-      <div class="flex items-center gap-2">
-        <label class="text-sm font-medium text-gray-700">Filter Model:</label>
-        <select
-          v-model="model"
-          class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        >
-          <option value="all">All Models</option>
-          <option value="joycaption">JoyCaption</option>
-          <option value="minicpm">MiniCPM</option>
-        </select>
-      </div>
+			<div class="flex items-center gap-2">
+				<label class="text-sm font-medium text-gray-700">Filter Model:</label>
+				<select
+					v-model="model"
+					class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+				>
+					<option value="all">All Models</option>
+					<option value="joycaption">JoyCaption</option>
+					<option value="minicpm">MiniCPM</option>
+				</select>
+			</div>
 
-      <div class="flex items-center gap-2">
-        <label class="text-sm font-medium text-gray-700">Rating:</label>
-        <select
-          v-model="rating"
-          class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        >
-          <option value="all">All Ratings</option>
-          <option value="0-2">0-2 (Safe)</option>
-          <option value="3-4">3-4 (Slightly Suggestive)</option>
-          <option value="5-6">5-6 (Sensitive)</option>
-          <option value="7-8">7-8 (Adult)</option>
-          <option value="9-10">9-10 (Explicit)</option>
-        </select>
-      </div>
+			<div class="flex items-center gap-2">
+				<label class="text-sm font-medium text-gray-700">Rating:</label>
+				<select
+					v-model="rating"
+					class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+				>
+					<option value="all">All Ratings</option>
+					<option value="0-2">0-2 (Safe)</option>
+					<option value="3-4">3-4 (Slightly Suggestive)</option>
+					<option value="5-6">5-6 (Sensitive)</option>
+					<option value="7-8">7-8 (Adult)</option>
+					<option value="9-10">9-10 (Explicit)</option>
+				</select>
+			</div>
 
-      <div class="ml-auto bg-blue-50 text-blue-700 px-4 py-2 rounded-lg text-sm font-medium">
-        {{ totalCount }} images
-      </div>
-    </div>
-  </div>
+			<div
+				class="ml-auto bg-blue-50 text-blue-700 px-4 py-2 rounded-lg text-sm font-medium"
+			>
+				{{ totalCount }}images
+			</div>
+		</div>
+	</div>
 </template>

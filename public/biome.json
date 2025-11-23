@@ -43,5 +43,11 @@
 		"formatter": {
 			"quoteStyle": "single"
 		}
+	},
+	"html": {
+		"formatter": {
+			"enabled": true
+		},
+		"experimentalFullSupportEnabled": true
 	}
 }
