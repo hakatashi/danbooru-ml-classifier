@@ -1,0 +1,60 @@
+name: Deploy to Firebase Hosting on PR
+
+on:
+  pull_request:
+  pull_request_target:
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  check_access:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]') ||
+        (github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]')
+      )
+    outputs:
+      status: ${{ steps.check.outcome }}
+    steps:
+      - id: check
+        name: Check if the PR author has access to the Firebase project
+        env:
+          FIREBASE_SERVICE_ACCOUNT_DANBOORU_ML_CLASSIFIER: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DANBOORU_ML_CLASSIFIER }}
+        continue-on-error: true
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_DANBOORU_ML_CLASSIFIER" ]; then
+            echo "The FIREBASE_SERVICE_ACCOUNT_DANBOORU_ML_CLASSIFIER secret is not set."
+            exit 1
+          fi
+
+  build_and_preview:
+    needs: check_access
+    if: needs.check_access.outputs.status == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: ./public
+        run: npm ci
+
+      - name: Build
+        working-directory: ./public
+        run: npm run build
+
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DANBOORU_ML_CLASSIFIER }}
+          projectId: danbooru-ml-classifier
+          entryPoint: ./public

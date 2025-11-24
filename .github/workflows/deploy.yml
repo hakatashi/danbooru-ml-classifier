@@ -1,0 +1,59 @@
+name: Deploy to Firebase Hosting
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  lint_and_format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: ./public
+        run: npm ci
+
+      - name: Lint
+        working-directory: ./public
+        run: npm run lint
+
+      - name: Format check
+        working-directory: ./public
+        run: npm run format
+
+  build_and_deploy:
+    needs: [lint_and_format]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: ./public
+        run: npm ci
+
+      - name: Build
+        working-directory: ./public
+        run: npm run build
+
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: "${{ secrets.GITHUB_TOKEN }}"
+          firebaseServiceAccount: "${{ secrets.FIREBASE_SERVICE_ACCOUNT_DANBOORU_ML_CLASSIFIER }}"
+          channelId: live
+          projectId: danbooru-ml-classifier
+          entryPoint: ./public
