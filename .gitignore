@@ -138,3 +138,6 @@ data
 danbooru-ml-classifier-*.json
 *.joblib
 *.zip
+
+# Firebase
+.firebase/
