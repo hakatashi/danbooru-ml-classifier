@@ -12,10 +12,8 @@ import time
 import re
 import subprocess
 import base64
-import torch  # Import torch before transformers to ensure proper detection
 import requests
 from pathlib import Path
-from threading import Thread
 from urllib.parse import quote
 from firebase_functions import https_fn, options
 from firebase_admin import initialize_app, firestore
@@ -63,11 +61,12 @@ MODELS = {
         "vision_file": "GGUF/mmproj-model-f16.gguf",
     },
     "joycaption": {
-        "name": "JoyCaption Beta One (Llava)",
-        "backend": "transformers",
-        "repository": "fancyfeast/llama-joycaption-beta-one-hf-llava",
-        "language_file": None,
-        "vision_file": None,
+        "name": "JoyCaption Beta One (Llava F16)",
+        "backend": "llama.cpp",
+        "language_repository": "concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf",
+        "language_file": "Llama-Joycaption-Beta-One-Hf-Llava-F16.gguf",
+        "vision_repository": "concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf",
+        "vision_file": "llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
     },
 }
 
@@ -219,7 +218,7 @@ def get_files_to_download(s3_files, local_files, count=BATCH_SIZE):
     return not_downloaded[:count]
 
 
-def download_from_s3(s3_uri, local_path):
+def download_from_s3(s3_uri, local_path, s3_key, db):
     """Download a file from S3 using aws-cli"""
     try:
         result = subprocess.run(
@@ -231,6 +230,23 @@ def download_from_s3(s3_uri, local_path):
         if result.returncode != 0:
             print(f"Error downloading {s3_uri}: {result.stderr}")
             return False
+
+        # Update timestamp to current time
+        Path(local_path).touch()
+
+        # Save basic metadata to Firestore
+        doc_id = quote(s3_key, safe='')
+        doc_ref = db.collection('images').document(doc_id)
+        file_type = s3_key.split('/')[0]  # e.g., "twitter"
+        file_id = s3_key.split('/')[1].split('.')[0]  # e.g., "abcde"
+
+        doc_ref.set({
+            "key": s3_key,
+            "status": "liked",
+            "type": file_type,
+            "postId": file_id,
+        }, merge=True)
+
         return True
     except Exception as e:
         print(f"Exception downloading {s3_uri}: {e}")
@@ -261,19 +277,23 @@ def get_model_paths(model_key):
     from huggingface_hub import hf_hub_download
 
     model_config = MODELS[model_key]
-    repo_id = model_config["repository"]
 
-    print(f"Downloading model from {repo_id}...")
+    # Handle models with separate repositories for language and vision
+    language_repo = model_config.get("language_repository") or model_config.get("repository")
+    vision_repo = model_config.get("vision_repository") or model_config.get("repository")
+
+    print(f"Downloading language model from {language_repo}...")
 
     language_model_path = hf_hub_download(
-        repo_id=repo_id,
+        repo_id=language_repo,
         filename=model_config["language_file"]
     )
 
     vision_model_path = None
     if model_config.get("vision_file"):
+        print(f"Downloading vision model from {vision_repo}...")
         vision_model_path = hf_hub_download(
-            repo_id=repo_id,
+            repo_id=vision_repo,
             filename=model_config["vision_file"]
         )
 
@@ -322,6 +342,7 @@ def start_llama_server(language_model, vision_model, port=SERVER_PORT, host=SERV
             universal_newlines=True,
             encoding='utf-8',
             errors='replace',
+            start_new_session=True,  # 新しいセッションを開始（子プロセス管理のため）
         )
         return process
     except Exception as e:
@@ -352,12 +373,24 @@ def wait_for_server(url, timeout=180):
 def stop_server(process):
     """Stop the llama-server process"""
     if process:
+        # 子プロセスも含めて終了させる
+        import signal
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+
         process.terminate()
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
+            process.wait()
+
         print("Server stopped.")
+
+        # ポートが解放されるまで少し待つ
+        time.sleep(3)
 
 
 # ============================================================================
@@ -477,129 +510,6 @@ def chat_continuation_llama_api(messages, server_url=SERVER_URL):
         return None
 
 
-def load_joycaption_model():
-    """Load JoyCaption model using transformers"""
-    import torch
-    from transformers import AutoProcessor, LlavaForConditionalGeneration
-
-    repo_id = MODELS["joycaption"]["repository"]
-    print(f"Loading JoyCaption model from {repo_id}...")
-
-    processor = AutoProcessor.from_pretrained(repo_id, trust_remote_code=True)
-    model = LlavaForConditionalGeneration.from_pretrained(
-        repo_id,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda"
-    ).eval()
-
-    print("JoyCaption model loaded!")
-    return model, processor
-
-
-def chat_with_image_joycaption(model, processor, image_path, messages):
-    """Process image with JoyCaption model
-
-    Args:
-        model: Loaded JoyCaption model
-        processor: Loaded processor
-        image_path: Path to image
-        messages: List of message dicts (first user message used)
-
-    Returns:
-        str: Response content, or None on error
-    """
-    import torch
-    from PIL import Image
-
-    if not os.path.exists(image_path):
-        print(f"Error: Image {image_path} not found")
-        return None
-
-    try:
-        image = Image.open(image_path)
-
-        # Build conversation for first prompt
-        convo = [{"role": "user", "content": messages[0]["content"]}]
-        convo_string = processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
-
-        inputs = processor(text=[convo_string], images=[image], return_tensors="pt").to('cuda')
-        inputs['pixel_values'] = inputs['pixel_values'].to(torch.bfloat16)
-
-        with torch.no_grad():
-            generate_ids = model.generate(
-                **inputs,
-                max_new_tokens=4096,
-                do_sample=True,
-                suppress_tokens=None,
-                use_cache=True,
-                temperature=0.7,
-                top_k=None,
-                top_p=0.9,
-            )[0]
-
-        generate_ids = generate_ids[inputs['input_ids'].shape[1]:]
-        content = processor.tokenizer.decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-        return content.strip()
-
-    except Exception as e:
-        print(f"Error processing image with JoyCaption: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-def chat_moderation_joycaption(model, processor, image_path, prompt):
-    """Generate moderation rating with JoyCaption model (separate request from caption)
-
-    Args:
-        model: Loaded JoyCaption model
-        processor: Loaded processor
-        image_path: Path to image
-        prompt: Moderation prompt
-
-    Returns:
-        str: Response content, or None on error
-    """
-    import torch
-    from PIL import Image
-
-    if not os.path.exists(image_path):
-        print(f"Error: Image {image_path} not found")
-        return None
-
-    try:
-        image = Image.open(image_path)
-
-        # Create a fresh conversation with just the moderation prompt
-        convo = [{"role": "user", "content": prompt}]
-        convo_string = processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
-
-        inputs = processor(text=[convo_string], images=[image], return_tensors="pt").to('cuda')
-        inputs['pixel_values'] = inputs['pixel_values'].to(torch.bfloat16)
-
-        with torch.no_grad():
-            generate_ids = model.generate(
-                **inputs,
-                max_new_tokens=256,
-                do_sample=True,
-                suppress_tokens=None,
-                use_cache=True,
-                temperature=0.3,
-                top_k=None,
-                top_p=0.9,
-            )[0]
-
-        generate_ids = generate_ids[inputs['input_ids'].shape[1]:]
-        content = processor.tokenizer.decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-        return content.strip()
-
-    except Exception as e:
-        print(f"Error in JoyCaption moderation: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-
 # ============================================================================
 # MAIN PROCESSING FUNCTIONS
 # ============================================================================
@@ -670,20 +580,30 @@ def process_images_with_minicpm(image_paths, db):
 
 
 def process_images_with_joycaption(image_paths, db):
-    """Process batch of images with JoyCaption model using transformers"""
+    """Process batch of images with JoyCaption model using llama.cpp"""
     model_key = "joycaption"
     model_config = MODELS[model_key]
 
-    # Load model
-    model, processor = load_joycaption_model()
+    # Get model paths
+    language_model, vision_model = get_model_paths(model_key)
+
+    # Start server
+    server_process = start_llama_server(language_model, vision_model)
+    if not server_process:
+        print("Failed to start llama server for JoyCaption")
+        return
 
     try:
+        if not wait_for_server(SERVER_URL):
+            print("Server failed to become ready")
+            return
+
         for image_path in image_paths:
             print(f"Processing with JoyCaption: {image_path}")
 
             # Generate caption
             messages = [{"role": "user", "content": CAPTION_PROMPT}]
-            caption = chat_with_image_joycaption(model, processor, str(image_path), messages)
+            caption = chat_with_image_llama_api(str(image_path), messages)
 
             if not caption:
                 print(f"Failed to generate caption for {image_path}")
@@ -691,8 +611,12 @@ def process_images_with_joycaption(image_paths, db):
 
             print(f"Caption generated ({len(caption)} chars)")
 
-            # Generate moderation rating in a separate request (JoyCaption doesn't support multi-turn with images)
-            moderation_raw = chat_moderation_joycaption(model, processor, str(image_path), MODERATION_PROMPT)
+            # Generate moderation rating with image context
+            moderation_raw = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": CAPTION_PROMPT},
+                {"role": "assistant", "content": caption},
+                {"role": "user", "content": MODERATION_PROMPT}
+            ])
 
             if not moderation_raw:
                 print(f"Failed to generate moderation for {image_path}")
@@ -708,11 +632,7 @@ def process_images_with_joycaption(image_paths, db):
             )
 
     finally:
-        # Clean up GPU memory
-        import torch
-        del model
-        del processor
-        torch.cuda.empty_cache()
+        stop_server(server_process)
 
 
 def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result):
@@ -723,11 +643,16 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
     doc_id = quote(s3_key, safe='')
     doc_ref = db.collection('images').document(doc_id)
 
+    # Handle both single repository and separate language/vision repositories
+    language_repo = model_config.get("language_repository") or model_config.get("repository")
+    vision_repo = model_config.get("vision_repository") or model_config.get("repository")
+
     caption_data = {
         "metadata": {
             "model": model_config["name"],
             "backend": model_config["backend"],
-            "repository": model_config["repository"],
+            "language_repository": language_repo,
+            "vision_repository": vision_repo,
             "language_file": model_config.get("language_file"),
             "vision_file": model_config.get("vision_file"),
             "prompt": CAPTION_PROMPT,
@@ -739,7 +664,8 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
         "metadata": {
             "model": model_config["name"],
             "backend": model_config["backend"],
-            "repository": model_config["repository"],
+            "language_repository": language_repo,
+            "vision_repository": vision_repo,
             "language_file": model_config.get("language_file"),
             "vision_file": model_config.get("vision_file"),
             "prompt": MODERATION_PROMPT,
@@ -787,50 +713,44 @@ def run_vlm_captioner():
     s3_files = get_s3_file_list()
     print(f"Found {len(s3_files)} files in S3 cache")
 
-    while time.time() - start_time < duration:
-        elapsed = time.time() - start_time
-        remaining = duration - elapsed
-        print(f"\n--- Elapsed: {elapsed/60:.1f}min, Remaining: {remaining/60:.1f}min ---")
+    elapsed = time.time() - start_time
+    remaining = duration - elapsed
+    print(f"\n--- Elapsed: {elapsed/60:.1f}min, Remaining: {remaining/60:.1f}min ---")
 
-        # Get local files
-        local_files = get_local_files()
-        print(f"Found {len(local_files)} local files")
+    # Get local files
+    local_files = get_local_files()
+    print(f"Found {len(local_files)} local files")
 
-        # Get files to download
-        files_to_download = get_files_to_download(s3_files, local_files, BATCH_SIZE)
+    # Get files to download
+    files_to_download = get_files_to_download(s3_files, local_files, BATCH_SIZE)
 
-        if not files_to_download:
-            print("No more files to download")
-            break
+    if not files_to_download:
+        print("No more files to download")
+        return
 
-        print(f"Downloading {len(files_to_download)} files from S3...")
+    print(f"Downloading {len(files_to_download)} files from S3...")
 
-        # Download files
-        downloaded_paths = []
-        for file_info in files_to_download:
-            local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
-            if download_from_s3(file_info['s3_uri'], local_path):
-                downloaded_paths.append(local_path)
-                print(f"Downloaded: {local_path.name}")
-            else:
-                print(f"Failed to download: {file_info['key']}")
+    # Download files
+    downloaded_paths = []
+    for file_info in files_to_download:
+        local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
+        if download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db):
+            downloaded_paths.append(local_path)
+            print(f"Downloaded: {local_path.name}")
+        else:
+            print(f"Failed to download: {file_info['key']}")
 
-        if not downloaded_paths:
-            print("No files were downloaded, waiting...")
-            time.sleep(10)
-            continue
+    if not downloaded_paths:
+        print("No files were downloaded")
+        return
 
-        # Process with MiniCPM
-        print(f"\n=== Processing {len(downloaded_paths)} images with MiniCPM ===")
-        process_images_with_minicpm(downloaded_paths, db)
+    # Process with JoyCaption
+    print(f"\n=== Processing {len(downloaded_paths)} images with JoyCaption ===")
+    process_images_with_joycaption(downloaded_paths, db)
 
-        # Check time
-        if time.time() - start_time >= duration:
-            break
-
-        # Process with JoyCaption
-        print(f"\n=== Processing {len(downloaded_paths)} images with JoyCaption ===")
-        process_images_with_joycaption(downloaded_paths, db)
+    # Process with MiniCPM
+    print(f"\n=== Processing {len(downloaded_paths)} images with MiniCPM ===")
+    process_images_with_minicpm(downloaded_paths, db)
 
     print("\nVLM Captioner finished")
     print(f"Total runtime: {(time.time() - start_time) / 60:.1f} minutes")
