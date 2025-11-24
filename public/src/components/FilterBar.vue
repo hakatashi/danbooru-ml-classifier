@@ -2,18 +2,22 @@
 import {ref, watch} from 'vue';
 import type {SortOption} from '../composables/useImages';
 
-defineProps<{
+const props = defineProps<{
 	totalCount: number;
+	currentPage: number;
+	canGoNext: boolean;
+	canGoPrev: boolean;
 }>();
 
 const emit = defineEmits<{
 	(e: 'sort-change', sort: SortOption): void;
 	(e: 'filter-change', filters: {model: string; rating: string}): void;
+	(e: 'page-change', page: number): void;
 }>();
 
 const model = ref('all');
 const rating = ref('all');
-const sort = ref('joycaption-desc');
+const sort = ref('minicpm-desc');
 
 const sortOptions = [
 	{
@@ -65,11 +69,23 @@ watch([model, rating], () => {
 		rating: rating.value,
 	});
 });
+
+function prev() {
+	if (props.canGoPrev) {
+		emit('page-change', props.currentPage - 1);
+	}
+}
+
+function next() {
+	if (props.canGoNext) {
+		emit('page-change', props.currentPage + 1);
+	}
+}
 </script>
 
 <template>
-	<div class="bg-white rounded-xl shadow-md p-4 mb-6">
-		<div class="flex flex-wrap items-center gap-4">
+	<div class="sticky top-0 z-10 bg-white rounded-xl shadow-md p-4 mb-6">
+		<div class="flex flex-wrap items-center gap-4 mb-3">
 			<div class="flex items-center gap-2">
 				<label class="text-sm font-medium text-gray-700">Sort:</label>
 				<select
@@ -118,6 +134,71 @@ watch([model, rating], () => {
 			>
 				{{ totalCount }}images
 			</div>
+		</div>
+
+		<!-- Pagination Controls -->
+		<div
+			class="flex justify-center items-center gap-3 pt-3 border-t border-gray-200"
+		>
+			<button
+				@click="prev"
+				:disabled="!canGoPrev"
+				:class="[
+					'px-4 py-1.5 rounded-lg text-sm font-medium transition-all',
+					canGoPrev
+						? 'bg-blue-500 text-white hover:bg-blue-600 shadow-sm hover:shadow-md'
+						: 'bg-gray-100 text-gray-400 cursor-not-allowed',
+				]"
+			>
+				<span class="flex items-center gap-1.5">
+					<svg
+						class="w-4 h-4"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M15 19l-7-7 7-7"
+						/>
+					</svg>
+					Previous
+				</span>
+			</button>
+
+			<span class="text-gray-600 font-medium text-sm px-3">
+				Page {{ currentPage + 1 }}
+			</span>
+
+			<button
+				@click="next"
+				:disabled="!canGoNext"
+				:class="[
+					'px-4 py-1.5 rounded-lg text-sm font-medium transition-all',
+					canGoNext
+						? 'bg-blue-500 text-white hover:bg-blue-600 shadow-sm hover:shadow-md'
+						: 'bg-gray-100 text-gray-400 cursor-not-allowed',
+				]"
+			>
+				<span class="flex items-center gap-1.5">
+					Next
+					<svg
+						class="w-4 h-4"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M9 5l7 7-7 7"
+						/>
+					</svg>
+				</span>
+			</button>
 		</div>
 	</div>
 </template>

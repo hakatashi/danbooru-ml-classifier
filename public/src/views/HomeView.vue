@@ -3,7 +3,6 @@ import type {User} from 'firebase/auth';
 import {computed, ref, watch} from 'vue';
 import FilterBar from '../components/FilterBar.vue';
 import ImageCard from '../components/ImageCard.vue';
-import Pagination from '../components/Pagination.vue';
 import {type SortOption, useImages} from '../composables/useImages';
 import type {ImageDocument} from '../types';
 
@@ -11,11 +10,10 @@ const props = defineProps<{
 	user: User | null;
 }>();
 
-const PAGE_SIZE = 20;
-
-const {images, loading, error, hasMore, loadImages, loadMore} = useImages();
+const {loading, error, hasNextPage, hasPrevPage, loadPage} = useImages();
 const currentPage = ref(0);
 const currentSort = ref<SortOption | null>(null);
+const currentImages = ref<ImageDocument[]>([]);
 
 const filters = ref({
 	model: 'all',
@@ -24,9 +22,11 @@ const filters = ref({
 
 watch(
 	() => props.user,
-	(newUser) => {
+	async (newUser) => {
 		if (newUser && currentSort.value) {
-			loadImages(currentSort.value);
+			const result = await loadPage(currentSort.value, 0);
+			currentImages.value = result.images;
+			currentPage.value = result.page;
 		}
 	},
 	{immediate: true},
@@ -44,7 +44,7 @@ function getModerationRating(
 }
 
 const filteredImages = computed(() => {
-	return images.value.filter((img) => {
+	return currentImages.value.filter((img) => {
 		// Model filter
 		if (filters.value.model !== 'all') {
 			if (!img.captions || !img.captions[filters.value.model]) {
@@ -71,41 +71,38 @@ const filteredImages = computed(() => {
 	});
 });
 
-const totalPages = computed(() =>
-	Math.ceil(filteredImages.value.length / PAGE_SIZE),
-);
+const canGoNext = computed(() => {
+	// Can go next if there are more pages OR if current page has filtered results
+	return hasNextPage.value && filteredImages.value.length > 0;
+});
 
-const paginatedImages = computed(() => {
-	const start = currentPage.value * PAGE_SIZE;
-	return filteredImages.value.slice(start, start + PAGE_SIZE);
+const canGoPrev = computed(() => {
+	return hasPrevPage.value;
 });
 
 async function onSortChange(sort: SortOption) {
 	currentSort.value = sort;
 	currentPage.value = 0;
 	if (props.user) {
-		await loadImages(sort);
+		const result = await loadPage(sort, 0);
+		currentImages.value = result.images;
+		currentPage.value = result.page;
 	}
 }
 
 function onFilterChange(newFilters: {model: string; rating: string}) {
 	filters.value = newFilters;
-	currentPage.value = 0;
 }
 
 async function onPageChange(page: number) {
-	currentPage.value = page;
+	if (!currentSort.value || !props.user) return;
+
 	window.scrollTo({top: 0, behavior: 'smooth'});
 
-	// Load more if we're near the end
-	const neededImages = (page + 2) * PAGE_SIZE;
-	if (neededImages > images.value.length && hasMore.value && !loading.value) {
-		await loadMore();
-	}
-}
-
-async function handleLoadMore() {
-	await loadMore();
+	const direction = page > currentPage.value ? 'forward' : 'backward';
+	const result = await loadPage(currentSort.value, page, direction);
+	currentImages.value = result.images;
+	currentPage.value = result.page;
 }
 </script>
 
@@ -145,13 +142,17 @@ async function handleLoadMore() {
 		<template v-else>
 			<FilterBar
 				:total-count="filteredImages.length"
+				:current-page="currentPage"
+				:can-go-next="canGoNext"
+				:can-go-prev="canGoPrev"
 				@sort-change="onSortChange"
 				@filter-change="onFilterChange"
+				@page-change="onPageChange"
 			/>
 
 			<!-- Loading State -->
 			<div
-				v-if="loading && images.length === 0"
+				v-if="loading && currentImages.length === 0"
 				class="flex justify-center items-center py-20"
 			>
 				<div class="flex flex-col items-center gap-4">
@@ -196,48 +197,16 @@ async function handleLoadMore() {
 			</div>
 
 			<!-- Image Grid - Full Width -->
-			<template v-else>
-				<!-- Top Pagination -->
-				<Pagination
-					:current-page="currentPage"
-					:total-pages="totalPages"
-					@page-change="onPageChange"
+			<div
+				v-else
+				class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4"
+			>
+				<ImageCard
+					v-for="image in filteredImages"
+					:key="image.id"
+					:image="image"
 				/>
-
-				<div
-					class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4"
-				>
-					<ImageCard
-						v-for="image in paginatedImages"
-						:key="image.id"
-						:image="image"
-					/>
-				</div>
-
-				<!-- Bottom Pagination -->
-				<Pagination
-					:current-page="currentPage"
-					:total-pages="totalPages"
-					@page-change="onPageChange"
-				/>
-
-				<!-- Load More Button -->
-				<div v-if="hasMore" class="flex justify-center mt-4">
-					<button
-						@click="handleLoadMore"
-						:disabled="loading"
-						class="px-6 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white rounded-lg font-medium transition-colors"
-					>
-						<span v-if="loading" class="flex items-center gap-2">
-							<div
-								class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"
-							></div>
-							Loading...
-						</span>
-						<span v-else>Load More</span>
-					</button>
-				</div>
-			</template>
+			</div>
 		</template>
 	</div>
 </template>

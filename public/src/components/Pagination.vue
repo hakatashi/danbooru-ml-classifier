@@ -1,24 +1,20 @@
 <script setup lang="ts">
-import {computed} from 'vue';
-
 const props = defineProps<{
 	currentPage: number;
-	totalPages: number;
+	canGoNext: boolean;
+	canGoPrev: boolean;
 }>();
 
 const emit = defineEmits<(e: 'page-change', page: number) => void>();
 
-const canGoPrev = computed(() => props.currentPage > 0);
-const canGoNext = computed(() => props.currentPage < props.totalPages - 1);
-
 function prev() {
-	if (canGoPrev.value) {
+	if (props.canGoPrev) {
 		emit('page-change', props.currentPage - 1);
 	}
 }
 
 function next() {
-	if (canGoNext.value) {
+	if (props.canGoNext) {
 		emit('page-change', props.currentPage + 1);
 	}
 }
@@ -55,7 +51,7 @@ function next() {
 		</button>
 
 		<span class="text-gray-600 font-medium px-4">
-			Page {{ currentPage + 1 }}of {{ totalPages || 1 }}
+			Page {{ currentPage + 1 }}
 		</span>
 
 		<button

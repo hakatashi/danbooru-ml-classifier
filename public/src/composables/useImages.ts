@@ -19,29 +19,54 @@ export interface SortOption {
 	direction: 'asc' | 'desc';
 }
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 20;
 
-const images = ref<ImageDocument[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
-const hasMore = ref(true);
-const lastDoc = ref<QueryDocumentSnapshot<DocumentData> | null>(null);
 const currentSort = ref<SortOption | null>(null);
 
+// Store page data with cursors for navigation
+const pageCache = ref<
+	Map<
+		number,
+		{
+			images: ImageDocument[];
+			startCursor: QueryDocumentSnapshot<DocumentData> | null;
+			endCursor: QueryDocumentSnapshot<DocumentData> | null;
+		}
+	>
+>(new Map());
+const hasNextPage = ref(true);
+const hasPrevPage = ref(false);
+
 export function useImages() {
-	async function loadImages(sort: SortOption) {
-		// If sort changed, reset
+	async function loadPage(
+		sort: SortOption,
+		page: number,
+		direction: 'forward' | 'backward' = 'forward',
+	) {
+		let effectivePage = page;
+
+		// If sort changed, reset cache
 		if (
 			currentSort.value?.field !== sort.field ||
 			currentSort.value?.direction !== sort.direction
 		) {
-			images.value = [];
-			lastDoc.value = null;
-			hasMore.value = true;
+			pageCache.value.clear();
+			hasNextPage.value = true;
+			hasPrevPage.value = false;
 			currentSort.value = sort;
+			effectivePage = 0;
 		}
 
-		if (!hasMore.value) return;
+		// Check if page is already cached
+		const cached = pageCache.value.get(effectivePage);
+		if (cached) {
+			hasNextPage.value =
+				effectivePage === pageCache.value.size - 1 ? hasNextPage.value : true;
+			hasPrevPage.value = effectivePage > 0;
+			return {images: cached.images, page: effectivePage};
+		}
 
 		loading.value = true;
 		error.value = null;
@@ -49,24 +74,34 @@ export function useImages() {
 		try {
 			const imagesRef = collection(db, 'images');
 
-			const q = lastDoc.value
-				? query(
-						imagesRef,
-						orderBy(sort.field, sort.direction),
-						startAfter(lastDoc.value),
-						limit(PAGE_SIZE),
-					)
-				: query(
-						imagesRef,
-						orderBy(sort.field, sort.direction),
-						limit(PAGE_SIZE),
-					);
+			const q =
+				direction === 'forward' && effectivePage > 0
+					? (() => {
+							// Get cursor from previous page
+							const prevPage = pageCache.value.get(effectivePage - 1);
+							if (prevPage?.endCursor) {
+								return query(
+									imagesRef,
+									orderBy(sort.field, sort.direction),
+									startAfter(prevPage.endCursor),
+									limit(PAGE_SIZE),
+								);
+							}
+							throw new Error(
+								'Cannot navigate forward without previous page cursor',
+							);
+						})()
+					: query(
+							imagesRef,
+							orderBy(sort.field, sort.direction),
+							limit(PAGE_SIZE),
+						);
 
 			const snapshot = await getDocs(q);
 
 			if (snapshot.empty) {
-				hasMore.value = false;
-				return;
+				hasNextPage.value = false;
+				return {images: [], page: effectivePage};
 			}
 
 			const newImages: ImageDocument[] = [];
@@ -81,30 +116,32 @@ export function useImages() {
 				}
 			});
 
-			images.value = [...images.value, ...newImages];
-			lastDoc.value = snapshot.docs[snapshot.docs.length - 1] ?? null;
+			// Cache the page
+			pageCache.value.set(effectivePage, {
+				images: newImages,
+				startCursor: snapshot.docs[0] ?? null,
+				endCursor: snapshot.docs[snapshot.docs.length - 1] ?? null,
+			});
 
-			if (snapshot.docs.length < PAGE_SIZE) {
-				hasMore.value = false;
-			}
+			hasNextPage.value = snapshot.docs.length === PAGE_SIZE;
+			hasPrevPage.value = effectivePage > 0;
+
+			return {images: newImages, page: effectivePage};
 		} catch (e) {
 			console.error('Error loading images:', e);
 			error.value = (e as Error).message;
+			return {images: [], page: effectivePage};
 		} finally {
 			loading.value = false;
 		}
 	}
 
-	async function loadMore() {
-		if (currentSort.value && hasMore.value && !loading.value) {
-			await loadImages(currentSort.value);
-		}
-	}
-
 	async function getImageById(id: string): Promise<ImageDocument | null> {
-		// First check if already loaded
-		const cached = images.value.find((img) => img.id === id);
-		if (cached) return cached;
+		// First check if already loaded in any cached page
+		for (const pageData of pageCache.value.values()) {
+			const cached = pageData.images.find((img) => img.id === id);
+			if (cached) return cached;
+		}
 
 		// Fetch from Firestore
 		try {
@@ -124,19 +161,18 @@ export function useImages() {
 	}
 
 	function clearCache() {
-		images.value = [];
-		lastDoc.value = null;
-		hasMore.value = true;
+		pageCache.value.clear();
+		hasNextPage.value = true;
+		hasPrevPage.value = false;
 		currentSort.value = null;
 	}
 
 	return {
-		images,
 		loading,
 		error,
-		hasMore,
-		loadImages,
-		loadMore,
+		hasNextPage,
+		hasPrevPage,
+		loadPage,
 		getImageById,
 		clearCache,
 	};
