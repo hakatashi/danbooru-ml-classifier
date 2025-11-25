@@ -15,11 +15,6 @@ const currentPage = ref(0);
 const currentSort = ref<SortOption | null>(null);
 const currentImages = ref<ImageDocument[]>([]);
 
-const filters = ref({
-	model: 'all',
-	rating: 'all',
-});
-
 watch(
 	() => props.user,
 	async (newUser) => {
@@ -32,48 +27,8 @@ watch(
 	{immediate: true},
 );
 
-function getModerationRating(
-	image: ImageDocument,
-	modelKey: string,
-): number | null {
-	if (!image.moderations) return null;
-	if (image.moderations[modelKey]) {
-		return image.moderations[modelKey].result;
-	}
-	return null;
-}
-
-const filteredImages = computed(() => {
-	return currentImages.value.filter((img) => {
-		// Model filter
-		if (filters.value.model !== 'all') {
-			if (!img.captions || !img.captions[filters.value.model]) {
-				return false;
-			}
-		}
-
-		// Rating filter (uses the current sort model for filtering)
-		if (filters.value.rating !== 'all') {
-			// Determine which model's rating to use based on current sort
-			const sortModel = currentSort.value?.field.includes('joycaption')
-				? 'joycaption'
-				: 'minicpm';
-			const rating = getModerationRating(img, sortModel);
-			if (rating === null) return false;
-
-			const parts = filters.value.rating.split('-').map(Number);
-			const min = parts[0] ?? 0;
-			const max = parts[1] ?? 10;
-			if (rating < min || rating > max) return false;
-		}
-
-		return true;
-	});
-});
-
 const canGoNext = computed(() => {
-	// Can go next if there are more pages OR if current page has filtered results
-	return hasNextPage.value && filteredImages.value.length > 0;
+	return hasNextPage.value && currentImages.value.length > 0;
 });
 
 const canGoPrev = computed(() => {
@@ -88,10 +43,6 @@ async function onSortChange(sort: SortOption) {
 		currentImages.value = result.images;
 		currentPage.value = result.page;
 	}
-}
-
-function onFilterChange(newFilters: {model: string; rating: string}) {
-	filters.value = newFilters;
 }
 
 async function onPageChange(page: number) {
@@ -141,12 +92,10 @@ async function onPageChange(page: number) {
 		<!-- Main Content -->
 		<template v-else>
 			<FilterBar
-				:total-count="filteredImages.length"
 				:current-page="currentPage"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
 				@sort-change="onSortChange"
-				@filter-change="onFilterChange"
 				@page-change="onPageChange"
 			/>
 
@@ -173,7 +122,7 @@ async function onPageChange(page: number) {
 
 			<!-- Empty State -->
 			<div
-				v-else-if="filteredImages.length === 0"
+				v-else-if="currentImages.length === 0"
 				class="bg-white rounded-xl shadow-md p-12 text-center"
 			>
 				<div
@@ -202,7 +151,7 @@ async function onPageChange(page: number) {
 				class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4"
 			>
 				<ImageCard
-					v-for="image in filteredImages"
+					v-for="image in currentImages"
 					:key="image.id"
 					:image="image"
 				/>
