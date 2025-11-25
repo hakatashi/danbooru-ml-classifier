@@ -25,11 +25,14 @@ const parsedContent = computed<TextPart[]>(() => {
 	while ((match = regex.exec(text)) !== null) {
 		// Add text before the think block
 		if (match.index > lastIndex) {
-			parts.push({
-				type: 'text',
-				content: text.slice(lastIndex, match.index),
-				index: -1,
-			});
+			const textContent = text.slice(lastIndex, match.index).trim();
+			if (textContent) {
+				parts.push({
+					type: 'text',
+					content: textContent,
+					index: -1,
+				});
+			}
 		}
 
 		// Add the think block
@@ -44,11 +47,14 @@ const parsedContent = computed<TextPart[]>(() => {
 
 	// Add remaining text
 	if (lastIndex < text.length) {
-		parts.push({
-			type: 'text',
-			content: text.slice(lastIndex),
-			index: -1,
-		});
+		const textContent = text.slice(lastIndex).trim();
+		if (textContent) {
+			parts.push({
+				type: 'text',
+				content: textContent,
+				index: -1,
+			});
+		}
 	}
 
 	return parts;
@@ -71,14 +77,23 @@ function isExpanded(index: number) {
 <template>
 	<div class="whitespace-pre-wrap">
 		<template v-for="(part, i) in parsedContent" :key="i">
-			<span v-if="part.type === 'text'">{{ part.content }}</span>
+			<span v-if="part.type === 'text'"
+				>{{ part.content
+				}}
+				<span
+					v-if="i < parsedContent.length - 1 && parsedContent[i + 1]?.type === 'text'"
+				> </span></span
+			>
 			<div v-else class="my-2">
 				<button
 					@click="toggleBlock(part.index)"
 					class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-md transition-colors"
 				>
 					<svg
-						:class="['w-3 h-3 transition-transform', isExpanded(part.index) ? 'rotate-90' : '']"
+						:class="[
+							'w-3 h-3 transition-transform',
+							isExpanded(part.index) ? 'rotate-90' : '',
+						]"
 						fill="none"
 						stroke="currentColor"
 						viewBox="0 0 24 24"
@@ -95,7 +110,7 @@ function isExpanded(index: number) {
 				</button>
 				<div
 					v-if="isExpanded(part.index)"
-					class="mt-2 p-3 bg-purple-50 border-l-4 border-purple-300 rounded-r-lg text-sm text-purple-900"
+					class="mt-2 p-3 bg-purple-50 border-l-4 border-purple-300 rounded-r-lg text-sm text-purple-900 whitespace-pre-wrap"
 				>
 					{{ part.content }}
 				</div>
