@@ -15,6 +15,7 @@ import base64
 import requests
 from pathlib import Path
 from urllib.parse import quote
+from datetime import datetime, timezone
 from firebase_functions import https_fn, options
 from firebase_admin import initialize_app, firestore
 
@@ -647,6 +648,9 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
     language_repo = model_config.get("language_repository") or model_config.get("repository")
     vision_repo = model_config.get("vision_repository") or model_config.get("repository")
 
+    # Get current timestamp
+    current_time = datetime.now(timezone.utc)
+
     caption_data = {
         "metadata": {
             "model": model_config["name"],
@@ -656,6 +660,7 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
             "language_file": model_config.get("language_file"),
             "vision_file": model_config.get("vision_file"),
             "prompt": CAPTION_PROMPT,
+            "createdAt": current_time,
         },
         "caption": caption,
     }
@@ -669,6 +674,7 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
             "language_file": model_config.get("language_file"),
             "vision_file": model_config.get("vision_file"),
             "prompt": MODERATION_PROMPT,
+            "createdAt": current_time,
         },
         "raw_result": moderation_raw,
         "result": moderation_result,

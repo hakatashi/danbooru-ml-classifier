@@ -6,6 +6,10 @@ export interface CaptionData {
 		language_file: string | null;
 		vision_file: string | null;
 		prompt: string;
+		createdAt?: {
+			seconds: number;
+			nanoseconds: number;
+		};
 	};
 	caption: string;
 }
@@ -18,6 +22,10 @@ export interface ModerationData {
 		language_file: string | null;
 		vision_file: string | null;
 		prompt: string;
+		createdAt?: {
+			seconds: number;
+			nanoseconds: number;
+		};
 	};
 	raw_result: string;
 	result: number | null;
