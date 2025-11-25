@@ -8,6 +8,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Allow read access to moderationStats for authenticated users
+    match /moderationStats/{document=**} {
+      allow read: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
+      allow write: if false;
+    }
+
     // Default: deny all access
     match /{document=**} {
       allow read, write: if false;
