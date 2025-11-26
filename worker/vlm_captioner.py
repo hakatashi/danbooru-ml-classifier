@@ -72,7 +72,7 @@ MODELS = {
 }
 
 # Prompts
-CAPTION_PROMPT = "Please write the longest and most detailed caption possible for this image. Please describe all the elements of the image that you can. If it's a photograph, be sure to include the subject, background, lighting, scene, and overall atmosphere. If it's an illustration, be sure to include the subject, color, brushstrokes, style, and scene. These are just examples, so please be sure to describe all the elements present in the image. If this image depicts a person or character, please describe in detail the clothing and physical features of the person in the image, by body part and clothing item. Include their estimated age. If this image contains any sexual content, include a detailed explanation of the status of every sexual elements (genital, clitoris, breasts, nipples, cleavage, midriff, legs, nudity, penetration, sexual stimulation, sexual tools/adult toys used, and other sexual activities, etc) if they are depicted or implied from this image. If this image contains any sexual content, include additional commentary that focuses on how this image arouses sexual arousal in the viewer."
+CAPTION_PROMPT = "Please write the longest and most detailed caption possible for this image. Please describe all the elements of the image that you can. If it's a photograph, be sure to include the subject, background, lighting, scene, and overall atmosphere. If it's an illustration, be sure to include the subject, color, brushstrokes, style, and scene. These are examples only; please describe all elements in the image. If the image depicts people or characters, be sure to provide a detailed description of each person's estimated age, along with their clothing and physical characteristics, broken down by body part and clothing. If the image depicts female people or characters, be sure to describe the exposed parts that are considered sexually charged (e.g., neck, collarbone, thighs, knees, upper arms, bare feet, soles of the feet, breasts, cleavage, nipples, stomach, navel, groin, clitoris, genitals, buttocks, and anus). If this image contains or implies any sexual content, include a detailed explanation of the status of every sexual elements (e.g., genital, clitoris, breasts, nipples, cleavage, midriff, legs, nudity, penetration, sexual stimulation, sexual tools/adult toys used, and other sexual acts)."
 
 MODERATION_PROMPT = """
 # VLM Content Moderation Prompt
@@ -180,6 +180,11 @@ Do NOT include:
 # Batch size for processing images per model load
 BATCH_SIZE = 10
 
+# Repetition detection configuration
+MAX_RETRIES = 3  # Maximum number of retries when repetition is detected
+MIN_REPETITION_LENGTH = 10  # Minimum length of repeated phrase to detect (in characters)
+REPETITION_THRESHOLD = 3  # Number of consecutive repetitions to trigger retry
+
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
@@ -261,12 +266,113 @@ def encode_image_to_base64(image_path):
 
 
 def parse_moderation_rating(raw_result):
-    """Parse moderation rating from raw result string"""
-    # Look for [[N]] pattern
-    match = re.search(r'\[\[(\d+)\]\]', raw_result)
+    """Parse moderation rating from raw result string
+
+    Extracts the moderation rating [[N]] from the result, excluding any
+    ratings found within <think>...</think> blocks.
+    """
+    # Remove <think> blocks to avoid matching ratings inside them
+    text_without_think = re.sub(r'<think>.*?</think>', '', raw_result, flags=re.DOTALL)
+
+    # Look for [[N]] pattern in the remaining text
+    match = re.search(r'\[\[(\d+)\]\]', text_without_think)
     if match:
         return int(match.group(1))
     return None
+
+
+def detect_repetition_loop(text, min_length=MIN_REPETITION_LENGTH, threshold=REPETITION_THRESHOLD):
+    """Detect if text contains repetitive phrases that suggest a model loop
+
+    Args:
+        text: The text to check for repetition
+        min_length: Minimum length of repeated phrase to consider (in characters)
+        threshold: Number of consecutive repetitions required to flag as loop
+
+    Returns:
+        tuple: (is_repetitive: bool, repeated_phrase: str or None, count: int)
+    """
+    if not text or len(text) < min_length * threshold:
+        return False, None, 0
+
+    # Strategy 1: Check for exact phrase repetition
+    # Look for patterns where the same phrase appears multiple times in a row
+    words = text.split()
+
+    # Only use Strategy 1 if we have enough words to analyze
+    # (Skip if text is mostly one long unseparated word)
+    if len(words) >= 5:
+        # Check for repeated sequences of different lengths (3-50 words)
+        for seq_len in range(3, min(51, len(words) // threshold + 1)):
+            for i in range(len(words) - seq_len * threshold):
+                # Get the potential repeated phrase
+                phrase = ' '.join(words[i:i + seq_len])
+
+                # Skip if phrase is too short
+                if len(phrase) < min_length:
+                    continue
+
+                # Count consecutive repetitions
+                repetition_count = 1
+                pos = i + seq_len
+
+                while pos + seq_len <= len(words):
+                    next_phrase = ' '.join(words[pos:pos + seq_len])
+                    if next_phrase == phrase:
+                        repetition_count += 1
+                        pos += seq_len
+                    else:
+                        break
+
+                # If we found enough repetitions, flag it
+                if repetition_count >= threshold:
+                    return True, phrase, repetition_count
+
+    # Strategy 2: Check for character-level repetition (for cases like "... ... ...")
+    # Look for patterns where the same short string repeats many times
+    for pattern_len in range(2, 20):
+        for i in range(len(text) - pattern_len * threshold):
+            pattern = text[i:i + pattern_len]
+
+            # Count consecutive repetitions
+            repetition_count = 1
+            pos = i + pattern_len
+
+            while pos + pattern_len <= len(text):
+                if text[pos:pos + pattern_len] == pattern:
+                    repetition_count += 1
+                    pos += pattern_len
+                else:
+                    break
+
+            # If we found many repetitions of a short pattern
+            if repetition_count >= threshold * 2:  # Higher threshold for short patterns
+                return True, pattern, repetition_count
+
+    # Strategy 3: Check for single character repetition (for cases like "パパパパ...")
+    # This catches cases where the same character appears many times consecutively
+    if len(text) >= 30:  # Only check if text is long enough
+        i = 0
+        while i < len(text):
+            char = text[i]
+            # Only check non-whitespace characters
+            if char.strip():
+                consecutive_count = 1
+                j = i + 1
+                # Count how many times this character appears consecutively
+                while j < len(text) and text[j] == char:
+                    consecutive_count += 1
+                    j += 1
+
+                # If same character appears 30+ times consecutively, it's likely a loop
+                if consecutive_count >= 30:
+                    return True, char, consecutive_count
+
+                i = j  # Skip past the counted characters
+            else:
+                i += 1
+
+    return False, None, 0
 
 
 # ============================================================================
@@ -398,13 +504,14 @@ def stop_server(process):
 # VLM INFERENCE FUNCTIONS
 # ============================================================================
 
-def chat_with_image_llama_api(image_path, messages, server_url=SERVER_URL):
-    """Send chat request with image to llama-server API
+def chat_with_image_llama_api(image_path, messages, server_url=SERVER_URL, max_retries=MAX_RETRIES):
+    """Send chat request with image to llama-server API with repetition detection
 
     Args:
         image_path: Path to the image file
         messages: List of message dicts with role and content
         server_url: URL of the llama-server
+        max_retries: Maximum number of retries when repetition is detected
 
     Returns:
         str: Response content, or None on error
@@ -419,57 +526,85 @@ def chat_with_image_llama_api(image_path, messages, server_url=SERVER_URL):
         print(f"Error encoding image: {e}")
         return None
 
-    # Build API messages
-    api_messages = []
-    for i, msg in enumerate(messages):
-        if i == 0 and msg["role"] == "user":
-            # First user message includes the image
-            api_messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": msg["content"]},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}"
+    # Retry loop for handling repetition
+    for attempt in range(max_retries):
+        # Build API messages
+        api_messages = []
+        for i, msg in enumerate(messages):
+            if i == 0 and msg["role"] == "user":
+                # First user message includes the image
+                api_messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": msg["content"]},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}"
+                            }
                         }
-                    }
-                ]
-            })
-        else:
-            api_messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
+                    ]
+                })
+            else:
+                api_messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
 
-    request_data = {
-        "messages": api_messages,
-        "max_tokens": 4096,
-        "temperature": 0.7,
-        "top_p": 0.8,
-        "stream": False,
-    }
+        # Vary temperature slightly on retries to get different outputs
+        temperature = 0.7 + (attempt * 0.05)  # 0.7, 0.75, 0.8, ...
+        top_p = 0.8 + (attempt * 0.05)  # 0.8, 0.85, 0.9, ...
 
-    try:
-        response = requests.post(
-            f"{server_url}/v1/chat/completions",
-            json=request_data,
-            headers={"Content-Type": "application/json"},
-            timeout=600
-        )
+        request_data = {
+            "messages": api_messages,
+            "max_tokens": 4096,
+            "temperature": min(temperature, 1.0),
+            "top_p": min(top_p, 0.95),
+            "stream": False,
+        }
 
-        if response.status_code == 200:
-            result = response.json()
-            if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Error: Server returned status {response.status_code}")
-            print(f"Response: {response.text}")
-        return None
+        try:
+            response = requests.post(
+                f"{server_url}/v1/chat/completions",
+                json=request_data,
+                headers={"Content-Type": "application/json"},
+                timeout=600
+            )
 
-    except Exception as e:
-        print(f"Error communicating with server: {e}")
-        return None
+            if response.status_code == 200:
+                result = response.json()
+                if 'choices' in result and len(result['choices']) > 0:
+                    content = result['choices'][0]['message']['content'].strip()
+
+                    # Check for repetition
+                    is_repetitive, repeated_phrase, count = detect_repetition_loop(content)
+
+                    if is_repetitive:
+                        print(f"⚠️  Repetition detected (attempt {attempt + 1}/{max_retries}):")
+                        print(f"   Phrase: '{repeated_phrase[:50]}...' repeated {count} times")
+
+                        if attempt < max_retries - 1:
+                            print(f"   Retrying with different sampling parameters...")
+                            time.sleep(1)  # Brief pause before retry
+                            continue
+                        else:
+                            print(f"   Max retries reached. Returning result despite repetition.")
+                            return content
+                    else:
+                        # No repetition detected, return the result
+                        if attempt > 0:
+                            print(f"✓ Retry successful on attempt {attempt + 1}")
+                        return content
+            else:
+                print(f"Error: Server returned status {response.status_code}")
+                print(f"Response: {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"Error communicating with server: {e}")
+            return None
+
+    return None
 
 
 def chat_continuation_llama_api(messages, server_url=SERVER_URL):
