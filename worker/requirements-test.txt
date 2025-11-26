@@ -1,0 +1,2 @@
+# Test dependencies for worker
+pytest>=9.0.0
