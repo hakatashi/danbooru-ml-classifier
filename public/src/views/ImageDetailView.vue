@@ -282,6 +282,18 @@ onMounted(async () => {
 						</div>
 					</div>
 
+					<!-- Moderation Explanation -->
+					<div v-if="image.moderations?.[model]?.explanation" class="px-4 pb-4">
+						<h4 class="text-sm font-medium text-gray-700 mb-2">
+							Moderation Explanation
+						</h4>
+						<div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
+							<p class="text-sm text-gray-700 leading-relaxed">
+								{{ image.moderations[model].explanation }}
+							</p>
+						</div>
+					</div>
+
 					<!-- Raw Moderation Result -->
 					<div v-if="image.moderations?.[model]?.raw_result" class="px-4 pb-4">
 						<details class="group">
