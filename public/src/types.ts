@@ -29,6 +29,7 @@ export interface ModerationData {
 	};
 	raw_result: string;
 	result: number | null;
+	explanation?: string;
 }
 
 export interface ImageDocument {
