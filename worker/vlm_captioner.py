@@ -184,6 +184,10 @@ Do NOT include:
 - Focus on what is implied or suggested through non-visual means
 """.strip()
 
+EXPLANATION_PROMPT = """
+Please explain briefly why this moderation rating was given, by specifically referencing the actual elements present in the image and comparing them against the moderation criteria.
+""".strip()
+
 # Batch size for processing images per model load
 BATCH_SIZE = 10
 
@@ -604,10 +608,25 @@ def process_images_with_minicpm(image_paths, db):
             moderation_result = parse_moderation_rating(moderation_raw)
             print(f"Moderation rating: {moderation_result}")
 
+            # Generate explanation for the moderation rating
+            explanation = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": CAPTION_PROMPT},
+                {"role": "assistant", "content": caption},
+                {"role": "user", "content": MODERATION_PROMPT},
+                {"role": "assistant", "content": moderation_raw},
+                {"role": "user", "content": EXPLANATION_PROMPT}
+            ])
+
+            if not explanation:
+                print(f"Failed to generate explanation for {image_path}")
+                explanation = None
+            else:
+                print(f"Explanation generated ({len(explanation)} chars)")
+
             # Save to Firestore
             save_to_firestore(
                 db, image_path, model_key, model_config,
-                caption, moderation_raw, moderation_result
+                caption, moderation_raw, moderation_result, explanation
             )
 
     finally:
@@ -660,17 +679,32 @@ def process_images_with_joycaption(image_paths, db):
             moderation_result = parse_moderation_rating(moderation_raw)
             print(f"Moderation rating: {moderation_result}")
 
+            # Generate explanation for the moderation rating
+            explanation = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": CAPTION_PROMPT},
+                {"role": "assistant", "content": caption},
+                {"role": "user", "content": MODERATION_PROMPT},
+                {"role": "assistant", "content": moderation_raw},
+                {"role": "user", "content": EXPLANATION_PROMPT}
+            ])
+
+            if not explanation:
+                print(f"Failed to generate explanation for {image_path}")
+                explanation = None
+            else:
+                print(f"Explanation generated ({len(explanation)} chars)")
+
             # Save to Firestore
             save_to_firestore(
                 db, image_path, model_key, model_config,
-                caption, moderation_raw, moderation_result
+                caption, moderation_raw, moderation_result, explanation
             )
 
     finally:
         stop_server(server_process)
 
 
-def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result):
+def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result, explanation=None):
     """Save caption and moderation results to Firestore"""
     image_name = Path(image_path).name
     # Use URL-encoded S3 path as document ID (e.g., "twitter/abcde.png" -> "twitter%2Fabcde.png")
@@ -713,6 +747,10 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
         "raw_result": moderation_raw,
         "result": moderation_result,
     }
+
+    # Add explanation if provided (only for MiniCPM)
+    if explanation is not None:
+        moderation_data["explanation"] = explanation
 
     # Get existing document data or create new structure
     doc = doc_ref.get()
