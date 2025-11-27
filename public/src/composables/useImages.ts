@@ -9,6 +9,7 @@ import {
 	type QueryDocumentSnapshot,
 	query,
 	startAfter,
+	where,
 } from 'firebase/firestore';
 import {ref} from 'vue';
 import {db} from '../firebase';
@@ -19,11 +20,18 @@ export interface SortOption {
 	direction: 'asc' | 'desc';
 }
 
+export interface RatingFilter {
+	provider: 'joycaption' | 'minicpm';
+	min: number | null;
+	max: number | null;
+}
+
 const PAGE_SIZE = 20;
 
 const loading = ref(false);
 const error = ref<string | null>(null);
 const currentSort = ref<SortOption | null>(null);
+const currentRatingFilter = ref<RatingFilter | null>(null);
 
 // Store page data with cursors for navigation
 const pageCache = ref<
@@ -43,19 +51,27 @@ export function useImages() {
 	async function loadPage(
 		sort: SortOption,
 		page: number,
+		ratingFilter: RatingFilter | null = null,
 		direction: 'forward' | 'backward' = 'forward',
 	) {
 		let effectivePage = page;
 
-		// If sort changed, reset cache
+		// If sort or rating filter changed, reset cache
+		const filterChanged =
+			currentRatingFilter.value?.provider !== ratingFilter?.provider ||
+			currentRatingFilter.value?.min !== ratingFilter?.min ||
+			currentRatingFilter.value?.max !== ratingFilter?.max;
+
 		if (
 			currentSort.value?.field !== sort.field ||
-			currentSort.value?.direction !== sort.direction
+			currentSort.value?.direction !== sort.direction ||
+			filterChanged
 		) {
 			pageCache.value.clear();
 			hasNextPage.value = true;
 			hasPrevPage.value = false;
 			currentSort.value = sort;
+			currentRatingFilter.value = ratingFilter;
 			effectivePage = 0;
 		}
 
@@ -74,28 +90,36 @@ export function useImages() {
 		try {
 			const imagesRef = collection(db, 'images');
 
-			const q =
-				direction === 'forward' && effectivePage > 0
-					? (() => {
-							// Get cursor from previous page
-							const prevPage = pageCache.value.get(effectivePage - 1);
-							if (prevPage?.endCursor) {
-								return query(
-									imagesRef,
-									orderBy(sort.field, sort.direction),
-									startAfter(prevPage.endCursor),
-									limit(PAGE_SIZE),
-								);
-							}
-							throw new Error(
-								'Cannot navigate forward without previous page cursor',
-							);
-						})()
-					: query(
-							imagesRef,
-							orderBy(sort.field, sort.direction),
-							limit(PAGE_SIZE),
-						);
+			// Build query constraints
+			const constraints = [];
+
+			// Add rating filters if present
+			if (ratingFilter?.min !== null && ratingFilter?.min !== undefined) {
+				const ratingField = `moderations.${ratingFilter.provider}.result`;
+				constraints.push(where(ratingField, '>=', ratingFilter.min));
+			}
+			if (ratingFilter?.max !== null && ratingFilter?.max !== undefined) {
+				const ratingField = `moderations.${ratingFilter.provider}.result`;
+				constraints.push(where(ratingField, '<=', ratingFilter.max));
+			}
+
+			// Add orderBy
+			constraints.push(orderBy(sort.field, sort.direction));
+
+			// Add pagination
+			if (direction === 'forward' && effectivePage > 0) {
+				const prevPage = pageCache.value.get(effectivePage - 1);
+				if (!prevPage?.endCursor) {
+					throw new Error(
+						'Cannot navigate forward without previous page cursor',
+					);
+				}
+				constraints.push(startAfter(prevPage.endCursor));
+			}
+
+			constraints.push(limit(PAGE_SIZE));
+
+			const q = query(imagesRef, ...constraints);
 
 			const snapshot = await getDocs(q);
 

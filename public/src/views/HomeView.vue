@@ -1,25 +1,139 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
 import {computed, ref, watch} from 'vue';
+import {useRoute, useRouter} from 'vue-router';
 import FilterBar from '../components/FilterBar.vue';
 import ImageCard from '../components/ImageCard.vue';
-import {type SortOption, useImages} from '../composables/useImages';
+import {
+	type RatingFilter,
+	type SortOption,
+	useImages,
+} from '../composables/useImages';
 import type {ImageDocument} from '../types';
 
 const props = defineProps<{
 	user: User | null;
 }>();
 
+const router = useRouter();
+const route = useRoute();
+
 const {loading, error, hasNextPage, hasPrevPage, loadPage} = useImages();
 const currentPage = ref(0);
 const currentSort = ref<SortOption | null>(null);
 const currentImages = ref<ImageDocument[]>([]);
 
+// Sort options mapping
+const sortOptionsMap = {
+	'joycaption-desc': {
+		field: 'moderations.joycaption.result',
+		direction: 'desc' as const,
+	},
+	'joycaption-asc': {
+		field: 'moderations.joycaption.result',
+		direction: 'asc' as const,
+	},
+	'minicpm-desc': {
+		field: 'moderations.minicpm.result',
+		direction: 'desc' as const,
+	},
+	'minicpm-asc': {
+		field: 'moderations.minicpm.result',
+		direction: 'asc' as const,
+	},
+	'joycaption-created-desc': {
+		field: 'captions.joycaption.metadata.createdAt',
+		direction: 'desc' as const,
+	},
+	'joycaption-created-asc': {
+		field: 'captions.joycaption.metadata.createdAt',
+		direction: 'asc' as const,
+	},
+	'minicpm-created-desc': {
+		field: 'captions.minicpm.metadata.createdAt',
+		direction: 'desc' as const,
+	},
+	'minicpm-created-asc': {
+		field: 'captions.minicpm.metadata.createdAt',
+		direction: 'asc' as const,
+	},
+};
+
+// Get sort and page values from query params
+const sortValue = computed(() => {
+	const sortQuery = route.query.sort;
+	return typeof sortQuery === 'string' ? sortQuery : 'minicpm-desc';
+});
+
+const pageValue = computed(() => {
+	const pageQuery = route.query.page;
+	if (typeof pageQuery === 'string') {
+		const parsed = Number.parseInt(pageQuery, 10);
+		return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+	}
+	return 0;
+});
+
+const ratingProviderValue = computed(() => {
+	const providerQuery = route.query.ratingProvider;
+	if (
+		typeof providerQuery === 'string' &&
+		(providerQuery === 'joycaption' || providerQuery === 'minicpm')
+	) {
+		return providerQuery;
+	}
+	return 'minicpm';
+});
+
+const ratingMinValue = computed(() => {
+	const minQuery = route.query.ratingMin;
+	if (typeof minQuery === 'string') {
+		const parsed = Number.parseInt(minQuery, 10);
+		return Number.isNaN(parsed) ? null : parsed;
+	}
+	return null;
+});
+
+const ratingMaxValue = computed(() => {
+	const maxQuery = route.query.ratingMax;
+	if (typeof maxQuery === 'string') {
+		const parsed = Number.parseInt(maxQuery, 10);
+		return Number.isNaN(parsed) ? null : parsed;
+	}
+	return null;
+});
+
+// Watch for user authentication and query parameter changes
 watch(
-	() => props.user,
-	async (newUser) => {
-		if (newUser && currentSort.value) {
-			const result = await loadPage(currentSort.value, 0);
+	[
+		() => props.user,
+		sortValue,
+		pageValue,
+		ratingProviderValue,
+		ratingMinValue,
+		ratingMaxValue,
+	],
+	async ([
+		newUser,
+		newSort,
+		newPage,
+		newRatingProvider,
+		newRatingMin,
+		newRatingMax,
+	]) => {
+		if (newUser && newSort) {
+			const sortOption =
+				sortOptionsMap[newSort as keyof typeof sortOptionsMap] ||
+				sortOptionsMap['minicpm-desc'];
+			currentSort.value = sortOption;
+
+			const ratingFilter: RatingFilter = {
+				provider: newRatingProvider,
+				min: newRatingMin,
+				max: newRatingMax,
+			};
+
+			const result = await loadPage(sortOption, newPage, ratingFilter);
 			currentImages.value = result.images;
 			currentPage.value = result.page;
 		}
@@ -35,14 +149,14 @@ const canGoPrev = computed(() => {
 	return hasPrevPage.value;
 });
 
-async function onSortChange(sort: SortOption) {
-	currentSort.value = sort;
-	currentPage.value = 0;
-	if (props.user) {
-		const result = await loadPage(sort, 0);
-		currentImages.value = result.images;
-		currentPage.value = result.page;
-	}
+async function onSortChange(_sort: SortOption, sortKey: string) {
+	// Update URL with new sort, reset page to 0
+	await router.push({
+		query: {
+			sort: sortKey,
+			page: '0',
+		},
+	});
 }
 
 async function onPageChange(page: number) {
@@ -50,10 +164,43 @@ async function onPageChange(page: number) {
 
 	window.scrollTo({top: 0, behavior: 'smooth'});
 
-	const direction = page > currentPage.value ? 'forward' : 'backward';
-	const result = await loadPage(currentSort.value, page, direction);
-	currentImages.value = result.images;
-	currentPage.value = result.page;
+	// Update URL with new page, preserve rating filters
+	const query: Record<string, string> = {
+		sort: sortValue.value,
+		page: page.toString(),
+	};
+
+	if (ratingProviderValue.value !== 'minicpm') {
+		query.ratingProvider = ratingProviderValue.value;
+	}
+	if (ratingMinValue.value !== null) {
+		query.ratingMin = ratingMinValue.value.toString();
+	}
+	if (ratingMaxValue.value !== null) {
+		query.ratingMax = ratingMaxValue.value.toString();
+	}
+
+	await router.push({query});
+}
+
+async function onRatingChange(ratingFilter: RatingFilter) {
+	// Update URL with new rating filter, reset page to 0
+	const query: Record<string, string> = {
+		sort: sortValue.value,
+		page: '0',
+	};
+
+	if (ratingFilter.provider !== 'minicpm') {
+		query.ratingProvider = ratingFilter.provider;
+	}
+	if (ratingFilter.min !== null) {
+		query.ratingMin = ratingFilter.min.toString();
+	}
+	if (ratingFilter.max !== null) {
+		query.ratingMax = ratingFilter.max.toString();
+	}
+
+	await router.push({query});
 }
 </script>
 
@@ -93,10 +240,15 @@ async function onPageChange(page: number) {
 		<template v-else>
 			<FilterBar
 				:current-page="currentPage"
+				:current-sort="sortValue"
+				:current-rating-provider="ratingProviderValue"
+				:current-rating-min="ratingMinValue"
+				:current-rating-max="ratingMaxValue"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
 				@sort-change="onSortChange"
 				@page-change="onPageChange"
+				@rating-change="onRatingChange"
 			/>
 
 			<!-- Loading State -->

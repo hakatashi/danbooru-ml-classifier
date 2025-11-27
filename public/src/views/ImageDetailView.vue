@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
 import {computed, onMounted, ref} from 'vue';
-import {RouterLink, useRoute} from 'vue-router';
+import {useRoute, useRouter} from 'vue-router';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import {useImages} from '../composables/useImages';
@@ -12,7 +12,17 @@ defineProps<{
 }>();
 
 const route = useRoute();
+const router = useRouter();
 const {getImageById} = useImages();
+
+function goBack() {
+	// If there's history, go back, otherwise go to home
+	if (window.history.length > 1) {
+		router.back();
+	} else {
+		router.push('/');
+	}
+}
 
 const IMAGE_BASE_URL =
 	'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
@@ -98,8 +108,8 @@ onMounted(async () => {
 <template>
 	<div>
 		<!-- Back link -->
-		<RouterLink
-			to="/"
+		<button
+			@click="goBack"
 			class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
 		>
 			<svg
@@ -116,7 +126,7 @@ onMounted(async () => {
 				/>
 			</svg>
 			Back to Gallery
-		</RouterLink>
+		</button>
 
 		<!-- Loading -->
 		<div v-if="loading" class="flex justify-center items-center py-20">
