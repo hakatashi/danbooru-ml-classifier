@@ -106,39 +106,40 @@ To be classified as this rating, an image MUST meet all of the following criteri
 - Casual clothing appropriate for public settings
 - Normal social interactions, work environments, sports in standard uniforms
 - No suggestive positioning, expressions, or camera angles
-- Couples holding hands in public settings
-- Clothing that's form-fitting but not revealing (normal t-shirts, jeans)
+- Platonic physical intimacy and non-romantic affectionate touching
 
 **[[3]] - Slightly Suggestive**
 - Mild emphasis on attractiveness without overt sexuality
 - Fashion photography with standard poses
 - Fitness content showing normal workout attire
 - Clothing that emphasizes body shape (tight dresses, crop tops, shorts)
-- Light embracing or hugging between couples
+- Physical contact that emphasizes attractiveness or romantic interest
 - Anime art style emphasizing cuteness/attractiveness
 - The positioning and angle considered somewhat suggestive, but it's not overtly sexual
+- Light kissing or pecks on the lips between couples
 
 **[[4]] - Sensitive Content**
 - Ecchi, sexy, risqué, or suggestive content
 - Suggestive but not explicit poses or expressions
 - Bikinis, lingerie worn as outerwear, or revealing evening wear
+- Underwear visible through clothing or as primary garment
 - Focus on cleavage, midriff, or legs without nudity
 
 **[[5]] - Moderately Suggestive**
-- More obvious sexualization without nudity
-- Provocative poses, suggestive facial expressions, or bedroom settings
+- Sexualization without nudity
+- Facial expressions obviously conveying sexual desire or pleasure
 - See-through or very tight clothing that clearly outlines body parts
-- Underwear visible through clothing or as primary garment
+- Underwear as primary clothing in obviously suggestive contexts
 - Pin-up style content, glamour photography with sexual undertones
+- Passionate kissing with visible tongue or open mouths
 
 **[[6]] - Questionable Content**
 - Simple non-genital nudity showing areolae and bare buttocks
 - Artistic nudity in clearly artistic, medical, or educational contexts (museums, classical art, medical textbooks)
-- Underwear as primary clothing in obviously suggestive contexts
 - Nude figures where genitals and nipples are obscured or not visible
 - Highly suggestive content that stops just short of showing nipples
 - Fetish scenarios without any nudity or exposure (bondage, restraints, BDSM situations with full clothing)
-- Heavy petting or intimate touching over clothing between partners
+- Sexual touching of breasts, buttocks, or genital areas over clothing
 
 **[[7]] - Clearly Adult-Oriented**
 - Nipple visibility (except in clearly artistic, medical, or educational contexts)
@@ -165,23 +166,18 @@ To be classified as this rating, an image MUST meet all of the following criteri
 - Full nudity including detailed genitalia as primary subject matter
 - Direct depictions of orgasmic sex, explicit sexual acts
 - Hardcore pornographic content with no restraint
-- Graphic sexual imagery designed purely for sexual arousal
 - Maximum explicitness in sexual content
 
 ## Response Format
-IMPORTANT: Output only the numerical rating in bracket format. Do not provide explanations, reasoning, or additional commentary.
-Answer using only the bracket format: [[0]], [[1]], [[2]], [[3]], [[4]], [[5]], [[6]], [[7]], [[8]], [[9]], or [[10]]
-
-Do NOT include:
-* Explanations of your rating decision
-* Descriptions of what you see in the image
-* Reasoning or justification
-* Additional text or commentary
+Output only: [[0]], [[1]], [[2]], [[3]], [[4]], [[5]], [[6]], [[7]], [[8]], [[9]], or [[10]]
+No explanations or additional text.
 
 ## Additional Guidelines
 - When uncertain between two levels, choose the higher rating for safety
 - Consider context, intent, and artistic merit
 - Focus on what is implied or suggested through non-visual means
+- Exposure of socially acceptable body parts (face, cheeks, ears, hands, arms, lower legs, feet, neck) should NOT be considered sexual exposure regardless of context
+- Only exposure of typically covered body parts (chest/breasts, buttocks, genitals, upper thighs, midriff in certain contexts) should be evaluated for sexual content
 """.strip()
 
 EXPLANATION_PROMPT = """
