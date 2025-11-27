@@ -12,6 +12,7 @@ import time
 import subprocess
 import base64
 import requests
+import argparse
 from pathlib import Path
 from urllib.parse import quote
 from datetime import datetime, timezone
@@ -549,8 +550,14 @@ def chat_continuation_llama_api(messages, server_url=SERVER_URL):
 # MAIN PROCESSING FUNCTIONS
 # ============================================================================
 
-def process_images_with_minicpm(image_paths, db):
-    """Process batch of images with MiniCPM model using llama.cpp"""
+def process_images_with_minicpm(image_paths, db, generate_explanation=False):
+    """Process batch of images with MiniCPM model using llama.cpp
+
+    Args:
+        image_paths: List of paths to images to process
+        db: Firestore database instance
+        generate_explanation: Whether to generate explanation for moderation rating (default: False)
+    """
     model_key = "minicpm"
     model_config = MODELS[model_key]
 
@@ -604,20 +611,22 @@ def process_images_with_minicpm(image_paths, db):
             moderation_result = parse_moderation_rating(moderation_raw)
             print(f"Moderation rating: {moderation_result}")
 
-            # Generate explanation for the moderation rating
-            explanation = chat_with_image_llama_api(str(image_path), [
-                {"role": "user", "content": CAPTION_PROMPT},
-                {"role": "assistant", "content": caption},
-                {"role": "user", "content": MODERATION_PROMPT},
-                {"role": "assistant", "content": moderation_raw},
-                {"role": "user", "content": EXPLANATION_PROMPT}
-            ])
+            # Generate explanation for the moderation rating (only if enabled)
+            explanation = None
+            if generate_explanation:
+                explanation = chat_with_image_llama_api(str(image_path), [
+                    {"role": "user", "content": CAPTION_PROMPT},
+                    {"role": "assistant", "content": caption},
+                    {"role": "user", "content": MODERATION_PROMPT},
+                    {"role": "assistant", "content": moderation_raw},
+                    {"role": "user", "content": EXPLANATION_PROMPT}
+                ])
 
-            if not explanation:
-                print(f"Failed to generate explanation for {image_path}")
-                explanation = None
-            else:
-                print(f"Explanation generated ({len(explanation)} chars)")
+                if not explanation:
+                    print(f"Failed to generate explanation for {image_path}")
+                    explanation = None
+                else:
+                    print(f"Explanation generated ({len(explanation)} chars)")
 
             # Save to Firestore
             save_to_firestore(
@@ -629,8 +638,14 @@ def process_images_with_minicpm(image_paths, db):
         stop_server(server_process)
 
 
-def process_images_with_joycaption(image_paths, db):
-    """Process batch of images with JoyCaption model using llama.cpp"""
+def process_images_with_joycaption(image_paths, db, generate_explanation=False):
+    """Process batch of images with JoyCaption model using llama.cpp
+
+    Args:
+        image_paths: List of paths to images to process
+        db: Firestore database instance
+        generate_explanation: Whether to generate explanation for moderation rating (default: False)
+    """
     model_key = "joycaption"
     model_config = MODELS[model_key]
 
@@ -675,20 +690,22 @@ def process_images_with_joycaption(image_paths, db):
             moderation_result = parse_moderation_rating(moderation_raw)
             print(f"Moderation rating: {moderation_result}")
 
-            # Generate explanation for the moderation rating
-            explanation = chat_with_image_llama_api(str(image_path), [
-                {"role": "user", "content": CAPTION_PROMPT},
-                {"role": "assistant", "content": caption},
-                {"role": "user", "content": MODERATION_PROMPT},
-                {"role": "assistant", "content": moderation_raw},
-                {"role": "user", "content": EXPLANATION_PROMPT}
-            ])
+            # Generate explanation for the moderation rating (only if enabled)
+            explanation = None
+            if generate_explanation:
+                explanation = chat_with_image_llama_api(str(image_path), [
+                    {"role": "user", "content": CAPTION_PROMPT},
+                    {"role": "assistant", "content": caption},
+                    {"role": "user", "content": MODERATION_PROMPT},
+                    {"role": "assistant", "content": moderation_raw},
+                    {"role": "user", "content": EXPLANATION_PROMPT}
+                ])
 
-            if not explanation:
-                print(f"Failed to generate explanation for {image_path}")
-                explanation = None
-            else:
-                print(f"Explanation generated ({len(explanation)} chars)")
+                if not explanation:
+                    print(f"Failed to generate explanation for {image_path}")
+                    explanation = None
+                else:
+                    print(f"Explanation generated ({len(explanation)} chars)")
 
             # Save to Firestore
             save_to_firestore(
@@ -771,14 +788,34 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
     print(f"Saved results for {doc_id} with model {model_key}")
 
 
-def run_vlm_captioner():
-    """Main function to run VLM captioning for 10 minutes"""
+def run_vlm_captioner(models=None, generate_explanation=False):
+    """Main function to run VLM captioning
+
+    Args:
+        models: List of model names to run (e.g., ['minicpm', 'joycaption']).
+                If None, defaults to ['minicpm'] only.
+        generate_explanation: Whether to generate explanation for moderation rating (default: False)
+    """
+    # Default to minicpm only if not specified
+    if models is None:
+        models = ['minicpm']
+
+    # Validate model names
+    valid_models = set(MODELS.keys())
+    invalid_models = set(models) - valid_models
+    if invalid_models:
+        print(f"Error: Invalid model names: {invalid_models}")
+        print(f"Valid models are: {valid_models}")
+        return
+
     db = firestore.client()
 
     start_time = time.time()
     duration = 12 * 60 * 60  # 12 hours
 
     print("Starting VLM Captioner")
+    print(f"Models to run: {models}")
+    print(f"Generate explanation: {generate_explanation}")
     print(f"Will run for {duration // 60} minutes")
     print(f"Local image directory: {LOCAL_IMAGE_DIR}")
     print(f"S3 file cache: {S3_FILE_CACHE}")
@@ -818,13 +855,14 @@ def run_vlm_captioner():
         print("No files were downloaded")
         return
 
-    # Process with JoyCaption
-    print(f"\n=== Processing {len(downloaded_paths)} images with JoyCaption ===")
-    process_images_with_joycaption(downloaded_paths, db)
+    # Process with selected models
+    if 'joycaption' in models:
+        print(f"\n=== Processing {len(downloaded_paths)} images with JoyCaption ===")
+        process_images_with_joycaption(downloaded_paths, db, generate_explanation)
 
-    # Process with MiniCPM
-    print(f"\n=== Processing {len(downloaded_paths)} images with MiniCPM ===")
-    process_images_with_minicpm(downloaded_paths, db)
+    if 'minicpm' in models:
+        print(f"\n=== Processing {len(downloaded_paths)} images with MiniCPM ===")
+        process_images_with_minicpm(downloaded_paths, db, generate_explanation)
 
     print("\nVLM Captioner finished")
     print(f"Total runtime: {(time.time() - start_time) / 60:.1f} minutes")
@@ -863,4 +901,28 @@ def runVlmCaptioner(request: https_fn.Request) -> https_fn.Response:
 
 # For local testing
 if __name__ == "__main__":
-    run_vlm_captioner()
+    parser = argparse.ArgumentParser(
+        description="VLM Captioner - Generate captions and moderation ratings for images"
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        choices=list(MODELS.keys()),
+        default=["minicpm"],
+        help="Models to run (default: minicpm only). Can specify multiple models: --models minicpm joycaption"
+    )
+    parser.add_argument(
+        "--generate-explanation",
+        action="store_true",
+        default=False,
+        help="Generate explanation for moderation rating (default: False)"
+    )
+
+    args = parser.parse_args()
+
+    print(f"Command-line arguments:")
+    print(f"  Models: {args.models}")
+    print(f"  Generate explanation: {args.generate_explanation}")
+    print()
+
+    run_vlm_captioner(models=args.models, generate_explanation=args.generate_explanation)
