@@ -338,7 +338,7 @@ function closeLightbox() {
 				<div
 					v-for="image in currentImages"
 					:key="image.id"
-					class="relative h-[480px] flex-shrink-0 group cursor-pointer"
+					class="relative h-[480px] flex-shrink-0 group cursor-pointer overflow-hidden"
 					@click="openLightbox(image)"
 				>
 					<img
@@ -350,8 +350,29 @@ function closeLightbox() {
 							(e) => {
 								const img = e.target as HTMLImageElement;
 								const aspectRatio = img.naturalWidth / img.naturalHeight;
-								if (aspectRatio > 2 || aspectRatio < 0.5) {
+								const container = img.parentElement;
+								if (!container) return;
+
+								// 横長すぎる (2:1より横長) → 2:1の比率で表示
+								if (aspectRatio > 2) {
+									const width = 480 * 2; // height * 2:1 ratio
+									container.style.width = width + 'px';
+									img.style.width = width + 'px';
 									img.style.objectFit = 'cover';
+								}
+								// 縦長すぎる (1:2より縦長) → 1:2の比率で表示
+								else if (aspectRatio < 0.5) {
+									const width = 480 / 2; // height / 2 for 1:2 ratio
+									container.style.width = width + 'px';
+									img.style.width = width + 'px';
+									img.style.objectFit = 'cover';
+								}
+								// 通常の縦横比 → そのまま表示
+								else {
+									const width = 480 * aspectRatio;
+									container.style.width = width + 'px';
+									img.style.width = width + 'px';
+									img.style.objectFit = 'contain';
 								}
 							}
 						"
