@@ -4,6 +4,7 @@ import {computed, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import FilterBar from '../components/FilterBar.vue';
 import ImageCard from '../components/ImageCard.vue';
+import ImageLightbox from '../components/ImageLightbox.vue';
 import {
 	type RatingFilter,
 	type SortOption,
@@ -22,6 +23,9 @@ const {loading, error, hasNextPage, hasPrevPage, loadPage} = useImages();
 const currentPage = ref(0);
 const currentSort = ref<SortOption | null>(null);
 const currentImages = ref<ImageDocument[]>([]);
+const galleryMode = ref(false);
+const lightboxImage = ref<string | null>(null);
+const lightboxAlt = ref<string>('');
 
 // Sort options mapping
 const sortOptionsMap = {
@@ -62,7 +66,7 @@ const sortOptionsMap = {
 // Get sort and page values from query params
 const sortValue = computed(() => {
 	const sortQuery = route.query.sort;
-	return typeof sortQuery === 'string' ? sortQuery : 'minicpm-desc';
+	return typeof sortQuery === 'string' ? sortQuery : 'minicpm-created-desc';
 });
 
 const pageValue = computed(() => {
@@ -124,7 +128,7 @@ watch(
 		if (newUser && newSort) {
 			const sortOption =
 				sortOptionsMap[newSort as keyof typeof sortOptionsMap] ||
-				sortOptionsMap['minicpm-desc'];
+				sortOptionsMap['minicpm-created-desc'];
 			currentSort.value = sortOption;
 
 			const ratingFilter: RatingFilter = {
@@ -202,6 +206,36 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 
 	await router.push({query});
 }
+
+function onGalleryModeChange(enabled: boolean) {
+	galleryMode.value = enabled;
+}
+
+function getImageUrl(image: ImageDocument): string {
+	const IMAGE_BASE_URL =
+		'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
+	const filename = image.key ? image.key.split('/').pop() : image.id;
+	return IMAGE_BASE_URL + filename;
+}
+
+function getRatingColorClass(rating: number | null): string {
+	if (rating === null) return 'bg-gray-500';
+	if (rating <= 2) return 'bg-green-500';
+	if (rating <= 4) return 'bg-lime-500';
+	if (rating <= 6) return 'bg-orange-500';
+	if (rating <= 8) return 'bg-red-500';
+	return 'bg-purple-500';
+}
+
+function openLightbox(image: ImageDocument) {
+	lightboxImage.value = getImageUrl(image);
+	lightboxAlt.value = image.id;
+}
+
+function closeLightbox() {
+	lightboxImage.value = null;
+	lightboxAlt.value = '';
+}
 </script>
 
 <template>
@@ -246,9 +280,11 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 				:current-rating-max="ratingMaxValue"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
+				:gallery-mode="galleryMode"
 				@sort-change="onSortChange"
 				@page-change="onPageChange"
 				@rating-change="onRatingChange"
+				@gallery-mode-change="onGalleryModeChange"
 			/>
 
 			<!-- Loading State -->
@@ -297,6 +333,74 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 				<p class="text-gray-600">No images found</p>
 			</div>
 
+			<!-- Gallery Mode -->
+			<div v-else-if="galleryMode" class="flex flex-wrap justify-center gap-2">
+				<div
+					v-for="image in currentImages"
+					:key="image.id"
+					class="relative h-[480px] flex-shrink-0 group cursor-pointer"
+					@click="openLightbox(image)"
+				>
+					<img
+						:src="getImageUrl(image)"
+						:alt="image.id"
+						class="h-full object-cover bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+						loading="lazy"
+						@load="
+							(e) => {
+								const img = e.target as HTMLImageElement;
+								const aspectRatio = img.naturalWidth / img.naturalHeight;
+								if (aspectRatio > 2 || aspectRatio < 0.5) {
+									img.style.objectFit = 'cover';
+								}
+							}
+						"
+					>
+					<!-- Detail page button (hover) -->
+					<RouterLink
+						:to="{ name: 'image-detail', params: { id: image.id } }"
+						class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
+						@click.stop
+					>
+						<svg
+							class="w-3.5 h-3.5"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+							/>
+						</svg>
+						Details
+					</RouterLink>
+					<!-- Ratings overlay -->
+					<div class="absolute top-3 right-3 flex flex-col gap-1.5">
+						<div
+							v-if="image.moderations?.joycaption?.result !== undefined"
+							:class="[
+								getRatingColorClass(image.moderations.joycaption.result),
+								'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
+							]"
+						>
+							Joy: {{ image.moderations.joycaption.result }}
+						</div>
+						<div
+							v-if="image.moderations?.minicpm?.result !== undefined"
+							:class="[
+								getRatingColorClass(image.moderations.minicpm.result),
+								'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
+							]"
+						>
+							Mini: {{ image.moderations.minicpm.result }}
+						</div>
+					</div>
+				</div>
+			</div>
+
 			<!-- Image Grid - Increased density -->
 			<div
 				v-else
@@ -309,5 +413,13 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 				/>
 			</div>
 		</template>
+
+		<!-- Lightbox for gallery mode -->
+		<ImageLightbox
+			v-if="lightboxImage"
+			:src="lightboxImage"
+			:alt="lightboxAlt"
+			@close="closeLightbox"
+		/>
 	</div>
 </template>

@@ -26,7 +26,7 @@ export interface RatingFilter {
 	max: number | null;
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 50;
 
 const loading = ref(false);
 const error = ref<string | null>(null);

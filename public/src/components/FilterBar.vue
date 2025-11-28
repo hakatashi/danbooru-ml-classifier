@@ -11,12 +11,14 @@ const props = defineProps<{
 	currentRatingMax: number | null;
 	canGoNext: boolean;
 	canGoPrev: boolean;
+	galleryMode: boolean;
 }>();
 
 const emit = defineEmits<{
 	(e: 'sort-change', sort: SortOption, sortKey: string): void;
 	(e: 'page-change', page: number): void;
 	(e: 'rating-change', ratingFilter: RatingFilter): void;
+	(e: 'gallery-mode-change', enabled: boolean): void;
 }>();
 
 const sort = ref(props.currentSort);
@@ -26,7 +28,7 @@ const ratingProvider = ref<'joycaption' | 'minicpm'>(
 const ratingMin = ref<number | null>(props.currentRatingMin);
 const ratingMax = ref<number | null>(props.currentRatingMax);
 const totalCount = ref<number | null>(null);
-const perPage = 20; // Images per page
+const perPage = 50; // Images per page
 
 // Sync sort with props when it changes
 watch(
@@ -237,6 +239,24 @@ function next() {
 								</option>
 							</select>
 						</div>
+					</div>
+
+					<!-- Gallery mode toggle -->
+					<div class="flex items-center gap-2">
+						<label class="text-sm font-medium text-gray-700 shrink-0">
+							Gallery:
+						</label>
+						<button
+							@click="emit('gallery-mode-change', !galleryMode)"
+							:class="[
+								'px-3 py-2 rounded-lg text-sm font-medium transition-all',
+								galleryMode
+									? 'bg-blue-500 text-white shadow-sm'
+									: 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+							]"
+						>
+							{{ galleryMode ? 'ON' : 'OFF' }}
+						</button>
 					</div>
 				</div>
 
