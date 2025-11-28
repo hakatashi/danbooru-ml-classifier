@@ -27,6 +27,7 @@ const galleryMode = ref(false);
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref<string>('');
 const imageAspectRatios = ref<Map<string, number>>(new Map());
+const galleryRows = ref<Array<Array<ImageDocument & {height: number}>>>([]);
 
 // Sort options mapping
 const sortOptionsMap = {
@@ -141,6 +142,10 @@ watch(
 			const result = await loadPage(sortOption, newPage, ratingFilter);
 			currentImages.value = result.images;
 			currentPage.value = result.page;
+
+			// Reset gallery state when images change
+			imageAspectRatios.value.clear();
+			galleryRows.value = [];
 		}
 	},
 	{immediate: true},
@@ -242,13 +247,69 @@ function handleImageLoad(event: Event, imageId: string) {
 	const img = event.target as HTMLImageElement;
 	const aspectRatio = img.naturalWidth / img.naturalHeight;
 	imageAspectRatios.value.set(imageId, aspectRatio);
+
+	// すべての画像がロードされたら行を再計算
+	if (imageAspectRatios.value.size === currentImages.value.length) {
+		calculateGalleryRows();
+	}
 }
 
-function getGalleryImageContainerStyle(imageId: string) {
+function calculateGalleryRows() {
+	const containerWidth = window.innerWidth - 32; // padding考慮
+	const rowGap = 8; // gap-2 = 8px
+	const targetRowHeight = 480;
+	const images = currentImages.value;
+
+	const rows: Array<Array<ImageDocument & {height: number}>> = [];
+	let currentRow: Array<ImageDocument & {height: number}> = [];
+	let currentRowWidth = 0;
+
+	for (const image of images) {
+		const aspectRatio = imageAspectRatios.value.get(image.id);
+		if (!aspectRatio) continue;
+
+		// 縦横比を制限
+		let constrainedAspectRatio = aspectRatio;
+		if (aspectRatio > 2) constrainedAspectRatio = 2;
+		else if (aspectRatio < 0.5) constrainedAspectRatio = 0.5;
+
+		const imageWidth = targetRowHeight * constrainedAspectRatio;
+
+		// 現在の行に追加できるかチェック
+		const wouldBeWidth =
+			currentRowWidth + imageWidth + (currentRow.length > 0 ? rowGap : 0);
+
+		if (currentRow.length > 0 && wouldBeWidth > containerWidth) {
+			// 現在の行を確定し、高さを調整
+			const totalWidth = currentRowWidth;
+			const scale = containerWidth / totalWidth;
+			const rowHeight = targetRowHeight * scale;
+
+			for (const img of currentRow) {
+				img.height = rowHeight;
+			}
+
+			rows.push(currentRow);
+			currentRow = [];
+			currentRowWidth = 0;
+		}
+
+		currentRow.push({...image, height: targetRowHeight});
+		currentRowWidth += imageWidth + (currentRow.length > 1 ? rowGap : 0);
+	}
+
+	// 最後の行を追加（幅が足りなくてもそのまま）
+	if (currentRow.length > 0) {
+		rows.push(currentRow);
+	}
+
+	galleryRows.value = rows;
+}
+
+function getGalleryImageContainerStyle(imageId: string, height: number) {
 	const aspectRatio = imageAspectRatios.value.get(imageId);
 	if (!aspectRatio) return {};
 
-	const height = 480;
 	let width: number;
 
 	// 横長すぎる (2:1より横長) → 2:1の比率で表示
@@ -264,14 +325,13 @@ function getGalleryImageContainerStyle(imageId: string) {
 		width = height * aspectRatio;
 	}
 
-	return {width: `${width}px`};
+	return {width: `${width}px`, height: `${height}px`};
 }
 
-function getGalleryImageStyle(imageId: string) {
+function getGalleryImageStyle(imageId: string, height: number) {
 	const aspectRatio = imageAspectRatios.value.get(imageId);
 	if (!aspectRatio) return {};
 
-	const height = 480;
 	let width: number;
 	let objectFit: 'cover' | 'contain';
 
@@ -293,6 +353,7 @@ function getGalleryImageStyle(imageId: string) {
 
 	return {
 		width: `${width}px`,
+		height: `${height}px`,
 		objectFit,
 	};
 }
@@ -394,62 +455,132 @@ function getGalleryImageStyle(imageId: string) {
 			</div>
 
 			<!-- Gallery Mode -->
-			<div v-else-if="galleryMode" class="flex flex-wrap justify-center gap-2">
-				<div
-					v-for="image in currentImages"
-					:key="image.id"
-					class="relative h-[480px] flex-shrink-0 group cursor-pointer overflow-hidden"
-					:style="getGalleryImageContainerStyle(image.id)"
-					@click="openLightbox(image)"
-				>
-					<img
-						:src="getImageUrl(image)"
-						:alt="image.id"
-						class="h-full bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
-						:style="getGalleryImageStyle(image.id)"
-						loading="lazy"
-						@load="(e) => handleImageLoad(e, image.id)"
+			<div v-else-if="galleryMode">
+				<!-- Justified rows (after all images loaded) -->
+				<div v-if="galleryRows.length > 0" class="flex flex-col gap-2">
+					<div
+						v-for="(row, rowIndex) in galleryRows"
+						:key="rowIndex"
+						class="flex gap-2 justify-center"
 					>
-					<!-- Detail page button (hover) -->
-					<RouterLink
-						:to="{ name: 'image-detail', params: { id: image.id } }"
-						class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
-						@click.stop
-					>
-						<svg
-							class="w-3.5 h-3.5"
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-							/>
-						</svg>
-						Details
-					</RouterLink>
-					<!-- Ratings overlay -->
-					<div class="absolute top-3 right-3 flex flex-col gap-1.5">
 						<div
-							v-if="image.moderations?.joycaption?.result !== undefined"
-							:class="[
-								getRatingColorClass(image.moderations.joycaption.result),
-								'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
-							]"
+							v-for="image in row"
+							:key="image.id"
+							class="relative flex-shrink-0 group cursor-pointer overflow-hidden"
+							:style="getGalleryImageContainerStyle(image.id, image.height)"
+							@click="openLightbox(image)"
 						>
-							Joy: {{ image.moderations.joycaption.result }}
+							<img
+								:src="getImageUrl(image)"
+								:alt="image.id"
+								class="bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+								:style="getGalleryImageStyle(image.id, image.height)"
+								loading="lazy"
+								@load="(e) => handleImageLoad(e, image.id)"
+							>
+							<!-- Detail page button (hover) -->
+							<RouterLink
+								:to="{ name: 'image-detail', params: { id: image.id } }"
+								class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
+								@click.stop
+							>
+								<svg
+									class="w-3.5 h-3.5"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+									/>
+								</svg>
+								Details
+							</RouterLink>
+							<!-- Ratings overlay -->
+							<div class="absolute top-3 right-3 flex flex-col gap-1.5">
+								<div
+									v-if="image.moderations?.joycaption?.result !== undefined"
+									:class="[
+										getRatingColorClass(image.moderations.joycaption.result),
+										'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
+									]"
+								>
+									Joy: {{ image.moderations.joycaption.result }}
+								</div>
+								<div
+									v-if="image.moderations?.minicpm?.result !== undefined"
+									:class="[
+										getRatingColorClass(image.moderations.minicpm.result),
+										'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
+									]"
+								>
+									Mini: {{ image.moderations.minicpm.result }}
+								</div>
+							</div>
 						</div>
-						<div
-							v-if="image.moderations?.minicpm?.result !== undefined"
-							:class="[
-								getRatingColorClass(image.moderations.minicpm.result),
-								'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
-							]"
+					</div>
+				</div>
+				<!-- Loading state (before images loaded) -->
+				<div v-else class="flex flex-wrap justify-center gap-2">
+					<div
+						v-for="image in currentImages"
+						:key="image.id"
+						class="relative h-[480px] flex-shrink-0 group cursor-pointer overflow-hidden"
+						:style="getGalleryImageContainerStyle(image.id, 480)"
+						@click="openLightbox(image)"
+					>
+						<img
+							:src="getImageUrl(image)"
+							:alt="image.id"
+							class="bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+							:style="getGalleryImageStyle(image.id, 480)"
+							loading="lazy"
+							@load="(e) => handleImageLoad(e, image.id)"
 						>
-							Mini: {{ image.moderations.minicpm.result }}
+						<!-- Detail page button (hover) -->
+						<RouterLink
+							:to="{ name: 'image-detail', params: { id: image.id } }"
+							class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
+							@click.stop
+						>
+							<svg
+								class="w-3.5 h-3.5"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+								/>
+							</svg>
+							Details
+						</RouterLink>
+						<!-- Ratings overlay -->
+						<div class="absolute top-3 right-3 flex flex-col gap-1.5">
+							<div
+								v-if="image.moderations?.joycaption?.result !== undefined"
+								:class="[
+									getRatingColorClass(image.moderations.joycaption.result),
+									'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
+								]"
+							>
+								Joy: {{ image.moderations.joycaption.result }}
+							</div>
+							<div
+								v-if="image.moderations?.minicpm?.result !== undefined"
+								:class="[
+									getRatingColorClass(image.moderations.minicpm.result),
+									'px-2 py-0.5 rounded text-white font-semibold text-xs shadow-lg',
+								]"
+							>
+								Mini: {{ image.moderations.minicpm.result }}
+							</div>
 						</div>
 					</div>
 				</div>
