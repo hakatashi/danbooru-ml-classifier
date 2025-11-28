@@ -27,6 +27,9 @@ from vlm_utils import (
     REPETITION_THRESHOLD,
 )
 
+# Import JSON parsing
+import json as json_module
+
 # Load environment variables from .env file for local development
 from dotenv import load_dotenv
 load_dotenv()
@@ -185,6 +188,45 @@ EXPLANATION_PROMPT = """
 Please explain briefly why this moderation rating was given, by specifically referencing the actual elements present in the image and comparing them against the moderation criteria.
 """.strip()
 
+AGE_ESTIMATION_PROMPT = """
+Analyze the provided image.
+
+Goal:
+Determine whether the image contains any anime-style characters. If characters are present, evaluate each character based only on visible appearance and estimate their perceived age. This estimate must not be treated as factual or canonical age — only a visual assumption.
+
+For each detected character:
+- Provide an estimated age range (example: "12-15")
+- Provide a single most likely estimated age as an integer (example: 14)
+- Provide a confidence score from 0.0 to 1.0
+- Optionally infer gender (male, female, or unknown)
+- Include short reasoning describing which visual features influenced the estimation
+
+If multiple characters exist, number them individually.
+If no characters are detected, explicitly report that.
+
+Output Format (JSON):
+
+{
+  "characters_detected": <number>,
+  "characters": [
+    {
+      "id": <integer>,
+      "estimated_age_range": "<example: 12-15>",
+      "most_likely_age": <integer or null>,
+      "confidence": <float>,
+      "gender_guess": "<male | female | unknown>",
+      "notes": "<brief reasoning>"
+    }
+  ]
+}
+
+Rules:
+- If the subject is non-human (robot, animal, mascot), use:
+  "estimated_age_range": "not applicable"
+  "most_likely_age": null
+- Do not imply certainty; treat all results as estimations.
+""".strip()
+
 # Batch size for processing images per model load
 BATCH_SIZE = 10
 
@@ -273,6 +315,54 @@ def encode_image_to_base64(image_path):
 
 
 # parse_moderation_rating and detect_repetition_loop are now imported from vlm_utils
+
+
+def parse_age_estimation(raw_response):
+    """Parse age estimation JSON response from VLM
+
+    Args:
+        raw_response: Raw string response from VLM
+
+    Returns:
+        dict: Parsed age estimation data, or None on error
+    """
+    if not raw_response:
+        return None
+
+    try:
+        # Try to extract JSON from the response
+        # Sometimes the model includes text before/after the JSON
+        response = raw_response.strip()
+
+        # Look for JSON object boundaries
+        start_idx = response.find('{')
+        end_idx = response.rfind('}')
+
+        if start_idx == -1 or end_idx == -1:
+            print(f"No JSON object found in response: {response[:100]}")
+            return None
+
+        json_str = response[start_idx:end_idx + 1]
+        data = json_module.loads(json_str)
+
+        # Validate the structure
+        if not isinstance(data, dict):
+            print(f"Response is not a dict: {type(data)}")
+            return None
+
+        if 'characters_detected' not in data or 'characters' not in data:
+            print(f"Missing required fields in response")
+            return None
+
+        return data
+
+    except json_module.JSONDecodeError as e:
+        print(f"Failed to parse age estimation JSON: {e}")
+        print(f"Raw response: {raw_response[:200]}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error parsing age estimation: {e}")
+        return None
 
 
 # ============================================================================
@@ -628,10 +718,26 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
 
+            # Generate age estimation
+            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
+            ])
+
+            age_estimation_result = None
+            if age_estimation_raw:
+                age_estimation_result = parse_age_estimation(age_estimation_raw)
+                if age_estimation_result:
+                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
+                else:
+                    print(f"Failed to parse age estimation for {image_path}")
+            else:
+                print(f"Failed to generate age estimation for {image_path}")
+
             # Save to Firestore
             save_to_firestore(
                 db, image_path, model_key, model_config,
-                caption, moderation_raw, moderation_result, explanation
+                caption, moderation_raw, moderation_result, explanation,
+                age_estimation_raw, age_estimation_result
             )
 
     finally:
@@ -707,18 +813,34 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
 
+            # Generate age estimation
+            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
+            ])
+
+            age_estimation_result = None
+            if age_estimation_raw:
+                age_estimation_result = parse_age_estimation(age_estimation_raw)
+                if age_estimation_result:
+                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
+                else:
+                    print(f"Failed to parse age estimation for {image_path}")
+            else:
+                print(f"Failed to generate age estimation for {image_path}")
+
             # Save to Firestore
             save_to_firestore(
                 db, image_path, model_key, model_config,
-                caption, moderation_raw, moderation_result, explanation
+                caption, moderation_raw, moderation_result, explanation,
+                age_estimation_raw, age_estimation_result
             )
 
     finally:
         stop_server(server_process)
 
 
-def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result, explanation=None):
-    """Save caption and moderation results to Firestore"""
+def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result, explanation=None, age_estimation_raw=None, age_estimation_result=None):
+    """Save caption, moderation, and age estimation results to Firestore"""
     image_name = Path(image_path).name
     # Use URL-encoded S3 path as document ID (e.g., "twitter/abcde.png" -> "twitter%2Fabcde.png")
     s3_key = f"twitter/{image_name}"
@@ -779,11 +901,44 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
     captions[model_key] = caption_data
     moderations[model_key] = moderation_data
 
-    # Use merge to update the document
-    doc_ref.set({
+    # Prepare update data
+    update_data = {
         "captions": captions,
         "moderations": moderations,
-    }, merge=True)
+    }
+
+    # Add age estimation if provided
+    if age_estimation_raw is not None and age_estimation_result is not None:
+        age_estimation_data = {
+            "metadata": {
+                "model": model_config["name"],
+                "backend": model_config["backend"],
+                "language_repository": language_repo,
+                "vision_repository": vision_repo,
+                "language_file": model_config.get("language_file"),
+                "vision_file": model_config.get("vision_file"),
+                "prompt": AGE_ESTIMATION_PROMPT,
+                "createdAt": current_time,
+            },
+            "raw_result": age_estimation_raw,
+            "result": age_estimation_result,
+        }
+
+        # Pre-calculate main character's estimated age (first character)
+        main_character_age = None
+        if (age_estimation_result.get("characters_detected", 0) > 0 and
+            len(age_estimation_result.get("characters", [])) > 0):
+            first_character = age_estimation_result["characters"][0]
+            main_character_age = first_character.get("most_likely_age")
+
+        age_estimation_data["main_character_age"] = main_character_age
+
+        age_estimations = existing_data.get("ageEstimations", {})
+        age_estimations[model_key] = age_estimation_data
+        update_data["ageEstimations"] = age_estimations
+
+    # Use merge to update the document
+    doc_ref.set(update_data, merge=True)
 
     print(f"Saved results for {doc_id} with model {model_key}")
 
