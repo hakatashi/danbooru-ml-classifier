@@ -91,10 +91,13 @@ function getRatingLabel(rating: number | null): string {
 }
 
 onMounted(async () => {
-	const id = route.params.id as string;
-	if (id) {
+	// Get the path from route params (e.g., "twitter/C60DOS6V4AAytlY.jpg")
+	const imagePath = route.params.id as string;
+	if (imagePath) {
 		try {
-			image.value = await getImageById(id);
+			// Encode the path to create the document ID (e.g., "twitter%2FC60DOS6V4AAytlY.jpg")
+			const documentId = encodeURIComponent(imagePath);
+			image.value = await getImageById(documentId);
 			if (!image.value) {
 				error.value = 'Image not found';
 			}

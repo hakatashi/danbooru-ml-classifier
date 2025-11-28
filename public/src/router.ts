@@ -11,7 +11,7 @@ const router = createRouter({
 			component: HomeView,
 		},
 		{
-			path: '/image/:id',
+			path: '/image/:id(.*)',
 			name: 'image-detail',
 			component: ImageDetailView,
 		},

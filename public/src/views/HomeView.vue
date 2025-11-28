@@ -349,6 +349,10 @@ function getImageUrl(image: ImageDocument): string {
 	return IMAGE_BASE_URL + filename;
 }
 
+function getDecodedId(image: ImageDocument): string {
+	return decodeURIComponent(image.id);
+}
+
 function getRatingColorClass(rating: number | null): string {
 	if (rating === null) return 'bg-gray-500';
 	if (rating <= 2) return 'bg-green-500';
@@ -655,7 +659,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 								</button>
 								<!-- Detail page button -->
 								<RouterLink
-									:to="{ name: 'image-detail', params: { id: image.id } }"
+									:to="`/image/${getDecodedId(image)}`"
 									target="_blank"
 									class="px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg flex items-center gap-1.5"
 									@click.stop
@@ -729,7 +733,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 							</button>
 							<!-- Detail page button -->
 							<RouterLink
-								:to="{ name: 'image-detail', params: { id: image.id } }"
+								:to="`/image/${getDecodedId(image)}`"
 								target="_blank"
 								class="px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg flex items-center gap-1.5"
 								@click.stop

@@ -28,6 +28,11 @@ const filename = computed(() => {
 
 const imageUrl = computed(() => IMAGE_BASE_URL + filename.value);
 
+// Decode the document ID to use as URL path (e.g., "twitter%2Fimage.jpg" -> "twitter/image.jpg")
+const decodedId = computed(() => {
+	return decodeURIComponent(props.image.id);
+});
+
 const currentCaption = computed(() => {
 	return (
 		props.image.captions?.[activeModel.value]?.caption || 'No caption available'
@@ -133,7 +138,7 @@ async function handleToggleFavorite(event: Event) {
 		<div class="p-3">
 			<div class="flex justify-between items-center text-xs text-gray-500 mb-2">
 				<RouterLink
-					:to="{ name: 'image-detail', params: { id: image.id } }"
+					:to="`/image/${decodedId}`"
 					target="_blank"
 					class="font-mono truncate max-w-[60%] hover:text-blue-600 hover:underline"
 				>
