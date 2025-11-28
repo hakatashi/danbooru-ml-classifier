@@ -97,6 +97,7 @@ function openLightbox() {
 			<div class="flex justify-between items-center text-xs text-gray-500 mb-2">
 				<RouterLink
 					:to="{ name: 'image-detail', params: { id: image.id } }"
+					target="_blank"
 					class="font-mono truncate max-w-[60%] hover:text-blue-600 hover:underline"
 				>
 					{{ filename }}

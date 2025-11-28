@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
-import {computed, ref, watch} from 'vue';
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import FilterBar from '../components/FilterBar.vue';
 import ImageCard from '../components/ImageCard.vue';
@@ -357,6 +357,38 @@ function getGalleryImageStyle(imageId: string, height: number) {
 		objectFit,
 	};
 }
+
+// Window resize handler for gallery mode
+let resizeTimeout: number | null = null;
+
+function handleResize() {
+	// Debounce resize events
+	if (resizeTimeout !== null) {
+		window.clearTimeout(resizeTimeout);
+	}
+
+	resizeTimeout = window.setTimeout(() => {
+		// Recalculate gallery rows if we have aspect ratios
+		if (
+			galleryMode.value &&
+			imageAspectRatios.value.size === currentImages.value.length
+		) {
+			calculateGalleryRows();
+		}
+	}, 300);
+}
+
+// Add/remove resize listener
+onMounted(() => {
+	window.addEventListener('resize', handleResize);
+});
+
+onUnmounted(() => {
+	window.removeEventListener('resize', handleResize);
+	if (resizeTimeout !== null) {
+		window.clearTimeout(resizeTimeout);
+	}
+});
 </script>
 
 <template>
@@ -481,6 +513,7 @@ function getGalleryImageStyle(imageId: string, height: number) {
 							<!-- Detail page button (hover) -->
 							<RouterLink
 								:to="{ name: 'image-detail', params: { id: image.id } }"
+								target="_blank"
 								class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
 								@click.stop
 							>
@@ -543,6 +576,7 @@ function getGalleryImageStyle(imageId: string, height: number) {
 						<!-- Detail page button (hover) -->
 						<RouterLink
 							:to="{ name: 'image-detail', params: { id: image.id } }"
+							target="_blank"
 							class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
 							@click.stop
 						>
