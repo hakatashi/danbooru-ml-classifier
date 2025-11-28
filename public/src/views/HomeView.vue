@@ -26,6 +26,7 @@ const currentImages = ref<ImageDocument[]>([]);
 const galleryMode = ref(false);
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref<string>('');
+const imageAspectRatios = ref<Map<string, number>>(new Map());
 
 // Sort options mapping
 const sortOptionsMap = {
@@ -236,6 +237,65 @@ function closeLightbox() {
 	lightboxImage.value = null;
 	lightboxAlt.value = '';
 }
+
+function handleImageLoad(event: Event, imageId: string) {
+	const img = event.target as HTMLImageElement;
+	const aspectRatio = img.naturalWidth / img.naturalHeight;
+	imageAspectRatios.value.set(imageId, aspectRatio);
+}
+
+function getGalleryImageContainerStyle(imageId: string) {
+	const aspectRatio = imageAspectRatios.value.get(imageId);
+	if (!aspectRatio) return {};
+
+	const height = 480;
+	let width: number;
+
+	// 横長すぎる (2:1より横長) → 2:1の比率で表示
+	if (aspectRatio > 2) {
+		width = height * 2;
+	}
+	// 縦長すぎる (1:2より縦長) → 1:2の比率で表示
+	else if (aspectRatio < 0.5) {
+		width = height / 2;
+	}
+	// 通常の縦横比 → そのまま表示
+	else {
+		width = height * aspectRatio;
+	}
+
+	return {width: `${width}px`};
+}
+
+function getGalleryImageStyle(imageId: string) {
+	const aspectRatio = imageAspectRatios.value.get(imageId);
+	if (!aspectRatio) return {};
+
+	const height = 480;
+	let width: number;
+	let objectFit: 'cover' | 'contain';
+
+	// 横長すぎる (2:1より横長) → 2:1の比率で表示
+	if (aspectRatio > 2) {
+		width = height * 2;
+		objectFit = 'cover';
+	}
+	// 縦長すぎる (1:2より縦長) → 1:2の比率で表示
+	else if (aspectRatio < 0.5) {
+		width = height / 2;
+		objectFit = 'cover';
+	}
+	// 通常の縦横比 → そのまま表示
+	else {
+		width = height * aspectRatio;
+		objectFit = 'contain';
+	}
+
+	return {
+		width: `${width}px`,
+		objectFit,
+	};
+}
 </script>
 
 <template>
@@ -339,43 +399,16 @@ function closeLightbox() {
 					v-for="image in currentImages"
 					:key="image.id"
 					class="relative h-[480px] flex-shrink-0 group cursor-pointer overflow-hidden"
+					:style="getGalleryImageContainerStyle(image.id)"
 					@click="openLightbox(image)"
 				>
 					<img
 						:src="getImageUrl(image)"
 						:alt="image.id"
-						class="h-full object-cover bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+						class="h-full bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+						:style="getGalleryImageStyle(image.id)"
 						loading="lazy"
-						@load="
-							(e) => {
-								const img = e.target as HTMLImageElement;
-								const aspectRatio = img.naturalWidth / img.naturalHeight;
-								const container = img.parentElement;
-								if (!container) return;
-
-								// 横長すぎる (2:1より横長) → 2:1の比率で表示
-								if (aspectRatio > 2) {
-									const width = 480 * 2; // height * 2:1 ratio
-									container.style.width = width + 'px';
-									img.style.width = width + 'px';
-									img.style.objectFit = 'cover';
-								}
-								// 縦長すぎる (1:2より縦長) → 1:2の比率で表示
-								else if (aspectRatio < 0.5) {
-									const width = 480 / 2; // height / 2 for 1:2 ratio
-									container.style.width = width + 'px';
-									img.style.width = width + 'px';
-									img.style.objectFit = 'cover';
-								}
-								// 通常の縦横比 → そのまま表示
-								else {
-									const width = 480 * aspectRatio;
-									container.style.width = width + 'px';
-									img.style.width = width + 'px';
-									img.style.objectFit = 'contain';
-								}
-							}
-						"
+						@load="(e) => handleImageLoad(e, image.id)"
 					>
 					<!-- Detail page button (hover) -->
 					<RouterLink
