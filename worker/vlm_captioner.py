@@ -81,6 +81,13 @@ MODELS = {
         "vision_repository": "concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf",
         "vision_file": "llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
     },
+    "qwen3": {
+        "name": "Qwen3-32B (Q6_K)",
+        "backend": "llama.cpp",
+        "repository": "Qwen/Qwen3-32B-GGUF",
+        "language_file": "Qwen3-32B-Q6_K.gguf",
+        "vision_file": None,  # Text-only model
+    },
 }
 
 # Load prompts from files
@@ -93,7 +100,7 @@ def load_prompt(filename: str) -> str:
 CAPTION_PROMPT = load_prompt('caption.txt')
 MODERATION_PROMPT = load_prompt('moderation.txt')
 EXPLANATION_PROMPT = load_prompt('explanation.txt')
-AGE_ESTIMATION_PROMPT = load_prompt('age_estimation.txt')
+AGE_ESTIMATION_PROMPT = load_prompt('age_estimation_from_caption.txt')
 
 # Batch size for processing images per model load
 BATCH_SIZE = 10
@@ -239,6 +246,8 @@ def parse_age_estimation(raw_response):
 
 def get_model_paths(model_key):
     """Get model file paths from HuggingFace Hub"""
+
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
     from huggingface_hub import hf_hub_download
 
     model_config = MODELS[model_key]
@@ -504,6 +513,49 @@ def chat_continuation_llama_api(messages, server_url=SERVER_URL):
         return None
 
 
+def chat_text_only_llama_api(messages, server_url=SERVER_URL, max_tokens=2048, temperature=0.7, top_p=0.9):
+    """Send chat request for text-only inference (no image)
+
+    Args:
+        messages: List of message dicts with role and content
+        server_url: URL of the llama-server
+        max_tokens: Maximum tokens to generate
+        temperature: Sampling temperature
+        top_p: Nucleus sampling parameter
+
+    Returns:
+        str: Response content, or None on error
+    """
+    request_data = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "top_p": top_p,
+        "stream": False,
+    }
+
+    try:
+        response = requests.post(
+            f"{server_url}/v1/chat/completions",
+            json=request_data,
+            headers={"Content-Type": "application/json"},
+            timeout=300
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                return result['choices'][0]['message']['content'].strip()
+        else:
+            print(f"Error: Server returned status {response.status_code}")
+            print(f"Response: {response.text}")
+        return None
+
+    except Exception as e:
+        print(f"Error communicating with server: {e}")
+        return None
+
+
 # ============================================================================
 # MAIN PROCESSING FUNCTIONS
 # ============================================================================
@@ -546,23 +598,6 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
 
             print(f"Caption generated ({len(caption)} chars)")
 
-            # Generate age estimation immediately after caption (using caption context)
-            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
-                {"role": "user", "content": CAPTION_PROMPT},
-                {"role": "assistant", "content": caption},
-                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
-            ])
-
-            age_estimation_result = None
-            if age_estimation_raw:
-                age_estimation_result = parse_age_estimation(age_estimation_raw)
-                if age_estimation_result:
-                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
-                else:
-                    print(f"Failed to parse age estimation for {image_path}")
-            else:
-                print(f"Failed to generate age estimation for {image_path}")
-
             # Continue with moderation prompt
             moderation_raw = chat_with_image_llama_api(str(image_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
@@ -594,26 +629,10 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
 
-            # Generate age estimation
-            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
-                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
-            ])
-
-            age_estimation_result = None
-            if age_estimation_raw:
-                age_estimation_result = parse_age_estimation(age_estimation_raw)
-                if age_estimation_result:
-                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
-                else:
-                    print(f"Failed to parse age estimation for {image_path}")
-            else:
-                print(f"Failed to generate age estimation for {image_path}")
-
-            # Save to Firestore
+            # Save to Firestore (age estimation will be done separately with Qwen3)
             save_to_firestore(
                 db, image_path, model_key, model_config,
-                caption, moderation_raw, moderation_result, explanation,
-                age_estimation_raw, age_estimation_result
+                caption, moderation_raw, moderation_result, explanation
             )
 
     finally:
@@ -658,23 +677,6 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
 
             print(f"Caption generated ({len(caption)} chars)")
 
-            # Generate age estimation immediately after caption (using caption context)
-            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
-                {"role": "user", "content": CAPTION_PROMPT},
-                {"role": "assistant", "content": caption},
-                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
-            ])
-
-            age_estimation_result = None
-            if age_estimation_raw:
-                age_estimation_result = parse_age_estimation(age_estimation_raw)
-                if age_estimation_result:
-                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
-                else:
-                    print(f"Failed to parse age estimation for {image_path}")
-            else:
-                print(f"Failed to generate age estimation for {image_path}")
-
             # Generate moderation rating with image context
             moderation_raw = chat_with_image_llama_api(str(image_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
@@ -706,11 +708,10 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
 
-            # Save to Firestore
+            # Save to Firestore (age estimation will be done separately with Qwen3)
             save_to_firestore(
                 db, image_path, model_key, model_config,
-                caption, moderation_raw, moderation_result, explanation,
-                age_estimation_raw, age_estimation_result
+                caption, moderation_raw, moderation_result, explanation
             )
 
     finally:

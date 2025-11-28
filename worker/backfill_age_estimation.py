@@ -16,10 +16,9 @@ from urllib.parse import unquote
 # Import functions from vlm_captioner
 from vlm_captioner import (
     MODELS,
-    CAPTION_PROMPT,
     AGE_ESTIMATION_PROMPT,
     LOCAL_IMAGE_DIR,
-    chat_with_image_llama_api,
+    chat_text_only_llama_api,
     parse_age_estimation,
     get_model_paths,
     start_llama_server,
@@ -43,12 +42,12 @@ if not firebase_admin._apps:
     initialize_app()
 
 
-def get_images_without_age_estimation(db, model_key, limit=100):
-    """Get images that don't have age estimation for the specified model
+def get_images_without_age_estimation(db, caption_model_key, limit=100):
+    """Get images that have captions but don't have age estimation
 
     Args:
         db: Firestore database instance
-        model_key: Model name (e.g., 'minicpm', 'joycaption')
+        caption_model_key: Caption model to use as source (e.g., 'minicpm', 'joycaption')
         limit: Maximum number of images to fetch
 
     Returns:
@@ -63,19 +62,20 @@ def get_images_without_age_estimation(db, model_key, limit=100):
 
     docs = query.stream()
 
-    # Filter for images that have captions but not age estimation for this model
+    # Filter for images that have captions but not age estimation
+    # Note: Age estimation is now done with a separate model (qwen3)
     images_without_age = []
     for doc in docs:
         data = doc.to_dict()
 
-        # Check if this model's caption exists (meaning it's been processed)
+        # Check if the caption exists (meaning it's been processed)
         captions = data.get('captions', {})
-        if model_key not in captions:
+        if caption_model_key not in captions:
             continue
 
-        # Check if this model's age estimation already exists
+        # Check if age estimation already exists (for any model)
         age_estimations = data.get('ageEstimations', {})
-        if model_key in age_estimations:
+        if 'qwen3' in age_estimations:
             continue
 
         # This image has caption but no age estimation
@@ -88,14 +88,15 @@ def get_images_without_age_estimation(db, model_key, limit=100):
     return images_without_age
 
 
-def process_image_age_estimation(db, doc, model_key, model_config, server_url=SERVER_URL):
-    """Process a single image for age estimation
+def process_image_age_estimation(db, doc, caption_model_key, age_model_key, age_model_config, server_url=SERVER_URL):
+    """Process a single image for age estimation based on caption
 
     Args:
         db: Firestore database instance
         doc: Firestore document snapshot
-        model_key: Model name (e.g., 'minicpm', 'joycaption')
-        model_config: Model configuration dict
+        caption_model_key: Caption model to use as source (e.g., 'minicpm', 'joycaption')
+        age_model_key: Age estimation model key (e.g., 'qwen3')
+        age_model_config: Age estimation model configuration dict
         server_url: URL of the llama-server
 
     Returns:
@@ -104,38 +105,39 @@ def process_image_age_estimation(db, doc, model_key, model_config, server_url=SE
     doc_id = doc.id
     data = doc.to_dict()
 
-    # Get the image key and decode it
+    # Get the image key
     s3_key = data.get('key')
     if not s3_key:
         print(f"No key found for document {doc_id}")
         return False
 
-    # Construct local image path
     image_name = Path(s3_key).name
-    image_path = LOCAL_IMAGE_DIR / image_name
-
-    if not image_path.exists():
-        print(f"Image not found locally: {image_path}")
-        return False
-
     print(f"Processing age estimation for: {image_name}")
 
-    # Get existing caption to restore conversation context
+    # Get existing caption as input for age estimation
     captions = data.get('captions', {})
-    existing_caption = captions.get(model_key, {}).get('caption')
+    existing_caption = captions.get(caption_model_key, {}).get('caption')
 
     if not existing_caption:
-        print(f"No existing caption found for {image_name} with model {model_key}")
+        print(f"No existing caption found for {image_name} with model {caption_model_key}")
         return False
 
-    print(f"Restoring conversation context with existing caption ({len(existing_caption)} chars)")
+    print(f"Using caption from {caption_model_key} ({len(existing_caption)} chars)")
 
-    # Generate age estimation with caption context (same as main processing)
-    age_estimation_raw = chat_with_image_llama_api(str(image_path), [
-        {"role": "user", "content": CAPTION_PROMPT},
-        {"role": "assistant", "content": existing_caption},
-        {"role": "user", "content": AGE_ESTIMATION_PROMPT}
-    ], server_url=server_url)
+    # Generate age estimation from caption using text-only inference
+    # Format the prompt with the caption embedded
+    age_estimation_prompt_with_caption = f"""Caption:
+{existing_caption}
+
+{AGE_ESTIMATION_PROMPT}"""
+
+    age_estimation_raw = chat_text_only_llama_api(
+        messages=[{"role": "user", "content": age_estimation_prompt_with_caption}],
+        server_url=server_url,
+        max_tokens=2048,
+        temperature=0.7,
+        top_p=0.9
+    )
 
     if not age_estimation_raw:
         print(f"Failed to generate age estimation for {image_name}")
@@ -150,19 +152,17 @@ def process_image_age_estimation(db, doc, model_key, model_config, server_url=SE
     print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
 
     # Prepare age estimation data
-    language_repo = model_config.get("language_repository") or model_config.get("repository")
-    vision_repo = model_config.get("vision_repository") or model_config.get("repository")
+    language_repo = age_model_config.get("language_repository") or age_model_config.get("repository")
     current_time = datetime.now(timezone.utc)
 
     age_estimation_data = {
         "metadata": {
-            "model": model_config["name"],
-            "backend": model_config["backend"],
+            "model": age_model_config["name"],
+            "backend": age_model_config["backend"],
             "language_repository": language_repo,
-            "vision_repository": vision_repo,
-            "language_file": model_config.get("language_file"),
-            "vision_file": model_config.get("vision_file"),
+            "language_file": age_model_config.get("language_file"),
             "prompt": AGE_ESTIMATION_PROMPT,
+            "caption_source": caption_model_key,  # Track which caption was used
             "createdAt": current_time,
         },
         "raw_result": age_estimation_raw,
@@ -182,7 +182,7 @@ def process_image_age_estimation(db, doc, model_key, model_config, server_url=SE
     doc_ref = db.collection('images').document(doc_id)
     doc_ref.set({
         "ageEstimations": {
-            model_key: age_estimation_data
+            age_model_key: age_estimation_data
         }
     }, merge=True)
 
@@ -190,23 +190,31 @@ def process_image_age_estimation(db, doc, model_key, model_config, server_url=SE
     return True
 
 
-def run_backfill(model_key='minicpm', batch_size=50, max_images=None):
-    """Main function to backfill age estimations
+def run_backfill(caption_model='minicpm', age_model='qwen3', batch_size=50, max_images=None):
+    """Main function to backfill age estimations from captions
 
     Args:
-        model_key: Model to use for age estimation (default: 'minicpm')
+        caption_model: Caption model to use as source (default: 'minicpm')
+        age_model: Model to use for age estimation (default: 'qwen3')
         batch_size: Number of images to process per server session
         max_images: Maximum total images to process (None for unlimited)
     """
-    if model_key not in MODELS:
-        print(f"Error: Invalid model key '{model_key}'")
+    if caption_model not in MODELS:
+        print(f"Error: Invalid caption model key '{caption_model}'")
         print(f"Valid models: {list(MODELS.keys())}")
         return
 
-    model_config = MODELS[model_key]
+    if age_model not in MODELS:
+        print(f"Error: Invalid age estimation model key '{age_model}'")
+        print(f"Valid models: {list(MODELS.keys())}")
+        return
+
+    age_model_config = MODELS[age_model]
     db = firestore.client()
 
-    print(f"Starting age estimation backfill with {model_key}")
+    print(f"Starting age estimation backfill")
+    print(f"Caption source: {caption_model}")
+    print(f"Age estimation model: {age_model}")
     print(f"Batch size: {batch_size}")
     print(f"Max images: {max_images or 'unlimited'}")
 
@@ -214,9 +222,9 @@ def run_backfill(model_key='minicpm', batch_size=50, max_images=None):
     total_successful = 0
     total_failed = 0
 
-    # Get model paths
-    print("\nLoading model...")
-    language_model, vision_model = get_model_paths(model_key)
+    # Get model paths for age estimation model
+    print("\nLoading age estimation model...")
+    language_model, vision_model = get_model_paths(age_model)
 
     # Start server once for all batches
     print("\nStarting llama server...")
@@ -242,7 +250,7 @@ def run_backfill(model_key='minicpm', batch_size=50, max_images=None):
 
             # Get images without age estimation
             print(f"\nFetching up to {fetch_limit} images without age estimation...")
-            images = get_images_without_age_estimation(db, model_key, limit=fetch_limit)
+            images = get_images_without_age_estimation(db, caption_model, limit=fetch_limit)
 
             if not images:
                 print("No more images to process")
@@ -257,7 +265,7 @@ def run_backfill(model_key='minicpm', batch_size=50, max_images=None):
             for i, doc in enumerate(images):
                 print(f"\n[{i+1}/{len(images)}] ", end="")
 
-                if process_image_age_estimation(db, doc, model_key, model_config):
+                if process_image_age_estimation(db, doc, caption_model, age_model, age_model_config):
                     batch_successful += 1
                     total_successful += 1
                 else:
@@ -295,13 +303,19 @@ def run_backfill(model_key='minicpm', batch_size=50, max_images=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Backfill age estimation data for existing images"
+        description="Backfill age estimation data for existing images using caption-based inference"
     )
     parser.add_argument(
-        "--model",
+        "--caption-model",
         choices=list(MODELS.keys()),
         default="minicpm",
-        help="Model to use for age estimation (default: minicpm)"
+        help="Caption model to use as source (default: minicpm)"
+    )
+    parser.add_argument(
+        "--age-model",
+        choices=list(MODELS.keys()),
+        default="qwen3",
+        help="Model to use for age estimation from caption (default: qwen3)"
     )
     parser.add_argument(
         "--batch-size",
@@ -319,13 +333,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(f"Configuration:")
-    print(f"  Model: {args.model}")
+    print(f"  Caption model: {args.caption_model}")
+    print(f"  Age estimation model: {args.age_model}")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Max images: {args.max_images or 'unlimited'}")
     print()
 
     run_backfill(
-        model_key=args.model,
+        caption_model=args.caption_model,
+        age_model=args.age_model,
         batch_size=args.batch_size,
         max_images=args.max_images
     )

@@ -1,0 +1,33 @@
+Your task is to estimate the perceived age of fictional characters based solely on the provided text caption. Do NOT infer or assume the canonical age or real age of the characters — only estimate how old the characters are likely intended to appear based on the written description (such as physical proportions, clothing style, posture, context, and described maturity).
+
+Input:
+A natural language caption describing an image.
+
+Output requirements:
+- If one or more characters are described, estimate age visually implied by the description.
+- If no characters are referenced, state that no characters were detected.
+- The estimate must remain uncertain and probabilistic, not stated as fact.
+
+Output Format (JSON):
+
+{
+  "characters_detected": <number>,
+  "characters": [
+    {
+      "id": <integer>,
+      "estimated_age_range": "<example: 18-22>",
+      "most_likely_age": <integer>,
+      "confidence": <float (0.0 - 1.0)>,
+      "gender_guess": "<male | female | unknown>",
+      "reasoning": "<brief explanation referencing textual clues>"
+    }
+  ]
+}
+
+Rules:
+- If the described subject is non-human (animal, robot, mascot), use:
+  "estimated_age_range": "not applicable"
+  "most_likely_age": null
+- Avoid definitive statements; all results must be treated as appearance-based estimation only.
+
+/no_think
