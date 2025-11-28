@@ -19,7 +19,15 @@ const props = defineProps<{
 const router = useRouter();
 const route = useRoute();
 
-const {loading, error, hasNextPage, hasPrevPage, loadPage} = useImages();
+const {
+	loading,
+	error,
+	hasNextPage,
+	hasPrevPage,
+	loadPage,
+	toggleFavorite,
+	isFavorite,
+} = useImages();
 const currentPage = ref(0);
 const currentSort = ref<SortOption | null>(null);
 const currentImages = ref<ImageDocument[]>([]);
@@ -28,6 +36,7 @@ const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref<string>('');
 const imageAspectRatios = ref<Map<string, number>>(new Map());
 const galleryRows = ref<Array<Array<ImageDocument & {height: number}>>>([]);
+const savingFavorites = ref<Set<string>>(new Set());
 
 // Sort options mapping
 const sortOptionsMap = {
@@ -389,6 +398,22 @@ onUnmounted(() => {
 		window.clearTimeout(resizeTimeout);
 	}
 });
+
+async function handleToggleFavorite(event: Event, imageId: string) {
+	event.preventDefault();
+	event.stopPropagation();
+
+	if (savingFavorites.value.has(imageId)) return;
+
+	savingFavorites.value.add(imageId);
+	try {
+		await toggleFavorite(imageId);
+	} catch (error) {
+		console.error('Failed to toggle favorite:', error);
+	} finally {
+		savingFavorites.value.delete(imageId);
+	}
+}
 </script>
 
 <template>
@@ -510,28 +535,71 @@ onUnmounted(() => {
 								loading="lazy"
 								@load="(e) => handleImageLoad(e, image.id)"
 							>
-							<!-- Detail page button (hover) -->
-							<RouterLink
-								:to="{ name: 'image-detail', params: { id: image.id } }"
-								target="_blank"
-								class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
-								@click.stop
+							<!-- Top-left buttons (hover) -->
+							<div
+								class="absolute top-3 left-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10"
 							>
-								<svg
-									class="w-3.5 h-3.5"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
+								<!-- Favorite button -->
+								<button
+									@click="(e) => handleToggleFavorite(e, image.id)"
+									:disabled="savingFavorites.has(image.id)"
+									:class="[
+										'p-2 rounded-lg shadow-lg transition-all',
+										isFavorite(image)
+											? 'bg-red-500 text-white hover:bg-red-600'
+											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+										savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
+									]"
+									:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
 								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-									/>
-								</svg>
-								Details
-							</RouterLink>
+									<svg
+										v-if="isFavorite(image)"
+										class="w-4 h-4"
+										fill="currentColor"
+										viewBox="0 0 20 20"
+									>
+										<path
+											d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
+										/>
+									</svg>
+									<svg
+										v-else
+										class="w-4 h-4"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+										/>
+									</svg>
+								</button>
+								<!-- Detail page button -->
+								<RouterLink
+									:to="{ name: 'image-detail', params: { id: image.id } }"
+									target="_blank"
+									class="px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg flex items-center gap-1.5"
+									@click.stop
+								>
+									<svg
+										class="w-3.5 h-3.5"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+										/>
+									</svg>
+									Details
+								</RouterLink>
+							</div>
 							<!-- Ratings overlay -->
 							<div class="absolute top-3 right-3 flex flex-col gap-1.5">
 								<div
@@ -573,28 +641,71 @@ onUnmounted(() => {
 							loading="lazy"
 							@load="(e) => handleImageLoad(e, image.id)"
 						>
-						<!-- Detail page button (hover) -->
-						<RouterLink
-							:to="{ name: 'image-detail', params: { id: image.id } }"
-							target="_blank"
-							class="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-10"
-							@click.stop
+						<!-- Top-left buttons (hover) -->
+						<div
+							class="absolute top-3 left-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10"
 						>
-							<svg
-								class="w-3.5 h-3.5"
-								fill="none"
-								stroke="currentColor"
-								viewBox="0 0 24 24"
+							<!-- Favorite button -->
+							<button
+								@click="(e) => handleToggleFavorite(e, image.id)"
+								:disabled="savingFavorites.has(image.id)"
+								:class="[
+									'p-2 rounded-lg shadow-lg transition-all',
+									isFavorite(image)
+										? 'bg-red-500 text-white hover:bg-red-600'
+										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
+								]"
+								:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
 							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-								/>
-							</svg>
-							Details
-						</RouterLink>
+								<svg
+									v-if="isFavorite(image)"
+									class="w-4 h-4"
+									fill="currentColor"
+									viewBox="0 0 20 20"
+								>
+									<path
+										d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
+									/>
+								</svg>
+								<svg
+									v-else
+									class="w-4 h-4"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+									/>
+								</svg>
+							</button>
+							<!-- Detail page button -->
+							<RouterLink
+								:to="{ name: 'image-detail', params: { id: image.id } }"
+								target="_blank"
+								class="px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg flex items-center gap-1.5"
+								@click.stop
+							>
+								<svg
+									class="w-3.5 h-3.5"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+									/>
+								</svg>
+								Details
+							</RouterLink>
+						</div>
 						<!-- Ratings overlay -->
 						<div class="absolute top-3 right-3 flex flex-col gap-1.5">
 							<div

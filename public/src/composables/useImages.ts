@@ -9,6 +9,7 @@ import {
 	type QueryDocumentSnapshot,
 	query,
 	startAfter,
+	updateDoc,
 	where,
 } from 'firebase/firestore';
 import {ref} from 'vue';
@@ -191,6 +192,61 @@ export function useImages() {
 		currentSort.value = null;
 	}
 
+	async function toggleFavorite(
+		imageId: string,
+		category = 'Uncategorized',
+	): Promise<boolean> {
+		try {
+			const imageRef = doc(db, 'images', imageId);
+			const imageSnap = await getDoc(imageRef);
+
+			if (!imageSnap.exists()) {
+				throw new Error('Image not found');
+			}
+
+			const imageData = imageSnap.data() as ImageDocument;
+			const currentCategories = imageData.favorites?.categories || [];
+
+			let newCategories: string[];
+			if (currentCategories.includes(category)) {
+				// Remove from favorites
+				newCategories = currentCategories.filter((c) => c !== category);
+			} else {
+				// Add to favorites
+				newCategories = [...currentCategories, category];
+			}
+
+			const isFavorited = newCategories.length > 0;
+
+			await updateDoc(imageRef, {
+				favorites: {
+					isFavorited,
+					categories: newCategories,
+				},
+			});
+
+			// Update cache if present
+			for (const pageData of pageCache.value.values()) {
+				const cachedImage = pageData.images.find((img) => img.id === imageId);
+				if (cachedImage) {
+					cachedImage.favorites = {isFavorited, categories: newCategories};
+				}
+			}
+
+			return newCategories.includes(category);
+		} catch (e) {
+			console.error('Error toggling favorite:', e);
+			throw e;
+		}
+	}
+
+	function isFavorite(
+		image: ImageDocument,
+		category = 'Uncategorized',
+	): boolean {
+		return image.favorites?.categories.includes(category) ?? false;
+	}
+
 	return {
 		loading,
 		error,
@@ -199,5 +255,7 @@ export function useImages() {
 		loadPage,
 		getImageById,
 		clearCache,
+		toggleFavorite,
+		isFavorite,
 	};
 }

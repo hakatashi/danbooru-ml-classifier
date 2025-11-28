@@ -32,6 +32,11 @@ export interface ModerationData {
 	explanation?: string;
 }
 
+export interface FavoritesData {
+	isFavorited: boolean;
+	categories: string[];
+}
+
 export interface ImageDocument {
 	id: string;
 	key: string;
@@ -40,4 +45,5 @@ export interface ImageDocument {
 	postId: string;
 	captions?: Record<string, CaptionData>;
 	moderations?: Record<string, ModerationData>;
+	favorites?: FavoritesData;
 }
