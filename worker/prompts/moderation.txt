@@ -1,0 +1,96 @@
+# VLM Content Moderation Prompt
+
+Please rate on a scale of 0 to 10 whether the image is adult-oriented. Use the detailed criteria below to determine the appropriate rating:
+
+## Rating Scale with Detailed Descriptions
+
+**[[0]] - General non-human images**
+To be classified as this rating, an image MUST meet all of the following criteria:
+- image cannot contain any human or humanoid characters (e.g. Pure landscapes, objects, food, animals, abstract art, text-only images)
+- image cannot contain any anime or cartoon characters
+- image cannot contain any suggestive shapes or arrangements that could be interpreted sexually.
+
+**[[1]] - Minimal Presence**
+To be classified as this rating, an image MUST meet all of the following criteria:
+- All depicted characters MUST be fully clothed
+- Image must be in a completely harmless context, such as children's content, educational materials, or family photos
+- No visible skin beyond hands, face, and neck
+- Completely non-suggestive poses and expressions
+
+**[[2]] - General Content**
+- Completely non-sexual scenes with characters in everyday situations
+- Casual clothing appropriate for public settings
+- Normal social interactions, work environments, sports in standard uniforms
+- No suggestive positioning, expressions, or camera angles
+- Platonic physical intimacy and non-romantic affectionate touching
+
+**[[3]] - Slightly Suggestive**
+- Mild emphasis on attractiveness without overt sexuality
+- Fashion photography with standard poses
+- Fitness content showing normal workout attire
+- Clothing that emphasizes body shape (tight dresses, crop tops, shorts)
+- Physical contact that emphasizes attractiveness or romantic interest
+- Anime art style emphasizing cuteness/attractiveness
+- The positioning and angle considered somewhat suggestive, but it's not overtly sexual
+- Light kissing or pecks on the lips between couples
+
+**[[4]] - Sensitive Content**
+- Ecchi, sexy, risqué, or suggestive content
+- Suggestive but not explicit poses or expressions
+- Bikinis, lingerie worn as outerwear, or revealing evening wear
+- Underwear visible through clothing or as primary garment
+- Focus on cleavage, midriff, or legs without nudity
+
+**[[5]] - Moderately Suggestive**
+- Sexualization without nudity
+- Facial expressions obviously conveying sexual desire or pleasure
+- See-through or very tight clothing that clearly outlines body parts
+- Underwear as primary clothing in obviously suggestive contexts
+- Pin-up style content, glamour photography with sexual undertones
+- Passionate kissing with visible tongue or open mouths
+
+**[[6]] - Questionable Content**
+- Simple non-genital nudity showing areolae and bare buttocks
+- Artistic nudity in clearly artistic, medical, or educational contexts (museums, classical art, medical textbooks)
+- Nude figures where genitals and nipples are obscured or not visible
+- Highly suggestive content that stops just short of showing nipples
+- Fetish scenarios without any nudity or exposure (bondage, restraints, BDSM situations with full clothing)
+- Sexual touching of breasts, buttocks, or genital areas over clothing
+
+**[[7]] - Clearly Adult-Oriented**
+- Nipple visibility (except in clearly artistic, medical, or educational contexts)
+- Topless scenes with clear view of nipples (beaches, changing rooms, non-artistic contexts)
+- Explicit focus on sexual body parts without showing genitals
+- Highly suggestive positioning that strongly implies sexual activity
+- Fetish content that doesn't show genitals but may show nipples
+
+**[[8]] - NSFW Content**
+- Sexual scenarios with obvious erotic purpose, even without genital display
+- Nude content where sexual arousal is the primary intent
+- Genitals clearly depicted but only to a limited extent
+- Masturbation scenes or self-stimulation activities (regardless of nudity level)
+- Adult content that crosses into explicit territory but remains somewhat restrained
+
+**[[9]] - Highly Explicit**
+- Full genital display with clear sexual intent
+- Explicit sexual acts in progress with detailed visibility
+- Pornographic content with full nudity and sexual activity
+- Genitals as primary focus of the image
+- Clear depiction of sexual intercourse or other explicit acts
+
+**[[10]] - Strongly NSFW**
+- Full nudity including detailed genitalia as primary subject matter
+- Direct depictions of orgasmic sex, explicit sexual acts
+- Hardcore pornographic content with no restraint
+- Maximum explicitness in sexual content
+
+## Response Format
+Output only: [[0]], [[1]], [[2]], [[3]], [[4]], [[5]], [[6]], [[7]], [[8]], [[9]], or [[10]]
+No explanations or additional text.
+
+## Additional Guidelines
+- When uncertain between two levels, choose the higher rating for safety
+- Consider context, intent, and artistic merit
+- Focus on what is implied or suggested through non-visual means
+- Exposure of socially acceptable body parts (face, cheeks, ears, hands, arms, lower legs, feet, neck) should NOT be considered sexual exposure regardless of context
+- Only exposure of typically covered body parts (chest/breasts, buttocks, genitals, upper thighs, midriff in certain contexts) should be evaluated for sexual content

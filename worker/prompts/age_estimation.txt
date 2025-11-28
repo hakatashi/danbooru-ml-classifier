@@ -1,0 +1,36 @@
+Analyze the provided image.
+
+Goal:
+Determine whether the image contains any anime-style characters. If characters are present, evaluate each character based only on visible appearance and estimate their perceived age. This estimate must not be treated as factual or canonical age — only a visual assumption.
+
+For each detected character:
+- Provide an estimated age range (example: "12-15")
+- Provide a single most likely estimated age as an integer (example: 14)
+- Provide a confidence score from 0.0 to 1.0
+- Optionally infer gender (male, female, or unknown)
+- Include short reasoning describing which visual features influenced the estimation
+
+If multiple characters exist, number them individually.
+If no characters are detected, explicitly report that.
+
+Output Format (JSON):
+
+{
+  "characters_detected": <number>,
+  "characters": [
+    {
+      "id": <integer>,
+      "estimated_age_range": "<example: 12-15>",
+      "most_likely_age": <integer or null>,
+      "confidence": <float>,
+      "gender_guess": "<male | female | unknown>",
+      "notes": "<brief reasoning>"
+    }
+  ]
+}
+
+Rules:
+- If the subject is non-human (robot, animal, mascot), use:
+  "estimated_age_range": "not applicable"
+  "most_likely_age": null
+- Do not imply certainty; treat all results as estimations.
