@@ -27,12 +27,19 @@ export interface RatingFilter {
 	max: number | null;
 }
 
+export interface AgeFilter {
+	provider: 'joycaption' | 'minicpm';
+	min: number | null;
+	max: number | null;
+}
+
 const PAGE_SIZE = 50;
 
 const loading = ref(false);
 const error = ref<string | null>(null);
 const currentSort = ref<SortOption | null>(null);
 const currentRatingFilter = ref<RatingFilter | null>(null);
+const currentAgeFilter = ref<AgeFilter | null>(null);
 
 // Store page data with cursors for navigation
 const pageCache = ref<
@@ -53,26 +60,34 @@ export function useImages() {
 		sort: SortOption,
 		page: number,
 		ratingFilter: RatingFilter | null = null,
+		ageFilter: AgeFilter | null = null,
 		direction: 'forward' | 'backward' = 'forward',
 	) {
 		let effectivePage = page;
 
-		// If sort or rating filter changed, reset cache
-		const filterChanged =
+		// If sort or filters changed, reset cache
+		const ratingFilterChanged =
 			currentRatingFilter.value?.provider !== ratingFilter?.provider ||
 			currentRatingFilter.value?.min !== ratingFilter?.min ||
 			currentRatingFilter.value?.max !== ratingFilter?.max;
 
+		const ageFilterChanged =
+			currentAgeFilter.value?.provider !== ageFilter?.provider ||
+			currentAgeFilter.value?.min !== ageFilter?.min ||
+			currentAgeFilter.value?.max !== ageFilter?.max;
+
 		if (
 			currentSort.value?.field !== sort.field ||
 			currentSort.value?.direction !== sort.direction ||
-			filterChanged
+			ratingFilterChanged ||
+			ageFilterChanged
 		) {
 			pageCache.value.clear();
 			hasNextPage.value = true;
 			hasPrevPage.value = false;
 			currentSort.value = sort;
 			currentRatingFilter.value = ratingFilter;
+			currentAgeFilter.value = ageFilter;
 			effectivePage = 0;
 		}
 
@@ -102,6 +117,16 @@ export function useImages() {
 			if (ratingFilter?.max !== null && ratingFilter?.max !== undefined) {
 				const ratingField = `moderations.${ratingFilter.provider}.result`;
 				constraints.push(where(ratingField, '<=', ratingFilter.max));
+			}
+
+			// Add age filters if present
+			if (ageFilter?.min !== null && ageFilter?.min !== undefined) {
+				const ageField = `ageEstimations.${ageFilter.provider}.main_character_age`;
+				constraints.push(where(ageField, '>=', ageFilter.min));
+			}
+			if (ageFilter?.max !== null && ageFilter?.max !== undefined) {
+				const ageField = `ageEstimations.${ageFilter.provider}.main_character_age`;
+				constraints.push(where(ageField, '<=', ageFilter.max));
 			}
 
 			// Add orderBy

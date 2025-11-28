@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import {X} from 'lucide-vue-next';
+
 defineProps<{
 	src: string;
 	alt: string;
@@ -32,19 +34,7 @@ function handleKeydown(event: KeyboardEvent) {
 				@click="emit('close')"
 				class="absolute top-4 right-4 p-2 text-white/80 hover:text-white transition-colors"
 			>
-				<svg
-					class="w-8 h-8"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M6 18L18 6M6 6l12 12"
-					/>
-				</svg>
+				<X :size="32"/>
 			</button>
 			<img
 				:src="src"

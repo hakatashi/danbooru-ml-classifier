@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
+import {Heart, Image as ImageIcon, Lock, TrendingUp} from 'lucide-vue-next';
 import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import FilterBar from '../components/FilterBar.vue';
 import ImageCard from '../components/ImageCard.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import {
+	type AgeFilter,
 	type RatingFilter,
 	type SortOption,
 	useImages,
@@ -54,6 +56,22 @@ const sortOptionsMap = {
 	},
 	'minicpm-asc': {
 		field: 'moderations.minicpm.result',
+		direction: 'asc' as const,
+	},
+	'joycaption-age-desc': {
+		field: 'ageEstimations.joycaption.main_character_age',
+		direction: 'desc' as const,
+	},
+	'joycaption-age-asc': {
+		field: 'ageEstimations.joycaption.main_character_age',
+		direction: 'asc' as const,
+	},
+	'minicpm-age-desc': {
+		field: 'ageEstimations.minicpm.main_character_age',
+		direction: 'desc' as const,
+	},
+	'minicpm-age-asc': {
+		field: 'ageEstimations.minicpm.main_character_age',
 		direction: 'asc' as const,
 	},
 	'joycaption-created-desc': {
@@ -118,6 +136,35 @@ const ratingMaxValue = computed(() => {
 	return null;
 });
 
+const ageProviderValue = computed(() => {
+	const providerQuery = route.query.ageProvider;
+	if (
+		typeof providerQuery === 'string' &&
+		(providerQuery === 'joycaption' || providerQuery === 'minicpm')
+	) {
+		return providerQuery;
+	}
+	return 'minicpm';
+});
+
+const ageMinValue = computed(() => {
+	const minQuery = route.query.ageMin;
+	if (typeof minQuery === 'string') {
+		const parsed = Number.parseInt(minQuery, 10);
+		return Number.isNaN(parsed) ? null : parsed;
+	}
+	return null;
+});
+
+const ageMaxValue = computed(() => {
+	const maxQuery = route.query.ageMax;
+	if (typeof maxQuery === 'string') {
+		const parsed = Number.parseInt(maxQuery, 10);
+		return Number.isNaN(parsed) ? null : parsed;
+	}
+	return null;
+});
+
 // Watch for user authentication and query parameter changes
 watch(
 	[
@@ -127,6 +174,9 @@ watch(
 		ratingProviderValue,
 		ratingMinValue,
 		ratingMaxValue,
+		ageProviderValue,
+		ageMinValue,
+		ageMaxValue,
 	],
 	async ([
 		newUser,
@@ -135,6 +185,9 @@ watch(
 		newRatingProvider,
 		newRatingMin,
 		newRatingMax,
+		newAgeProvider,
+		newAgeMin,
+		newAgeMax,
 	]) => {
 		if (newUser && newSort) {
 			const sortOption =
@@ -148,7 +201,18 @@ watch(
 				max: newRatingMax,
 			};
 
-			const result = await loadPage(sortOption, newPage, ratingFilter);
+			const ageFilter: AgeFilter = {
+				provider: newAgeProvider,
+				min: newAgeMin,
+				max: newAgeMax,
+			};
+
+			const result = await loadPage(
+				sortOption,
+				newPage,
+				ratingFilter,
+				ageFilter,
+			);
 			currentImages.value = result.images;
 			currentPage.value = result.page;
 
@@ -183,7 +247,7 @@ async function onPageChange(page: number) {
 
 	window.scrollTo({top: 0, behavior: 'smooth'});
 
-	// Update URL with new page, preserve rating filters
+	// Update URL with new page, preserve all filters
 	const query: Record<string, string> = {
 		sort: sortValue.value,
 		page: page.toString(),
@@ -197,6 +261,15 @@ async function onPageChange(page: number) {
 	}
 	if (ratingMaxValue.value !== null) {
 		query.ratingMax = ratingMaxValue.value.toString();
+	}
+	if (ageProviderValue.value !== 'minicpm') {
+		query.ageProvider = ageProviderValue.value;
+	}
+	if (ageMinValue.value !== null) {
+		query.ageMin = ageMinValue.value.toString();
+	}
+	if (ageMaxValue.value !== null) {
+		query.ageMax = ageMaxValue.value.toString();
 	}
 
 	await router.push({query});
@@ -217,6 +290,49 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 	}
 	if (ratingFilter.max !== null) {
 		query.ratingMax = ratingFilter.max.toString();
+	}
+
+	// Preserve age filters
+	if (ageProviderValue.value !== 'minicpm') {
+		query.ageProvider = ageProviderValue.value;
+	}
+	if (ageMinValue.value !== null) {
+		query.ageMin = ageMinValue.value.toString();
+	}
+	if (ageMaxValue.value !== null) {
+		query.ageMax = ageMaxValue.value.toString();
+	}
+
+	await router.push({query});
+}
+
+async function onAgeChange(ageFilter: AgeFilter) {
+	// Update URL with new age filter, reset page to 0
+	const query: Record<string, string> = {
+		sort: sortValue.value,
+		page: '0',
+	};
+
+	// Preserve rating filters
+	if (ratingProviderValue.value !== 'minicpm') {
+		query.ratingProvider = ratingProviderValue.value;
+	}
+	if (ratingMinValue.value !== null) {
+		query.ratingMin = ratingMinValue.value.toString();
+	}
+	if (ratingMaxValue.value !== null) {
+		query.ratingMax = ratingMaxValue.value.toString();
+	}
+
+	// Add age filters
+	if (ageFilter.provider !== 'minicpm') {
+		query.ageProvider = ageFilter.provider;
+	}
+	if (ageFilter.min !== null) {
+		query.ageMin = ageFilter.min.toString();
+	}
+	if (ageFilter.max !== null) {
+		query.ageMax = ageFilter.max.toString();
 	}
 
 	await router.push({query});
@@ -426,19 +542,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 			<div
 				class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6"
 			>
-				<svg
-					class="w-10 h-10 text-blue-500"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-					/>
-				</svg>
+				<Lock :size="40" class="text-blue-500"/>
 			</div>
 			<h2 class="text-2xl font-bold text-gray-900 mb-3">
 				Authentication Required
@@ -456,12 +560,16 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				:current-rating-provider="ratingProviderValue"
 				:current-rating-min="ratingMinValue"
 				:current-rating-max="ratingMaxValue"
+				:current-age-provider="ageProviderValue"
+				:current-age-min="ageMinValue"
+				:current-age-max="ageMaxValue"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
 				:gallery-mode="galleryMode"
 				@sort-change="onSortChange"
 				@page-change="onPageChange"
 				@rating-change="onRatingChange"
+				@age-change="onAgeChange"
 				@gallery-mode-change="onGalleryModeChange"
 			/>
 
@@ -494,19 +602,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				<div
 					class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4"
 				>
-					<svg
-						class="w-8 h-8 text-gray-400"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-						/>
-					</svg>
+					<ImageIcon :size="32" class="text-gray-400"/>
 				</div>
 				<p class="text-gray-600">No images found</p>
 			</div>
@@ -552,30 +648,10 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 									]"
 									:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
 								>
-									<svg
-										v-if="isFavorite(image)"
-										class="w-4 h-4"
-										fill="currentColor"
-										viewBox="0 0 20 20"
-									>
-										<path
-											d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
-										/>
-									</svg>
-									<svg
-										v-else
-										class="w-4 h-4"
-										fill="none"
-										stroke="currentColor"
-										viewBox="0 0 24 24"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-										/>
-									</svg>
+									<Heart
+										:size="16"
+										:fill="isFavorite(image) ? 'currentColor' : 'none'"
+									/>
 								</button>
 								<!-- Detail page button -->
 								<RouterLink
@@ -584,19 +660,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 									class="px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg flex items-center gap-1.5"
 									@click.stop
 								>
-									<svg
-										class="w-3.5 h-3.5"
-										fill="none"
-										stroke="currentColor"
-										viewBox="0 0 24 24"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-										/>
-									</svg>
+									<TrendingUp :size="14"/>
 									Details
 								</RouterLink>
 							</div>
@@ -658,30 +722,10 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 								]"
 								:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
 							>
-								<svg
-									v-if="isFavorite(image)"
-									class="w-4 h-4"
-									fill="currentColor"
-									viewBox="0 0 20 20"
-								>
-									<path
-										d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
-									/>
-								</svg>
-								<svg
-									v-else
-									class="w-4 h-4"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-									/>
-								</svg>
+								<Heart
+									:size="16"
+									:fill="isFavorite(image) ? 'currentColor' : 'none'"
+								/>
 							</button>
 							<!-- Detail page button -->
 							<RouterLink
@@ -690,19 +734,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 								class="px-3 py-1.5 bg-black/70 hover:bg-black/90 text-white text-xs rounded-lg flex items-center gap-1.5"
 								@click.stop
 							>
-								<svg
-									class="w-3.5 h-3.5"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-									/>
-								</svg>
+								<TrendingUp :size="14"/>
 								Details
 							</RouterLink>
 						</div>

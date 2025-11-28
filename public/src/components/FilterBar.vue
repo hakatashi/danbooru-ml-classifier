@@ -9,15 +9,25 @@ const props = defineProps<{
 	currentRatingProvider: 'joycaption' | 'minicpm';
 	currentRatingMin: number | null;
 	currentRatingMax: number | null;
+	currentAgeProvider: 'joycaption' | 'minicpm';
+	currentAgeMin: number | null;
+	currentAgeMax: number | null;
 	canGoNext: boolean;
 	canGoPrev: boolean;
 	galleryMode: boolean;
 }>();
 
+export interface AgeFilter {
+	provider: 'joycaption' | 'minicpm';
+	min: number | null;
+	max: number | null;
+}
+
 const emit = defineEmits<{
 	(e: 'sort-change', sort: SortOption, sortKey: string): void;
 	(e: 'page-change', page: number): void;
 	(e: 'rating-change', ratingFilter: RatingFilter): void;
+	(e: 'age-change', ageFilter: AgeFilter): void;
 	(e: 'gallery-mode-change', enabled: boolean): void;
 }>();
 
@@ -27,6 +37,9 @@ const ratingProvider = ref<'joycaption' | 'minicpm'>(
 );
 const ratingMin = ref<number | null>(props.currentRatingMin);
 const ratingMax = ref<number | null>(props.currentRatingMax);
+const ageProvider = ref<'joycaption' | 'minicpm'>(props.currentAgeProvider);
+const ageMin = ref<number | null>(props.currentAgeMin);
+const ageMax = ref<number | null>(props.currentAgeMax);
 const totalCount = ref<number | null>(null);
 const perPage = 50; // Images per page
 
@@ -60,6 +73,28 @@ watch(
 	},
 );
 
+// Sync age filters with props
+watch(
+	() => props.currentAgeProvider,
+	(newProvider) => {
+		ageProvider.value = newProvider;
+	},
+);
+
+watch(
+	() => props.currentAgeMin,
+	(newMin) => {
+		ageMin.value = newMin;
+	},
+);
+
+watch(
+	() => props.currentAgeMax,
+	(newMax) => {
+		ageMax.value = newMax;
+	},
+);
+
 // Emit rating change when filters change
 watch(
 	[ratingProvider, ratingMin, ratingMax],
@@ -67,6 +102,11 @@ watch(
 		emit('rating-change', {provider: newProvider, min: newMin, max: newMax});
 	},
 );
+
+// Emit age change when filters change
+watch([ageProvider, ageMin, ageMax], ([newProvider, newMin, newMax]) => {
+	emit('age-change', {provider: newProvider, min: newMin, max: newMax});
+});
 
 const sortOptions = [
 	{
@@ -91,6 +131,30 @@ const sortOptions = [
 		value: 'minicpm-asc',
 		label: 'MiniCPM Rating (Low to High)',
 		field: 'moderations.minicpm.result',
+		direction: 'asc' as const,
+	},
+	{
+		value: 'joycaption-age-desc',
+		label: 'JoyCaption Age (High to Low)',
+		field: 'ageEstimations.joycaption.main_character_age',
+		direction: 'desc' as const,
+	},
+	{
+		value: 'joycaption-age-asc',
+		label: 'JoyCaption Age (Low to High)',
+		field: 'ageEstimations.joycaption.main_character_age',
+		direction: 'asc' as const,
+	},
+	{
+		value: 'minicpm-age-desc',
+		label: 'MiniCPM Age (High to Low)',
+		field: 'ageEstimations.minicpm.main_character_age',
+		direction: 'desc' as const,
+	},
+	{
+		value: 'minicpm-age-asc',
+		label: 'MiniCPM Age (Low to High)',
+		field: 'ageEstimations.minicpm.main_character_age',
 		direction: 'asc' as const,
 	},
 	{
@@ -236,6 +300,41 @@ function next() {
 								<option :value="null">Max</option>
 								<option v-for="i in 11" :key="i - 1" :value="i - 1">
 									{{ i - 1 }}
+								</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- Age filters -->
+					<div class="flex items-center gap-2 min-w-0">
+						<label class="text-sm font-medium text-gray-700 shrink-0">
+							Age:
+						</label>
+						<div class="flex items-center gap-2">
+							<select
+								v-model="ageProvider"
+								class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+							>
+								<option value="minicpm">MiniCPM</option>
+								<option value="joycaption">JoyCaption</option>
+							</select>
+							<select
+								v-model.number="ageMin"
+								class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+							>
+								<option :value="null">Min</option>
+								<option v-for="i in 18" :key="i * 5" :value="i * 5">
+									{{ i * 5 }}
+								</option>
+							</select>
+							<span class="text-gray-500 text-sm">-</span>
+							<select
+								v-model.number="ageMax"
+								class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+							>
+								<option :value="null">Max</option>
+								<option v-for="i in 18" :key="i * 5" :value="i * 5">
+									{{ i * 5 }}
 								</option>
 							</select>
 						</div>

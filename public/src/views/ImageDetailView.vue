@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
+import {ChevronLeft, Heart} from 'lucide-vue-next';
 import {computed, onMounted, ref} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import ImageLightbox from '../components/ImageLightbox.vue';
@@ -111,6 +112,11 @@ async function handleToggleFavorite() {
 	isSavingFavorite.value = true;
 	try {
 		await toggleFavorite(image.value.id);
+		// Refetch image data to update favorites state
+		const updatedImage = await getImageById(image.value.id);
+		if (updatedImage) {
+			image.value = updatedImage;
+		}
 	} catch (e) {
 		console.error('Failed to toggle favorite:', e);
 	} finally {
@@ -126,19 +132,7 @@ async function handleToggleFavorite() {
 			@click="goBack"
 			class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
 		>
-			<svg
-				class="w-5 h-5"
-				fill="none"
-				stroke="currentColor"
-				viewBox="0 0 24 24"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M15 19l-7-7 7-7"
-				/>
-			</svg>
+			<ChevronLeft :size="20"/>
 			Back to Gallery
 		</button>
 
@@ -181,30 +175,10 @@ async function handleToggleFavorite() {
 						]"
 						:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
 					>
-						<svg
-							v-if="isFavorite(image)"
-							class="w-6 h-6"
-							fill="currentColor"
-							viewBox="0 0 20 20"
-						>
-							<path
-								d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"
-							/>
-						</svg>
-						<svg
-							v-else
-							class="w-6 h-6"
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-							/>
-						</svg>
+						<Heart
+							:size="24"
+							:fill="isFavorite(image) ? 'currentColor' : 'none'"
+						/>
 					</button>
 				</div>
 
@@ -269,6 +243,83 @@ async function handleToggleFavorite() {
 								<span class="text-sm text-gray-500">
 									{{ getRatingLabel(image.moderations?.[model]?.result ?? null) }}
 								</span>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Age Estimations -->
+				<div
+					v-if="image.ageEstimations && Object.keys(image.ageEstimations).length > 0"
+					class="bg-white rounded-xl shadow-md p-4"
+				>
+					<h2 class="text-lg font-semibold text-gray-900 mb-4">
+						Age Estimations
+					</h2>
+					<div class="space-y-4">
+						<div
+							v-for="model in Object.keys(image.ageEstimations)"
+							:key="model"
+							class="border-b border-gray-200 last:border-0 pb-4 last:pb-0"
+						>
+							<div class="flex items-center justify-between mb-3">
+								<span class="font-medium text-gray-700 capitalize"
+									>{{ model }}</span
+								>
+								<span class="text-sm text-gray-500">
+									{{ image.ageEstimations?.[model]?.result.characters_detected ?? 0 }}
+									character(s) detected
+								</span>
+							</div>
+
+							<div
+								v-if="(image.ageEstimations?.[model]?.result.characters.length ?? 0) > 0"
+								class="space-y-3"
+							>
+								<div
+									v-for="character in image.ageEstimations?.[model]?.result.characters ?? []"
+									:key="character.id"
+									class="bg-gray-50 rounded-lg p-3"
+								>
+									<div class="flex items-start justify-between mb-2">
+										<div>
+											<span class="font-semibold text-gray-900"
+												>Character {{ character.id }}</span
+											>
+											<span class="ml-2 text-sm text-gray-500"
+												>({{ character.gender_guess }})</span
+											>
+										</div>
+										<div class="text-right">
+											<div class="text-lg font-bold text-blue-600">
+												{{ character.most_likely_age ?? 'N/A' }}
+											</div>
+											<div class="text-xs text-gray-500">
+												{{ character.estimated_age_range }}
+											</div>
+										</div>
+									</div>
+									<div class="mb-2">
+										<div
+											class="flex items-center justify-between text-xs text-gray-600 mb-1"
+										>
+											<span>Confidence</span>
+											<span>{{ Math.round(character.confidence * 100) }}%</span>
+										</div>
+										<div class="w-full bg-gray-200 rounded-full h-1.5">
+											<div
+												class="bg-blue-600 h-1.5 rounded-full"
+												:style="{ width: `${character.confidence * 100}%` }"
+											></div>
+										</div>
+									</div>
+									<p class="text-xs text-gray-600 italic">
+										{{ character.notes }}
+									</p>
+								</div>
+							</div>
+							<div v-else class="text-sm text-gray-500 text-center py-2">
+								No characters detected
 							</div>
 						</div>
 					</div>
