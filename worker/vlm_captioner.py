@@ -546,16 +546,24 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
 
             print(f"Caption generated ({len(caption)} chars)")
 
-            # Continue with moderation prompt
-            messages.append({"role": "assistant", "content": caption})
-            messages.append({"role": "user", "content": MODERATION_PROMPT})
-
-            # For continuation, we need to rebuild with image
-            # llama.cpp server doesn't support multi-turn with images well
-            # So we send a new request with the full context
-            full_messages = [
+            # Generate age estimation immediately after caption (using caption context)
+            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
-            ]
+                {"role": "assistant", "content": caption},
+                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
+            ])
+
+            age_estimation_result = None
+            if age_estimation_raw:
+                age_estimation_result = parse_age_estimation(age_estimation_raw)
+                if age_estimation_result:
+                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
+                else:
+                    print(f"Failed to parse age estimation for {image_path}")
+            else:
+                print(f"Failed to generate age estimation for {image_path}")
+
+            # Continue with moderation prompt
             moderation_raw = chat_with_image_llama_api(str(image_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
                 {"role": "assistant", "content": caption},
@@ -650,6 +658,23 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
 
             print(f"Caption generated ({len(caption)} chars)")
 
+            # Generate age estimation immediately after caption (using caption context)
+            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
+                {"role": "user", "content": CAPTION_PROMPT},
+                {"role": "assistant", "content": caption},
+                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
+            ])
+
+            age_estimation_result = None
+            if age_estimation_raw:
+                age_estimation_result = parse_age_estimation(age_estimation_raw)
+                if age_estimation_result:
+                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
+                else:
+                    print(f"Failed to parse age estimation for {image_path}")
+            else:
+                print(f"Failed to generate age estimation for {image_path}")
+
             # Generate moderation rating with image context
             moderation_raw = chat_with_image_llama_api(str(image_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
@@ -680,21 +705,6 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
                     explanation = None
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
-
-            # Generate age estimation
-            age_estimation_raw = chat_with_image_llama_api(str(image_path), [
-                {"role": "user", "content": AGE_ESTIMATION_PROMPT}
-            ])
-
-            age_estimation_result = None
-            if age_estimation_raw:
-                age_estimation_result = parse_age_estimation(age_estimation_raw)
-                if age_estimation_result:
-                    print(f"Age estimation: {age_estimation_result.get('characters_detected', 0)} characters detected")
-                else:
-                    print(f"Failed to parse age estimation for {image_path}")
-            else:
-                print(f"Failed to generate age estimation for {image_path}")
 
             # Save to Firestore
             save_to_firestore(

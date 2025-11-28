@@ -16,6 +16,7 @@ from urllib.parse import unquote
 # Import functions from vlm_captioner
 from vlm_captioner import (
     MODELS,
+    CAPTION_PROMPT,
     AGE_ESTIMATION_PROMPT,
     LOCAL_IMAGE_DIR,
     chat_with_image_llama_api,
@@ -119,8 +120,20 @@ def process_image_age_estimation(db, doc, model_key, model_config, server_url=SE
 
     print(f"Processing age estimation for: {image_name}")
 
-    # Generate age estimation
+    # Get existing caption to restore conversation context
+    captions = data.get('captions', {})
+    existing_caption = captions.get(model_key, {}).get('caption')
+
+    if not existing_caption:
+        print(f"No existing caption found for {image_name} with model {model_key}")
+        return False
+
+    print(f"Restoring conversation context with existing caption ({len(existing_caption)} chars)")
+
+    # Generate age estimation with caption context (same as main processing)
     age_estimation_raw = chat_with_image_llama_api(str(image_path), [
+        {"role": "user", "content": CAPTION_PROMPT},
+        {"role": "assistant", "content": existing_caption},
         {"role": "user", "content": AGE_ESTIMATION_PROMPT}
     ], server_url=server_url)
 
