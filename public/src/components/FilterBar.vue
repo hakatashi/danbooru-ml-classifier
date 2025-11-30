@@ -31,6 +31,8 @@ const emit = defineEmits<{
 	(e: 'gallery-mode-change', enabled: boolean): void;
 }>();
 
+const isModalOpen = ref(false);
+
 const sort = ref(props.currentSort);
 const ratingProvider = ref<'joycaption' | 'minicpm'>(
 	props.currentRatingProvider,
@@ -254,8 +256,90 @@ function next() {
 	<div
 		class="sticky top-[72px] z-10 bg-white rounded-xl shadow-md p-3 sm:p-4 mb-6"
 	>
-		<div class="flex flex-col gap-3">
-			<!-- Top row: Sort dropdown, rating filters, and pagination -->
+		<!-- Mobile view: Menu button and pagination only -->
+		<div class="lg:hidden flex items-center justify-between gap-3">
+			<!-- Menu button -->
+			<button
+				@click="isModalOpen = true"
+				class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-all flex items-center gap-2"
+			>
+				<svg
+					class="w-5 h-5"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M4 6h16M4 12h16M4 18h16"
+					/>
+				</svg>
+				<span>Filters</span>
+			</button>
+
+			<!-- Pagination controls -->
+			<div class="flex items-center gap-2">
+				<button
+					@click="prev"
+					:disabled="!canGoPrev"
+					:class="[
+						'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
+						canGoPrev
+							? 'bg-blue-500 text-white hover:bg-blue-600'
+							: 'bg-gray-100 text-gray-400 cursor-not-allowed',
+					]"
+				>
+					<svg
+						class="w-4 h-4"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M15 19l-7-7 7-7"
+						/>
+					</svg>
+				</button>
+
+				<span class="text-gray-600 font-medium text-sm whitespace-nowrap">
+					{{ currentPage + 1 }}
+					<span v-if="totalPages !== null">/ {{ totalPages }}</span>
+				</span>
+
+				<button
+					@click="next"
+					:disabled="!canGoNext"
+					:class="[
+						'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
+						canGoNext
+							? 'bg-blue-500 text-white hover:bg-blue-600'
+							: 'bg-gray-100 text-gray-400 cursor-not-allowed',
+					]"
+				>
+					<svg
+						class="w-4 h-4"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M9 5l7 7-7 7"
+						/>
+					</svg>
+				</button>
+			</div>
+		</div>
+
+		<!-- Desktop view: Full filters and pagination -->
+		<div class="hidden lg:flex flex-col gap-3">
 			<div
 				class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3"
 			>
@@ -444,4 +528,181 @@ function next() {
 			</div>
 		</div>
 	</div>
+
+	<!-- Mobile filter modal -->
+	<Teleport to="body">
+		<Transition
+			enter-active-class="transition-opacity duration-200"
+			leave-active-class="transition-opacity duration-200"
+			enter-from-class="opacity-0"
+			leave-to-class="opacity-0"
+		>
+			<div
+				v-if="isModalOpen"
+				class="fixed inset-0 bg-black/50 z-50 lg:hidden"
+				@click="isModalOpen = false"
+			>
+				<Transition
+					enter-active-class="transition-transform duration-300"
+					leave-active-class="transition-transform duration-300"
+					enter-from-class="translate-y-full"
+					leave-to-class="translate-y-full"
+				>
+					<div
+						v-if="isModalOpen"
+						class="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-xl max-h-[80vh] overflow-y-auto"
+						@click.stop
+					>
+						<!-- Modal header -->
+						<div
+							class="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between rounded-t-2xl"
+						>
+							<h2 class="text-lg font-semibold text-gray-800">Filters</h2>
+							<button
+								@click="isModalOpen = false"
+								class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+							>
+								<svg
+									class="w-6 h-6 text-gray-600"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M6 18L18 6M6 6l12 12"
+									/>
+								</svg>
+							</button>
+						</div>
+
+						<!-- Modal content -->
+						<div class="p-4 space-y-4">
+							<!-- Sort dropdown -->
+							<div class="space-y-2">
+								<label class="text-sm font-medium text-gray-700">Sort</label>
+								<select
+									v-model="sort"
+									class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								>
+									<option
+										v-for="option in sortOptions"
+										:key="option.value"
+										:value="option.value"
+									>
+										{{ option.label }}
+									</option>
+								</select>
+							</div>
+
+							<!-- Rating filters -->
+							<div class="space-y-2">
+								<label class="text-sm font-medium text-gray-700">
+									Rating Filter
+								</label>
+								<div class="space-y-3">
+									<select
+										v-model="ratingProvider"
+										class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									>
+										<option value="minicpm">MiniCPM</option>
+										<option value="joycaption">JoyCaption</option>
+									</select>
+									<div class="grid grid-cols-2 gap-2">
+										<select
+											v-model.number="ratingMin"
+											class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option :value="null">Min</option>
+											<option v-for="i in 11" :key="i - 1" :value="i - 1">
+												{{ i - 1 }}
+											</option>
+										</select>
+										<select
+											v-model.number="ratingMax"
+											class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option :value="null">Max</option>
+											<option v-for="i in 11" :key="i - 1" :value="i - 1">
+												{{ i - 1 }}
+											</option>
+										</select>
+									</div>
+								</div>
+							</div>
+
+							<!-- Age filters -->
+							<div class="space-y-2">
+								<label class="text-sm font-medium text-gray-700">
+									Age Filter
+								</label>
+								<div class="space-y-3">
+									<select
+										v-model="ageProvider"
+										class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									>
+										<option value="minicpm">MiniCPM</option>
+										<option value="joycaption">JoyCaption</option>
+									</select>
+									<div class="grid grid-cols-2 gap-2">
+										<select
+											v-model.number="ageMin"
+											class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option :value="null">Min</option>
+											<option v-for="i in 18" :key="i * 5" :value="i * 5">
+												{{ i * 5 }}
+											</option>
+										</select>
+										<select
+											v-model.number="ageMax"
+											class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option :value="null">Max</option>
+											<option v-for="i in 18" :key="i * 5" :value="i * 5">
+												{{ i * 5 }}
+											</option>
+										</select>
+									</div>
+								</div>
+							</div>
+
+							<!-- Gallery mode toggle -->
+							<div class="flex items-center justify-between">
+								<label class="text-sm font-medium text-gray-700">
+									Gallery Mode
+								</label>
+								<button
+									@click="emit('gallery-mode-change', !galleryMode)"
+									:class="[
+										'relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2',
+										galleryMode ? 'bg-blue-500' : 'bg-gray-200',
+									]"
+								>
+									<span
+										:class="[
+											'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+											galleryMode ? 'translate-x-6' : 'translate-x-1',
+										]"
+									></span>
+								</button>
+							</div>
+						</div>
+
+						<!-- Modal footer with close button -->
+						<div class="sticky bottom-0 bg-white border-t border-gray-200 p-4">
+							<button
+								@click="isModalOpen = false"
+								class="w-full px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors"
+							>
+								Apply Filters
+							</button>
+						</div>
+					</div>
+				</Transition>
+			</div>
+		</Transition>
+	</Teleport>
 </template>
