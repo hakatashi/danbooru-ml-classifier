@@ -74,6 +74,14 @@ const sortOptionsMap = {
 		field: 'ageEstimations.minicpm.main_character_age',
 		direction: 'asc' as const,
 	},
+	'qwen3-age-desc': {
+		field: 'ageEstimations.qwen3.main_character_age',
+		direction: 'desc' as const,
+	},
+	'qwen3-age-asc': {
+		field: 'ageEstimations.qwen3.main_character_age',
+		direction: 'asc' as const,
+	},
 	'joycaption-created-desc': {
 		field: 'captions.joycaption.metadata.createdAt',
 		direction: 'desc' as const,

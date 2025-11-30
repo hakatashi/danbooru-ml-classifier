@@ -158,6 +158,18 @@ const sortOptions = [
 		direction: 'asc' as const,
 	},
 	{
+		value: 'qwen3-age-desc',
+		label: 'Qwen3 Age (High to Low)',
+		field: 'ageEstimations.qwen3.main_character_age',
+		direction: 'desc' as const,
+	},
+	{
+		value: 'qwen3-age-asc',
+		label: 'Qwen3 Age (Low to High)',
+		field: 'ageEstimations.qwen3.main_character_age',
+		direction: 'asc' as const,
+	},
+	{
 		value: 'joycaption-created-desc',
 		label: 'JoyCaption Created (Newest First)',
 		field: 'captions.joycaption.metadata.createdAt',
