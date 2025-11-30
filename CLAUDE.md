@@ -38,12 +38,18 @@ Web application for browsing VLM-captioned images:
 - Firebase Authentication (Google Sign-In required)
 - Features:
   - Browse images with VLM captions (JoyCaption and MiniCPM)
-  - Sort by moderation rating (high to low or low to high) or creation date
-  - Page-based navigation (20 images per page with total page count from `moderationStats` collection)
+  - Sort by moderation rating, age estimation, or creation date (JoyCaption/MiniCPM/Qwen3 × High/Low)
+  - Filter by rating range (provider + min/max) and age range (provider + min/max)
+  - Page-based navigation (50 images per page with total page count from `moderationStats` collection)
   - Responsive sticky filter bar with integrated pagination
+    - Mobile: Compact view with menu button + pagination, filters in modal overlay
+    - Desktop: Full inline filter controls
+  - Gallery mode with justified row layout and lightbox viewer
+  - Favorites functionality with heart button (uncategorized by default)
   - Mobile-optimized layout (vertical stack on mobile, horizontal on desktop)
-  - Click images to view detailed captions and metadata
-- Default sort: MiniCPM Rating (High to Low)
+  - Click images to view detailed captions, age estimation, and metadata
+  - Twitter source metadata display (tweet text, user, retweet info)
+- Default sort: MiniCPM Created (Newest First)
 - Deployed at: https://danbooru-ml-classifier.web.app
 
 ## Commands
@@ -72,6 +78,30 @@ cd worker
 python -m venv venv
 venv/bin/pip install -r requirements.txt
 ```
+
+**VLM Captioner**: Generates captions, moderation ratings, and age estimations
+```bash
+# Basic usage
+python vlm_captioner.py
+
+# Control which steps to run
+python vlm_captioner.py --skip-caption --skip-moderation --skip-age-estimation
+python vlm_captioner.py --only-caption
+python vlm_captioner.py --only-moderation
+python vlm_captioner.py --only-age-estimation
+
+# Backfill age estimation for existing images
+python backfill_age_estimation.py --caption-model minicpm --age-model qwen3
+```
+
+**Prompts**: Stored in `worker/prompts/` directory
+- `caption.txt` - Image captioning prompt
+- `moderation.txt` - Moderation rating criteria
+- `explanation.txt` - Moderation explanation generation
+- `age_estimation.txt` - Image-based age estimation (deprecated)
+- `age_estimation_from_caption.txt` - Caption-based age estimation (current)
+- `age_estimation.schema.json` - Age estimation structured output schema
+- `detailed_caption.txt` - Exhaustive image analysis with body part descriptions
 
 ### Public Website (Vue 3 + TypeScript)
 ```bash
@@ -109,18 +139,26 @@ firebase emulators:start
 2. Firestore trigger queues download task
 3. Task downloads image to `danbooru-ml-classifier-images` bucket, creates doc in `images/` with `status: 'pending'`
 4. Worker function batches 100+ pending images, runs inference, updates status to `inferred`
-5. VLM captioner updates `images/` documents with captions and moderation ratings in `moderations.[provider].result` field
+5. VLM captioner processes images:
+   - Generates captions (JoyCaption/MiniCPM)
+   - Generates moderation ratings with explanations (0-10 scale)
+   - Generates age estimations using caption-based inference with Qwen3-14B
+   - Loads Twitter source metadata from cache (if available)
+   - Updates `images/` documents with all results
 6. `updateModerationStats` function automatically maintains aggregated statistics (count, sum) per provider in `moderationStats/` collection
-7. Public website queries `images/` collection with pagination (20 images per page) and displays total page count from `moderationStats/` collection
+7. Public website queries `images/` collection with pagination (50 images per page) and displays total page count from `moderationStats/` collection
 
 ## Firestore Collections
 
 ### `images/`
 Main collection storing image metadata and ML results:
 - `status`: Image processing status (pending, inferred)
-- `type`: Image source (pixiv, danbooru, gelbooru)
+- `type`: Image source (pixiv, danbooru, gelbooru, twitter)
 - `captions.[provider]`: VLM caption data with metadata
-- `moderations.[provider]`: Moderation results with numeric rating (0-10 scale)
+- `moderations.[provider]`: Moderation results with numeric rating (0-10 scale) and explanation
+- `ageEstimations.[provider]`: Age estimation results with main_character_age (pre-calculated for queries), estimated_age_range, confidence_level, gender, reasoning, and metadata
+- `twitterSource`: Twitter metadata (tweetId, text, user, retweetedTweet) if image is from Twitter
+- `favorites`: User favorites data (isFavorited, categories array)
 - `topTagProbs`: ML tag probabilities
 - `inferences`: Preference classification results
 
@@ -136,9 +174,22 @@ Source ranking data from external APIs.
 
 ## Firestore Security Rules
 
-- `images/`: Read access for authenticated user (hakatasiloving@gmail.com)
+- `images/`:
+  - Read access for authenticated user (hakatasiloving@gmail.com)
+  - Write access to `favorites` field only for authenticated user with validation:
+    - `isFavorited` must be boolean
+    - `categories` must be array with max 50 items, each item max 100 chars
+    - Data consistency: `isFavorited` must match `categories.size() > 0`
 - `moderationStats/`: Read access for authenticated user (hakatasiloving@gmail.com)
-- All write operations: Firebase Functions only
+- All other write operations: Firebase Functions only
+
+## Firestore Indexes
+
+The project uses 20+ composite indexes for efficient querying:
+- Age estimation sorting + rating filtering combinations
+- Rating sorting + age filtering combinations
+- Supports queries on `main_character_age` field with multiple provider combinations
+- See `firestore.indexes.json` for complete index definitions
 
 ## External Dependencies
 
