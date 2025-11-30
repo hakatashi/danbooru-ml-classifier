@@ -42,7 +42,7 @@ if not firebase_admin._apps:
     initialize_app()
 
 
-def get_images_without_age_estimation(db, caption_model_key, limit=100):
+def get_images_without_age_estimation(db, caption_model_key, limit=1000):
     """Get images that have captions but don't have age estimation
 
     Args:
@@ -126,10 +126,13 @@ def process_image_age_estimation(db, doc, caption_model_key, age_model_key, age_
 
     # Generate age estimation from caption using text-only inference
     # Format the prompt with the caption embedded
-    age_estimation_prompt_with_caption = f"""Caption:
+    age_estimation_prompt_with_caption = f"""{AGE_ESTIMATION_PROMPT}
+
+Caption:
 {existing_caption}
 
-{AGE_ESTIMATION_PROMPT}"""
+/no_think
+"""
 
     age_estimation_raw = chat_text_only_llama_api(
         messages=[{"role": "user", "content": age_estimation_prompt_with_caption}],
@@ -320,8 +323,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=50,
-        help="Number of images to process per batch (default: 50)"
+        default=1000,
+        help="Number of images to process per batch (default: 1000)"
     )
     parser.add_argument(
         "--max-images",
