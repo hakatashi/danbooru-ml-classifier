@@ -58,13 +58,14 @@ def extract_media_id_from_key(s3_key):
     return parts[1]  # Return the filename part
 
 
-def backfill_twitter_source_data(dry_run=False, limit=None, batch_size=500):
+def backfill_twitter_source_data(dry_run=False, limit=None, batch_size=500, overwrite=False):
     """Backfill source data for Twitter images without source field
 
     Args:
         dry_run: If True, only print what would be updated without making changes
         limit: Maximum number of documents to process (None for all)
         batch_size: Number of updates per batch write (max 500)
+        overwrite: If True, update existing source fields (default: False)
     """
     db = firestore.client()
 
@@ -100,8 +101,8 @@ def backfill_twitter_source_data(dry_run=False, limit=None, batch_size=500):
         doc_data = doc.to_dict()
         doc_id = doc.id
 
-        # Check if source field already exists
-        if 'source' in doc_data and doc_data['source']:
+        # Check if source field already exists (skip unless overwrite is enabled)
+        if not overwrite and 'source' in doc_data and doc_data['source']:
             skipped_count += 1
             if processed_count % 100 == 0:
                 print(f"Progress: Processed {processed_count} docs, updated {updated_count}, skipped {skipped_count}, not found {not_found_count}")
@@ -226,6 +227,11 @@ def main():
         default=500,
         help="Number of updates per batch write (max 500, default: 500)"
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing source fields (default: skip existing)"
+    )
 
     args = parser.parse_args()
 
@@ -235,7 +241,13 @@ def main():
         print("=" * 70)
         print()
 
-    backfill_twitter_source_data(dry_run=args.dry_run, limit=args.limit, batch_size=args.batch_size)
+    if args.overwrite:
+        print("=" * 70)
+        print("OVERWRITE MODE - Existing source fields will be updated")
+        print("=" * 70)
+        print()
+
+    backfill_twitter_source_data(dry_run=args.dry_run, limit=args.limit, batch_size=args.batch_size, overwrite=args.overwrite)
 
 
 if __name__ == "__main__":
