@@ -220,6 +220,59 @@ async function handleToggleFavorite() {
 					</dl>
 				</div>
 
+				<!-- Twitter Source Information -->
+				<div v-if="image.source" class="bg-white rounded-xl shadow-md p-4">
+					<h2 class="text-lg font-semibold text-gray-900 mb-3">
+						Twitter Source
+					</h2>
+					<div class="space-y-2 text-sm">
+						<div v-if="image.source.user" class="flex items-center gap-2">
+							<a
+								v-if="image.source.user.screen_name"
+								:href="`https://twitter.com/${image.source.user.screen_name}`"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+							>
+								@{{ image.source.user.screen_name }}
+							</a>
+							<span v-if="image.source.user.name" class="text-gray-600">
+								{{ image.source.user.name }}
+							</span>
+							<a
+								v-if="image.source.tweetId"
+								:href="`https://twitter.com/i/web/status/${image.source.tweetId}`"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-blue-600 hover:text-blue-800 hover:underline text-xs ml-auto"
+							>
+								View Tweet →
+							</a>
+						</div>
+						<div
+							v-if="image.source.text"
+							class="text-gray-700 bg-gray-50 rounded-lg p-2 whitespace-pre-wrap break-words"
+						>
+							{{ image.source.text }}
+						</div>
+						<div
+							v-if="image.source.retweetedStatus"
+							class="text-xs text-gray-500"
+						>
+							RT from
+							<a
+								v-if="image.source.retweetedStatus.user?.screen_name"
+								:href="`https://twitter.com/${image.source.retweetedStatus.user.screen_name}`"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-blue-600 hover:text-blue-800 hover:underline"
+							>
+								@{{ image.source.retweetedStatus.user.screen_name }}
+							</a>
+						</div>
+					</div>
+				</div>
+
 				<!-- Moderation Ratings -->
 				<div class="bg-white rounded-xl shadow-md p-4">
 					<h2 class="text-lg font-semibold text-gray-900 mb-4">

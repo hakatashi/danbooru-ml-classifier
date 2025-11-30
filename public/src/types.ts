@@ -70,6 +70,27 @@ export interface AgeEstimationData {
 	main_character_age: number | null;
 }
 
+export interface TwitterUser {
+	screen_name?: string;
+	name?: string;
+	id_str?: string;
+}
+
+export interface TwitterRetweetedStatus {
+	id_str?: string;
+	user?: TwitterUser;
+}
+
+export interface TwitterSourceData {
+	tweetId?: string;
+	text?: string;
+	createdAt?: string;
+	mediaUrl?: string;
+	user?: TwitterUser;
+	retweetedStatus?: TwitterRetweetedStatus;
+	isQuoteStatus?: boolean;
+}
+
 export interface ImageDocument {
 	id: string;
 	key: string;
@@ -80,4 +101,5 @@ export interface ImageDocument {
 	moderations?: Record<string, ModerationData>;
 	ageEstimations?: Record<string, AgeEstimationData>;
 	favorites?: FavoritesData;
+	source?: TwitterSourceData;
 }
