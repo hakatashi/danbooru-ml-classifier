@@ -51,6 +51,7 @@ if not firebase_admin._apps:
 # Local directories
 LOCAL_IMAGE_DIR = Path.home() / "Images" / "hakataarchive" / "twitter"
 S3_FILE_CACHE = Path(__file__).parent.parent / ".cache" / "twitter_s3_files.json"
+TWITTER_MEDIA_MAPPING_CACHE = Path(__file__).parent.parent / ".cache" / "twitter_media_mapping.json"
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # llama.cpp server configuration
@@ -82,10 +83,10 @@ MODELS = {
         "vision_file": "llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
     },
     "qwen3": {
-        "name": "Qwen3-32B (Q6_K)",
+        "name": "Qwen3-14B (Q6_K)",
         "backend": "llama.cpp",
-        "repository": "Qwen/Qwen3-32B-GGUF",
-        "language_file": "Qwen3-32B-Q6_K.gguf",
+        "repository": "Qwen/Qwen3-14B-GGUF",
+        "language_file": "Qwen3-14B-Q6_K.gguf",
         "vision_file": None,  # Text-only model
     },
 }
@@ -123,6 +124,17 @@ def get_s3_file_list():
         return json.load(f)
 
 
+def get_twitter_media_mapping():
+    """Load the Twitter media ID to tweet metadata mapping from cache"""
+    if not TWITTER_MEDIA_MAPPING_CACHE.exists():
+        print(f"Twitter media mapping cache not found at {TWITTER_MEDIA_MAPPING_CACHE}")
+        print("Run worker/scripts/build_twitter_media_mapping.py to generate it")
+        return {}
+
+    with open(TWITTER_MEDIA_MAPPING_CACHE, 'r') as f:
+        return json.load(f)
+
+
 def get_local_files():
     """Get set of already downloaded files"""
     if not LOCAL_IMAGE_DIR.exists():
@@ -148,8 +160,16 @@ def get_files_to_download(s3_files, local_files, count=BATCH_SIZE):
     return not_downloaded[:count]
 
 
-def download_from_s3(s3_uri, local_path, s3_key, db):
-    """Download a file from S3 using aws-cli"""
+def download_from_s3(s3_uri, local_path, s3_key, db, media_mapping=None):
+    """Download a file from S3 using aws-cli and save metadata to Firestore
+
+    Args:
+        s3_uri: S3 URI to download from
+        local_path: Local path to save file to
+        s3_key: S3 key (e.g., "twitter/FVYuylQagAU2WHq.jpg")
+        db: Firestore database instance
+        media_mapping: Optional dict mapping media IDs to tweet metadata
+    """
     try:
         result = subprocess.run(
             ['aws', 's3', 'cp', s3_uri, str(local_path)],
@@ -168,14 +188,41 @@ def download_from_s3(s3_uri, local_path, s3_key, db):
         doc_id = quote(s3_key, safe='')
         doc_ref = db.collection('images').document(doc_id)
         file_type = s3_key.split('/')[0]  # e.g., "twitter"
-        file_id = s3_key.split('/')[1].split('.')[0]  # e.g., "abcde"
+        file_name = s3_key.split('/')[1]  # e.g., "FVYuylQagAU2WHq.jpg" or "1597464275324268544"
 
-        doc_ref.set({
+        # Build document data
+        doc_data = {
             "key": s3_key,
             "status": "liked",
             "type": file_type,
-            "postId": file_id,
-        }, merge=True)
+            "postId": file_name.split('.')[0],  # Remove extension if present
+        }
+
+        # Look up source data from media mapping (for Twitter)
+        if media_mapping and file_type == "twitter" and file_name in media_mapping:
+            source_data = media_mapping[file_name]
+            doc_data["source"] = {
+                "tweetId": source_data.get("id_str"),
+                "text": source_data.get("text"),
+                "createdAt": source_data.get("created_at"),
+                "mediaUrl": source_data.get("media_url"),
+            }
+
+            # Add user information if available
+            if "user" in source_data:
+                doc_data["source"]["user"] = source_data["user"]
+
+            # Add retweet information if available
+            if "retweeted_status" in source_data:
+                doc_data["source"]["retweetedStatus"] = source_data["retweeted_status"]
+
+            # Add quote status flag if available
+            if source_data.get("is_quote_status"):
+                doc_data["source"]["isQuoteStatus"] = True
+
+            print(f"  Found source data: Tweet {source_data.get('id_str')} by @{source_data.get('user', {}).get('screen_name', 'unknown')}")
+
+        doc_ref.set(doc_data, merge=True)
 
         return True
     except Exception as e:
@@ -858,6 +905,10 @@ def run_vlm_captioner(models=None, generate_explanation=False):
     s3_files = get_s3_file_list()
     print(f"Found {len(s3_files)} files in S3 cache")
 
+    # Load Twitter media mapping
+    media_mapping = get_twitter_media_mapping()
+    print(f"Loaded {len(media_mapping)} Twitter media mappings")
+
     elapsed = time.time() - start_time
     remaining = duration - elapsed
     print(f"\n--- Elapsed: {elapsed/60:.1f}min, Remaining: {remaining/60:.1f}min ---")
@@ -879,7 +930,7 @@ def run_vlm_captioner(models=None, generate_explanation=False):
     downloaded_paths = []
     for file_info in files_to_download:
         local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
-        if download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db):
+        if download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db, media_mapping):
             downloaded_paths.append(local_path)
             print(f"Downloaded: {local_path.name}")
         else:
