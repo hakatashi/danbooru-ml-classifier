@@ -230,6 +230,7 @@ async function handleToggleFavorite() {
 							v-if="image.source.user"
 							class="flex items-center gap-2 flex-wrap"
 						>
+							<!-- Show screen_name if available -->
 							<a
 								v-if="image.source.user.screen_name"
 								:href="`https://twitter.com/${image.source.user.screen_name}`"
@@ -239,9 +240,20 @@ async function handleToggleFavorite() {
 							>
 								@{{ image.source.user.screen_name }}
 							</a>
+							<!-- Show user ID if screen_name is not available -->
+							<span
+								v-else-if="image.source.user.id_str"
+								class="text-gray-600 font-mono text-xs"
+							>
+								User ID: {{ image.source.user.id_str }}
+							</span>
+
+							<!-- Show name if available -->
 							<span v-if="image.source.user.name" class="text-gray-600">
 								{{ image.source.user.name }}
 							</span>
+
+							<!-- Filter by user link (always show if user ID exists) -->
 							<router-link
 								v-if="image.source.user.id_str"
 								:to="`/?twitterUserId=${image.source.user.id_str}`"
@@ -250,6 +262,8 @@ async function handleToggleFavorite() {
 							>
 								View in Gallery →
 							</router-link>
+
+							<!-- View tweet link -->
 							<a
 								v-if="image.source.tweetId"
 								:href="`https://twitter.com/i/web/status/${image.source.tweetId}`"
