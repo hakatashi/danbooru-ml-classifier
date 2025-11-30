@@ -226,7 +226,10 @@ async function handleToggleFavorite() {
 						Twitter Source
 					</h2>
 					<div class="space-y-2 text-sm">
-						<div v-if="image.source.user" class="flex items-center gap-2">
+						<div
+							v-if="image.source.user"
+							class="flex items-center gap-2 flex-wrap"
+						>
 							<a
 								v-if="image.source.user.screen_name"
 								:href="`https://twitter.com/${image.source.user.screen_name}`"
@@ -239,6 +242,14 @@ async function handleToggleFavorite() {
 							<span v-if="image.source.user.name" class="text-gray-600">
 								{{ image.source.user.name }}
 							</span>
+							<router-link
+								v-if="image.source.user.id_str"
+								:to="`/?twitterUserId=${image.source.user.id_str}`"
+								class="text-purple-600 hover:text-purple-800 hover:underline text-xs"
+								title="Filter by this user"
+							>
+								View in Gallery →
+							</router-link>
 							<a
 								v-if="image.source.tweetId"
 								:href="`https://twitter.com/i/web/status/${image.source.tweetId}`"

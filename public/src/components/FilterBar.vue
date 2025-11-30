@@ -12,6 +12,7 @@ const props = defineProps<{
 	currentAgeProvider: 'joycaption' | 'minicpm';
 	currentAgeMin: number | null;
 	currentAgeMax: number | null;
+	currentTwitterUserId: string | null;
 	canGoNext: boolean;
 	canGoPrev: boolean;
 	galleryMode: boolean;
@@ -23,11 +24,16 @@ export interface AgeFilter {
 	max: number | null;
 }
 
+export interface TwitterUserFilter {
+	userId: string | null;
+}
+
 const emit = defineEmits<{
 	(e: 'sort-change', sort: SortOption, sortKey: string): void;
 	(e: 'page-change', page: number): void;
 	(e: 'rating-change', ratingFilter: RatingFilter): void;
 	(e: 'age-change', ageFilter: AgeFilter): void;
+	(e: 'twitter-user-change', twitterUserFilter: TwitterUserFilter): void;
 	(e: 'gallery-mode-change', enabled: boolean): void;
 }>();
 
@@ -42,6 +48,7 @@ const ratingMax = ref<number | null>(props.currentRatingMax);
 const ageProvider = ref<'joycaption' | 'minicpm'>(props.currentAgeProvider);
 const ageMin = ref<number | null>(props.currentAgeMin);
 const ageMax = ref<number | null>(props.currentAgeMax);
+const twitterUserId = ref<string | null>(props.currentTwitterUserId);
 const totalCount = ref<number | null>(null);
 const perPage = 50; // Images per page
 
@@ -108,6 +115,19 @@ watch(
 // Emit age change when filters change
 watch([ageProvider, ageMin, ageMax], ([newProvider, newMin, newMax]) => {
 	emit('age-change', {provider: newProvider, min: newMin, max: newMax});
+});
+
+// Sync Twitter user filter with props
+watch(
+	() => props.currentTwitterUserId,
+	(newUserId) => {
+		twitterUserId.value = newUserId;
+	},
+);
+
+// Emit Twitter user change when filter changes
+watch(twitterUserId, (newUserId) => {
+	emit('twitter-user-change', {userId: newUserId});
 });
 
 const sortOptions = [
@@ -436,6 +456,39 @@ function next() {
 						</div>
 					</div>
 
+					<!-- Twitter User filter -->
+					<div class="flex items-center gap-2 min-w-0">
+						<label class="text-sm font-medium text-gray-700 shrink-0">
+							Twitter User:
+						</label>
+						<input
+							v-model="twitterUserId"
+							type="text"
+							placeholder="User ID"
+							class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent w-32"
+						>
+						<button
+							v-if="twitterUserId"
+							@click="twitterUserId = null"
+							class="p-1 text-gray-500 hover:text-gray-700"
+							title="Clear filter"
+						>
+							<svg
+								class="w-4 h-4"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M6 18L18 6M6 6l12 12"
+								/>
+							</svg>
+						</button>
+					</div>
+
 					<!-- Gallery mode toggle -->
 					<div class="flex items-center gap-2">
 						<label class="text-sm font-medium text-gray-700 shrink-0">
@@ -666,6 +719,41 @@ function next() {
 											</option>
 										</select>
 									</div>
+								</div>
+							</div>
+
+							<!-- Twitter User filter -->
+							<div class="space-y-2">
+								<label class="text-sm font-medium text-gray-700">
+									Twitter User Filter
+								</label>
+								<div class="flex items-center gap-2">
+									<input
+										v-model="twitterUserId"
+										type="text"
+										placeholder="Enter Twitter User ID"
+										class="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									>
+									<button
+										v-if="twitterUserId"
+										@click="twitterUserId = null"
+										class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+										title="Clear filter"
+									>
+										<svg
+											class="w-5 h-5"
+											fill="none"
+											stroke="currentColor"
+											viewBox="0 0 24 24"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M6 18L18 6M6 6l12 12"
+											/>
+										</svg>
+									</button>
 								</div>
 							</div>
 

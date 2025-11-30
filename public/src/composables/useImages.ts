@@ -33,6 +33,10 @@ export interface AgeFilter {
 	max: number | null;
 }
 
+export interface TwitterUserFilter {
+	userId: string | null;
+}
+
 const PAGE_SIZE = 50;
 
 const loading = ref(false);
@@ -40,6 +44,7 @@ const error = ref<string | null>(null);
 const currentSort = ref<SortOption | null>(null);
 const currentRatingFilter = ref<RatingFilter | null>(null);
 const currentAgeFilter = ref<AgeFilter | null>(null);
+const currentTwitterUserFilter = ref<TwitterUserFilter | null>(null);
 
 // Store page data with cursors for navigation
 const pageCache = ref<
@@ -61,6 +66,7 @@ export function useImages() {
 		page: number,
 		ratingFilter: RatingFilter | null = null,
 		ageFilter: AgeFilter | null = null,
+		twitterUserFilter: TwitterUserFilter | null = null,
 		direction: 'forward' | 'backward' = 'forward',
 	) {
 		let effectivePage = page;
@@ -76,11 +82,15 @@ export function useImages() {
 			currentAgeFilter.value?.min !== ageFilter?.min ||
 			currentAgeFilter.value?.max !== ageFilter?.max;
 
+		const twitterUserFilterChanged =
+			currentTwitterUserFilter.value?.userId !== twitterUserFilter?.userId;
+
 		if (
 			currentSort.value?.field !== sort.field ||
 			currentSort.value?.direction !== sort.direction ||
 			ratingFilterChanged ||
-			ageFilterChanged
+			ageFilterChanged ||
+			twitterUserFilterChanged
 		) {
 			pageCache.value.clear();
 			hasNextPage.value = true;
@@ -88,6 +98,7 @@ export function useImages() {
 			currentSort.value = sort;
 			currentRatingFilter.value = ratingFilter;
 			currentAgeFilter.value = ageFilter;
+			currentTwitterUserFilter.value = twitterUserFilter;
 			effectivePage = 0;
 		}
 
@@ -108,6 +119,13 @@ export function useImages() {
 
 			// Build query constraints
 			const constraints = [];
+
+			// Add Twitter user filter if present
+			if (twitterUserFilter?.userId) {
+				constraints.push(
+					where('source.user.id_str', '==', twitterUserFilter.userId),
+				);
+			}
 
 			// Add rating filters if present
 			if (ratingFilter?.min !== null && ratingFilter?.min !== undefined) {

@@ -173,6 +173,11 @@ const ageMaxValue = computed(() => {
 	return null;
 });
 
+const twitterUserIdValue = computed(() => {
+	const userIdQuery = route.query.twitterUserId;
+	return typeof userIdQuery === 'string' ? userIdQuery : null;
+});
+
 // Watch for user authentication and query parameter changes
 watch(
 	[
@@ -185,6 +190,7 @@ watch(
 		ageProviderValue,
 		ageMinValue,
 		ageMaxValue,
+		twitterUserIdValue,
 	],
 	async ([
 		newUser,
@@ -196,6 +202,7 @@ watch(
 		newAgeProvider,
 		newAgeMin,
 		newAgeMax,
+		newTwitterUserId,
 	]) => {
 		if (newUser && newSort) {
 			const sortOption =
@@ -215,11 +222,16 @@ watch(
 				max: newAgeMax,
 			};
 
+			const twitterUserFilter = {
+				userId: newTwitterUserId,
+			};
+
 			const result = await loadPage(
 				sortOption,
 				newPage,
 				ratingFilter,
 				ageFilter,
+				twitterUserFilter,
 			);
 			currentImages.value = result.images;
 			currentPage.value = result.page;
@@ -279,6 +291,9 @@ async function onPageChange(page: number) {
 	if (ageMaxValue.value !== null) {
 		query.ageMax = ageMaxValue.value.toString();
 	}
+	if (twitterUserIdValue.value) {
+		query.twitterUserId = twitterUserIdValue.value;
+	}
 
 	await router.push({query});
 }
@@ -309,6 +324,10 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 	}
 	if (ageMaxValue.value !== null) {
 		query.ageMax = ageMaxValue.value.toString();
+	}
+	// Preserve Twitter user filter
+	if (twitterUserIdValue.value) {
+		query.twitterUserId = twitterUserIdValue.value;
 	}
 
 	await router.push({query});
@@ -341,6 +360,45 @@ async function onAgeChange(ageFilter: AgeFilter) {
 	}
 	if (ageFilter.max !== null) {
 		query.ageMax = ageFilter.max.toString();
+	}
+	// Preserve Twitter user filter
+	if (twitterUserIdValue.value) {
+		query.twitterUserId = twitterUserIdValue.value;
+	}
+
+	await router.push({query});
+}
+
+async function onTwitterUserChange(twitterUserFilter: {userId: string | null}) {
+	// Update URL with new Twitter user filter, reset page to 0
+	const query: Record<string, string> = {
+		sort: sortValue.value,
+		page: '0',
+	};
+
+	// Preserve rating filters
+	if (ratingProviderValue.value !== 'minicpm') {
+		query.ratingProvider = ratingProviderValue.value;
+	}
+	if (ratingMinValue.value !== null) {
+		query.ratingMin = ratingMinValue.value.toString();
+	}
+	if (ratingMaxValue.value !== null) {
+		query.ratingMax = ratingMaxValue.value.toString();
+	}
+	// Preserve age filters
+	if (ageProviderValue.value !== 'minicpm') {
+		query.ageProvider = ageProviderValue.value;
+	}
+	if (ageMinValue.value !== null) {
+		query.ageMin = ageMinValue.value.toString();
+	}
+	if (ageMaxValue.value !== null) {
+		query.ageMax = ageMaxValue.value.toString();
+	}
+	// Add Twitter user filter
+	if (twitterUserFilter.userId) {
+		query.twitterUserId = twitterUserFilter.userId;
 	}
 
 	await router.push({query});
@@ -575,6 +633,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				:current-age-provider="ageProviderValue"
 				:current-age-min="ageMinValue"
 				:current-age-max="ageMaxValue"
+				:current-twitter-user-id="twitterUserIdValue"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
 				:gallery-mode="galleryMode"
@@ -582,6 +641,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				@page-change="onPageChange"
 				@rating-change="onRatingChange"
 				@age-change="onAgeChange"
+				@twitter-user-change="onTwitterUserChange"
 				@gallery-mode-change="onGalleryModeChange"
 			/>
 
