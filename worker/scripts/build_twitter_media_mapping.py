@@ -127,14 +127,18 @@ def scan_dynamodb_table(limit=None):
                 total_media_items += 1
 
                 # Build tweet metadata
+                # Try full_text first (new format), fallback to text (old format)
+                text = item.get('full_text', {}).get('S') or item.get('text', {}).get('S', '')
+
                 tweet_data = {
                     'id_str': tweet_id,
-                    'text': item.get('text', {}).get('S', ''),
+                    'text': text,
                     'created_at': item.get('created_at', {}).get('S', ''),
                     'media_url': media_url,
                 }
 
                 # Extract user information
+                # Try nested user object first (old format)
                 user = item.get('user', {}).get('M', {})
                 if user:
                     tweet_data['user'] = {
@@ -142,6 +146,16 @@ def scan_dynamodb_table(limit=None):
                         'name': user.get('name', {}).get('S', ''),
                         'id_str': user.get('id_str', {}).get('S', ''),
                     }
+                else:
+                    # Fallback to user_id_str (new format)
+                    # In this case, we don't have screen_name and name
+                    user_id_str = item.get('user_id_str', {}).get('S')
+                    if user_id_str:
+                        tweet_data['user'] = {
+                            'screen_name': '',
+                            'name': '',
+                            'id_str': user_id_str,
+                        }
 
                 # Extract retweet/quote information if present
                 if item.get('is_quote_status', {}).get('BOOL'):
