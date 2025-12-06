@@ -13,6 +13,7 @@ import subprocess
 import base64
 import requests
 import argparse
+import signal
 from pathlib import Path
 from urllib.parse import quote
 from datetime import datetime, timezone
@@ -109,6 +110,23 @@ BATCH_SIZE = 10
 # Repetition detection configuration
 MAX_RETRIES = 3  # Maximum number of retries when repetition is detected
 # MIN_REPETITION_LENGTH and REPETITION_THRESHOLD are imported from vlm_utils
+
+# Global flag for graceful shutdown
+_shutdown_requested = False
+
+def signal_handler(sig, frame):
+    """Handle SIGINT (Ctrl+C) for graceful shutdown"""
+    global _shutdown_requested
+    if not _shutdown_requested:
+        print("\n\n⚠️  Shutdown requested. Will finish processing current image and exit gracefully...")
+        _shutdown_requested = True
+    else:
+        print("\n⚠️  Second interrupt received. Forcing exit...")
+        import sys
+        sys.exit(1)
+
+# Register signal handler
+signal.signal(signal.SIGINT, signal_handler)
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -607,14 +625,19 @@ def chat_text_only_llama_api(messages, server_url=SERVER_URL, max_tokens=2048, t
 # MAIN PROCESSING FUNCTIONS
 # ============================================================================
 
-def process_images_with_minicpm(image_paths, db, generate_explanation=False):
+def process_images_with_minicpm(file_infos, db, media_mapping, generate_explanation=False):
     """Process batch of images with MiniCPM model using llama.cpp
 
     Args:
-        image_paths: List of paths to images to process
+        file_infos: List of file info dicts with 's3_uri', 'key' fields
         db: Firestore database instance
+        media_mapping: Twitter media ID to tweet metadata mapping
         generate_explanation: Whether to generate explanation for moderation rating (default: False)
+
+    Returns:
+        int: Number of images successfully processed
     """
+    global _shutdown_requested
     model_key = "minicpm"
     model_config = MODELS[model_key]
 
@@ -625,35 +648,49 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
     server_process = start_llama_server(language_model, vision_model)
     if not server_process:
         print("Failed to start llama server for MiniCPM")
-        return
+        return 0
+
+    processed_count = 0
 
     try:
         if not wait_for_server(SERVER_URL):
             print("Server failed to become ready")
-            return
+            return 0
 
-        for image_path in image_paths:
-            print(f"Processing with MiniCPM: {image_path}")
+        for file_info in file_infos:
+            # Check for shutdown request before processing next image
+            if _shutdown_requested:
+                print("\n✓ Shutdown requested. Stopping MiniCPM processing gracefully.")
+                break
+
+            # Download image just before processing
+            local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
+            print(f"\nDownloading: {file_info['key']}")
+            if not download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db, media_mapping):
+                print(f"Failed to download: {file_info['key']}")
+                continue
+
+            print(f"Processing with MiniCPM: {local_path}")
 
             # Generate caption
             messages = [{"role": "user", "content": CAPTION_PROMPT}]
-            caption = chat_with_image_llama_api(str(image_path), messages)
+            caption = chat_with_image_llama_api(str(local_path), messages)
 
             if not caption:
-                print(f"Failed to generate caption for {image_path}")
+                print(f"Failed to generate caption for {local_path}")
                 continue
 
             print(f"Caption generated ({len(caption)} chars)")
 
             # Continue with moderation prompt
-            moderation_raw = chat_with_image_llama_api(str(image_path), [
+            moderation_raw = chat_with_image_llama_api(str(local_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
                 {"role": "assistant", "content": caption},
                 {"role": "user", "content": MODERATION_PROMPT}
             ])
 
             if not moderation_raw:
-                print(f"Failed to generate moderation for {image_path}")
+                print(f"Failed to generate moderation for {local_path}")
                 continue
 
             moderation_result = parse_moderation_rating(moderation_raw)
@@ -662,7 +699,7 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
             # Generate explanation for the moderation rating (only if enabled)
             explanation = None
             if generate_explanation:
-                explanation = chat_with_image_llama_api(str(image_path), [
+                explanation = chat_with_image_llama_api(str(local_path), [
                     {"role": "user", "content": CAPTION_PROMPT},
                     {"role": "assistant", "content": caption},
                     {"role": "user", "content": MODERATION_PROMPT},
@@ -671,29 +708,39 @@ def process_images_with_minicpm(image_paths, db, generate_explanation=False):
                 ])
 
                 if not explanation:
-                    print(f"Failed to generate explanation for {image_path}")
+                    print(f"Failed to generate explanation for {local_path}")
                     explanation = None
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
 
             # Save to Firestore (age estimation will be done separately with Qwen3)
             save_to_firestore(
-                db, image_path, model_key, model_config,
+                db, local_path, model_key, model_config,
                 caption, moderation_raw, moderation_result, explanation
             )
+
+            processed_count += 1
+            print(f"✓ Completed {local_path.name} ({processed_count}/{len(file_infos)})")
 
     finally:
         stop_server(server_process)
 
+    return processed_count
 
-def process_images_with_joycaption(image_paths, db, generate_explanation=False):
+
+def process_images_with_joycaption(file_infos, db, media_mapping, generate_explanation=False):
     """Process batch of images with JoyCaption model using llama.cpp
 
     Args:
-        image_paths: List of paths to images to process
+        file_infos: List of file info dicts with 's3_uri', 'key' fields
         db: Firestore database instance
+        media_mapping: Twitter media ID to tweet metadata mapping
         generate_explanation: Whether to generate explanation for moderation rating (default: False)
+
+    Returns:
+        int: Number of images successfully processed
     """
+    global _shutdown_requested
     model_key = "joycaption"
     model_config = MODELS[model_key]
 
@@ -704,35 +751,49 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
     server_process = start_llama_server(language_model, vision_model)
     if not server_process:
         print("Failed to start llama server for JoyCaption")
-        return
+        return 0
+
+    processed_count = 0
 
     try:
         if not wait_for_server(SERVER_URL):
             print("Server failed to become ready")
-            return
+            return 0
 
-        for image_path in image_paths:
-            print(f"Processing with JoyCaption: {image_path}")
+        for file_info in file_infos:
+            # Check for shutdown request before processing next image
+            if _shutdown_requested:
+                print("\n✓ Shutdown requested. Stopping JoyCaption processing gracefully.")
+                break
+
+            # Download image just before processing
+            local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
+            print(f"\nDownloading: {file_info['key']}")
+            if not download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db, media_mapping):
+                print(f"Failed to download: {file_info['key']}")
+                continue
+
+            print(f"Processing with JoyCaption: {local_path}")
 
             # Generate caption
             messages = [{"role": "user", "content": CAPTION_PROMPT}]
-            caption = chat_with_image_llama_api(str(image_path), messages)
+            caption = chat_with_image_llama_api(str(local_path), messages)
 
             if not caption:
-                print(f"Failed to generate caption for {image_path}")
+                print(f"Failed to generate caption for {local_path}")
                 continue
 
             print(f"Caption generated ({len(caption)} chars)")
 
             # Generate moderation rating with image context
-            moderation_raw = chat_with_image_llama_api(str(image_path), [
+            moderation_raw = chat_with_image_llama_api(str(local_path), [
                 {"role": "user", "content": CAPTION_PROMPT},
                 {"role": "assistant", "content": caption},
                 {"role": "user", "content": MODERATION_PROMPT}
             ])
 
             if not moderation_raw:
-                print(f"Failed to generate moderation for {image_path}")
+                print(f"Failed to generate moderation for {local_path}")
                 continue
 
             moderation_result = parse_moderation_rating(moderation_raw)
@@ -741,7 +802,7 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
             # Generate explanation for the moderation rating (only if enabled)
             explanation = None
             if generate_explanation:
-                explanation = chat_with_image_llama_api(str(image_path), [
+                explanation = chat_with_image_llama_api(str(local_path), [
                     {"role": "user", "content": CAPTION_PROMPT},
                     {"role": "assistant", "content": caption},
                     {"role": "user", "content": MODERATION_PROMPT},
@@ -750,19 +811,24 @@ def process_images_with_joycaption(image_paths, db, generate_explanation=False):
                 ])
 
                 if not explanation:
-                    print(f"Failed to generate explanation for {image_path}")
+                    print(f"Failed to generate explanation for {local_path}")
                     explanation = None
                 else:
                     print(f"Explanation generated ({len(explanation)} chars)")
 
             # Save to Firestore (age estimation will be done separately with Qwen3)
             save_to_firestore(
-                db, image_path, model_key, model_config,
+                db, local_path, model_key, model_config,
                 caption, moderation_raw, moderation_result, explanation
             )
 
+            processed_count += 1
+            print(f"✓ Completed {local_path.name} ({processed_count}/{len(file_infos)})")
+
     finally:
         stop_server(server_process)
+
+    return processed_count
 
 
 def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result, explanation=None, age_estimation_raw=None, age_estimation_result=None):
@@ -877,6 +943,8 @@ def run_vlm_captioner(models=None, generate_explanation=False):
                 If None, defaults to ['minicpm'] only.
         generate_explanation: Whether to generate explanation for moderation rating (default: False)
     """
+    global _shutdown_requested
+
     # Default to minicpm only if not specified
     if models is None:
         models = ['minicpm']
@@ -900,6 +968,7 @@ def run_vlm_captioner(models=None, generate_explanation=False):
     print(f"Will run for {duration // 60} minutes")
     print(f"Local image directory: {LOCAL_IMAGE_DIR}")
     print(f"S3 file cache: {S3_FILE_CACHE}")
+    print("\n💡 Press Ctrl+C to gracefully stop after completing current image\n")
 
     # Load S3 file list
     s3_files = get_s3_file_list()
@@ -917,40 +986,36 @@ def run_vlm_captioner(models=None, generate_explanation=False):
     local_files = get_local_files()
     print(f"Found {len(local_files)} local files")
 
-    # Get files to download
-    files_to_download = get_files_to_download(s3_files, local_files, BATCH_SIZE)
+    # Get files to process (no longer pre-downloading)
+    files_to_process = get_files_to_download(s3_files, local_files, BATCH_SIZE)
 
-    if not files_to_download:
-        print("No more files to download")
+    if not files_to_process:
+        print("No more files to process")
         return
 
-    print(f"Downloading {len(files_to_download)} files from S3...")
+    print(f"Selected {len(files_to_process)} files to process")
 
-    # Download files
-    downloaded_paths = []
-    for file_info in files_to_download:
-        local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
-        if download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db, media_mapping):
-            downloaded_paths.append(local_path)
-            print(f"Downloaded: {local_path.name}")
-        else:
-            print(f"Failed to download: {file_info['key']}")
+    # Process with selected models (download happens per-image)
+    total_processed = 0
 
-    if not downloaded_paths:
-        print("No files were downloaded")
-        return
+    if 'joycaption' in models and not _shutdown_requested:
+        print(f"\n=== Processing up to {len(files_to_process)} images with JoyCaption ===")
+        count = process_images_with_joycaption(files_to_process, db, media_mapping, generate_explanation)
+        total_processed += count
+        print(f"JoyCaption processed {count} images")
 
-    # Process with selected models
-    if 'joycaption' in models:
-        print(f"\n=== Processing {len(downloaded_paths)} images with JoyCaption ===")
-        process_images_with_joycaption(downloaded_paths, db, generate_explanation)
-
-    if 'minicpm' in models:
-        print(f"\n=== Processing {len(downloaded_paths)} images with MiniCPM ===")
-        process_images_with_minicpm(downloaded_paths, db, generate_explanation)
+    if 'minicpm' in models and not _shutdown_requested:
+        print(f"\n=== Processing up to {len(files_to_process)} images with MiniCPM ===")
+        count = process_images_with_minicpm(files_to_process, db, media_mapping, generate_explanation)
+        total_processed += count
+        print(f"MiniCPM processed {count} images")
 
     print("\nVLM Captioner finished")
+    print(f"Total images processed: {total_processed}")
     print(f"Total runtime: {(time.time() - start_time) / 60:.1f} minutes")
+
+    if _shutdown_requested:
+        print("\n✓ Graceful shutdown completed")
 
 
 # ============================================================================
