@@ -91,6 +91,44 @@ export interface TwitterSourceData {
 	isQuoteStatus?: boolean;
 }
 
+export interface TagList {
+	high_confidence: {
+		character: Record<string, boolean>;
+		feature: Record<string, boolean>;
+		ip: Record<string, boolean>;
+	};
+	medium_confidence: {
+		character: Record<string, boolean>;
+		feature: Record<string, boolean>;
+		ip: Record<string, boolean>;
+	};
+	low_confidence: {
+		character: Record<string, boolean>;
+		feature: Record<string, boolean>;
+		ip: Record<string, boolean>;
+	};
+}
+
+export interface RawScores {
+	character: Record<string, number>;
+	feature: Record<string, number>;
+}
+
+export interface TagData {
+	tag_list: TagList;
+	raw_scores: RawScores;
+	metadata: {
+		model: string;
+		backend: string;
+		repository: string;
+		inference_time: number;
+		createdAt?: {
+			seconds: number;
+			nanoseconds: number;
+		};
+	};
+}
+
 export interface ImageDocument {
 	id: string;
 	key: string;
@@ -100,6 +138,7 @@ export interface ImageDocument {
 	captions?: Record<string, CaptionData>;
 	moderations?: Record<string, ModerationData>;
 	ageEstimations?: Record<string, AgeEstimationData>;
+	tags?: Record<string, TagData>;
 	favorites?: FavoritesData;
 	source?: TwitterSourceData;
 }

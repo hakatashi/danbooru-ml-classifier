@@ -6,7 +6,10 @@ import {useRoute, useRouter} from 'vue-router';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import {useImages} from '../composables/useImages';
-import type {ImageDocument} from '../types';
+import type {ImageDocument, TagData, TagList} from '../types';
+
+type ConfidenceLevel = 'high' | 'medium' | 'low';
+type TagCategory = 'character' | 'feature' | 'ip';
 
 defineProps<{
 	user: User | null;
@@ -125,6 +128,108 @@ async function handleToggleFavorite() {
 	} finally {
 		isSavingFavorite.value = false;
 	}
+}
+
+// Tag display state
+const tagConfidenceFilter = ref<ConfidenceLevel>('medium');
+
+function getTagOpacity(confidence: ConfidenceLevel): string {
+	switch (confidence) {
+		case 'high':
+			return 'opacity-100';
+		case 'medium':
+			return 'opacity-75';
+		case 'low':
+			return 'opacity-50';
+	}
+}
+
+const tagCategoryOrder : Record<TagCategory, number> = {
+	character: 1,
+	ip: 2,
+	feature: 3,
+};
+
+const confidenceOrder: Record<ConfidenceLevel, number> = {
+	high: 1,
+	medium: 2,
+	low: 3,
+};
+
+function getFilteredTags(tagData: TagData) {
+	const tags: Array<{
+		name: string;
+		category: TagCategory;
+		confidence: ConfidenceLevel;
+		score?: number;
+	}> = [];
+
+	const confidenceLevels: ConfidenceLevel[] =
+		tagConfidenceFilter.value === 'high'
+			? ['high']
+			: tagConfidenceFilter.value === 'medium'
+				? ['high', 'medium']
+				: ['high', 'medium', 'low'];
+
+	const tagSet = new Set<string>();
+
+	for (const confidence of confidenceLevels) {
+		const confidenceKey = `${confidence}_confidence` as keyof TagList;
+		const tagList = tagData.tag_list[confidenceKey];
+
+		for (const category of ['character', 'ip', 'feature'] as TagCategory[]) {
+			const categoryTags = tagList?.[category];
+			for (const tagName in categoryTags) {
+				const score =
+					category === 'character'
+						? tagData.raw_scores.character[tagName]
+						: category === 'feature'
+							? tagData.raw_scores.feature[tagName]
+							: undefined;
+
+				if (!tagSet.has(tagName)) {
+					tagSet.add(tagName);
+					tags.push({
+						name: tagName,
+						category,
+						confidence,
+						score,
+					});
+				}
+			}
+		}
+	}
+
+	tags.sort((a, b) => {
+		// Sort by category first
+		if (a.category !== b.category) {
+			return tagCategoryOrder[a.category] - tagCategoryOrder[b.category];
+		}
+		// Then by confidence level
+		if (a.confidence !== b.confidence) {
+			return confidenceOrder[a.confidence] - confidenceOrder[b.confidence];
+		}
+		// Then by alphabetical order
+		return a.name.localeCompare(b.name);
+	});
+
+	return tags;
+}
+
+function handleTagClick(
+	tagName: string,
+	category: TagCategory,
+	confidence: ConfidenceLevel,
+) {
+	// Navigate to home page with tag filter
+	router.push({
+		path: '/',
+		query: {
+			pixaiTag: tagName,
+			pixaiCategory: category,
+			pixaiConfidence: confidence,
+		},
+	});
 }
 </script>
 
@@ -409,6 +514,67 @@ async function handleToggleFavorite() {
 
 			<!-- Right: Captions -->
 			<div class="space-y-6">
+				<!-- PixAI Tags -->
+				<div
+					v-if="image.tags && Object.keys(image.tags).length > 0"
+					class="bg-white rounded-xl shadow-md p-4"
+				>
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-lg font-semibold text-gray-900">Image Tags</h2>
+						<select
+							v-model="tagConfidenceFilter"
+							class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						>
+							<option value="high">High Confidence</option>
+							<option value="medium">Medium Confidence</option>
+							<option value="low">Low Confidence</option>
+						</select>
+					</div>
+
+					<div
+						v-for="model in Object.keys(image.tags)"
+						:key="model"
+						class="space-y-3"
+					>
+						<div class="flex items-center justify-between">
+							<span class="font-medium text-gray-700 capitalize"
+								>{{ model }}</span
+							>
+							<span class="text-xs text-gray-500">
+								{{ image.tags?.[model] ? getFilteredTags(image.tags[model]).length : 0 }}
+								tags
+							</span>
+						</div>
+
+						<div v-if="image.tags?.[model]" class="flex flex-wrap gap-2">
+							<button
+								v-for="tag in getFilteredTags(image.tags[model])"
+								:key="`${tag.category}-${tag.name}-${tag.confidence}`"
+								@click="handleTagClick(tag.name, tag.category, tag.confidence)"
+								:class="[
+									'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all',
+									'hover:scale-105 hover:shadow-md cursor-pointer',
+									getTagOpacity(tag.confidence),
+									tag.category === 'character'
+										? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+										: tag.category === 'ip'
+											? 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+											: 'bg-green-100 text-green-800 hover:bg-green-200',
+								]"
+								:title="tag.score ? `Score: ${tag.score.toFixed(3)}` : undefined"
+							>
+								<span v-if="tag.category === 'character'" class="text-[10px]"
+									>👤</span
+								>
+								<span v-else-if="tag.category === 'ip'" class="text-[10px]"
+									>©</span
+								>
+								{{ tag.name }}
+							</button>
+						</div>
+					</div>
+				</div>
+
 				<div
 					v-for="model in models"
 					:key="model"

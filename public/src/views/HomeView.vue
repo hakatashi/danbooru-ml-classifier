@@ -8,6 +8,7 @@ import ImageCard from '../components/ImageCard.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import {
 	type AgeFilter,
+	type PixAITagFilter,
 	type RatingFilter,
 	type SortOption,
 	useImages,
@@ -178,6 +179,37 @@ const twitterUserIdValue = computed(() => {
 	return typeof userIdQuery === 'string' ? userIdQuery : null;
 });
 
+const pixaiTagValue = computed(() => {
+	const tagQuery = route.query.pixaiTag;
+	return typeof tagQuery === 'string' ? tagQuery : null;
+});
+
+const pixaiCategoryValue = computed(() => {
+	const categoryQuery = route.query.pixaiCategory;
+	if (
+		typeof categoryQuery === 'string' &&
+		(categoryQuery === 'character' ||
+			categoryQuery === 'feature' ||
+			categoryQuery === 'ip')
+	) {
+		return categoryQuery;
+	}
+	return 'feature';
+});
+
+const pixaiConfidenceValue = computed(() => {
+	const confidenceQuery = route.query.pixaiConfidence;
+	if (
+		typeof confidenceQuery === 'string' &&
+		(confidenceQuery === 'high' ||
+			confidenceQuery === 'medium' ||
+			confidenceQuery === 'low')
+	) {
+		return confidenceQuery;
+	}
+	return 'high';
+});
+
 // Watch for user authentication and query parameter changes
 watch(
 	[
@@ -191,6 +223,9 @@ watch(
 		ageMinValue,
 		ageMaxValue,
 		twitterUserIdValue,
+		pixaiTagValue,
+		pixaiCategoryValue,
+		pixaiConfidenceValue,
 	],
 	async ([
 		newUser,
@@ -203,6 +238,9 @@ watch(
 		newAgeMin,
 		newAgeMax,
 		newTwitterUserId,
+		newPixaiTag,
+		newPixaiCategory,
+		newPixaiConfidence,
 	]) => {
 		if (newUser && newSort) {
 			const sortOption =
@@ -226,12 +264,21 @@ watch(
 				userId: newTwitterUserId,
 			};
 
+			const pixaiTagFilter: PixAITagFilter | null = newPixaiTag
+				? {
+						tag: newPixaiTag,
+						category: newPixaiCategory,
+						confidence: newPixaiConfidence,
+					}
+				: null;
+
 			const result = await loadPage(
 				sortOption,
 				newPage,
 				ratingFilter,
 				ageFilter,
 				twitterUserFilter,
+				pixaiTagFilter,
 			);
 			currentImages.value = result.images;
 			currentPage.value = result.page;
@@ -294,6 +341,12 @@ async function onPageChange(page: number) {
 	if (twitterUserIdValue.value) {
 		query.twitterUserId = twitterUserIdValue.value;
 	}
+	// Preserve PixAI tag filter
+	if (pixaiTagValue.value) {
+		query.pixaiTag = pixaiTagValue.value;
+		query.pixaiCategory = pixaiCategoryValue.value;
+		query.pixaiConfidence = pixaiConfidenceValue.value;
+	}
 
 	await router.push({query});
 }
@@ -328,6 +381,12 @@ async function onRatingChange(ratingFilter: RatingFilter) {
 	// Preserve Twitter user filter
 	if (twitterUserIdValue.value) {
 		query.twitterUserId = twitterUserIdValue.value;
+	}
+	// Preserve PixAI tag filter
+	if (pixaiTagValue.value) {
+		query.pixaiTag = pixaiTagValue.value;
+		query.pixaiCategory = pixaiCategoryValue.value;
+		query.pixaiConfidence = pixaiConfidenceValue.value;
 	}
 
 	await router.push({query});
@@ -365,6 +424,12 @@ async function onAgeChange(ageFilter: AgeFilter) {
 	if (twitterUserIdValue.value) {
 		query.twitterUserId = twitterUserIdValue.value;
 	}
+	// Preserve PixAI tag filter
+	if (pixaiTagValue.value) {
+		query.pixaiTag = pixaiTagValue.value;
+		query.pixaiCategory = pixaiCategoryValue.value;
+		query.pixaiConfidence = pixaiConfidenceValue.value;
+	}
 
 	await router.push({query});
 }
@@ -399,6 +464,53 @@ async function onTwitterUserChange(twitterUserFilter: {userId: string | null}) {
 	// Add Twitter user filter
 	if (twitterUserFilter.userId) {
 		query.twitterUserId = twitterUserFilter.userId;
+	}
+	// Preserve PixAI tag filter
+	if (pixaiTagValue.value) {
+		query.pixaiTag = pixaiTagValue.value;
+		query.pixaiCategory = pixaiCategoryValue.value;
+		query.pixaiConfidence = pixaiConfidenceValue.value;
+	}
+
+	await router.push({query});
+}
+
+async function onPixaiTagChange(pixaiTagFilter: PixAITagFilter | null) {
+	// Update URL with new PixAI tag filter, reset page to 0
+	const query: Record<string, string> = {
+		sort: sortValue.value,
+		page: '0',
+	};
+
+	// Preserve rating filters
+	if (ratingProviderValue.value !== 'minicpm') {
+		query.ratingProvider = ratingProviderValue.value;
+	}
+	if (ratingMinValue.value !== null) {
+		query.ratingMin = ratingMinValue.value.toString();
+	}
+	if (ratingMaxValue.value !== null) {
+		query.ratingMax = ratingMaxValue.value.toString();
+	}
+	// Preserve age filters
+	if (ageProviderValue.value !== 'minicpm') {
+		query.ageProvider = ageProviderValue.value;
+	}
+	if (ageMinValue.value !== null) {
+		query.ageMin = ageMinValue.value.toString();
+	}
+	if (ageMaxValue.value !== null) {
+		query.ageMax = ageMaxValue.value.toString();
+	}
+	// Preserve Twitter user filter
+	if (twitterUserIdValue.value) {
+		query.twitterUserId = twitterUserIdValue.value;
+	}
+	// Add PixAI tag filter
+	if (pixaiTagFilter?.tag) {
+		query.pixaiTag = pixaiTagFilter.tag;
+		query.pixaiCategory = pixaiTagFilter.category;
+		query.pixaiConfidence = pixaiTagFilter.confidence;
 	}
 
 	await router.push({query});
@@ -634,6 +746,9 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				:current-age-min="ageMinValue"
 				:current-age-max="ageMaxValue"
 				:current-twitter-user-id="twitterUserIdValue"
+				:current-pixai-tag="pixaiTagValue"
+				:current-pixai-category="pixaiCategoryValue"
+				:current-pixai-confidence="pixaiConfidenceValue"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
 				:gallery-mode="galleryMode"
@@ -642,6 +757,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				@rating-change="onRatingChange"
 				@age-change="onAgeChange"
 				@twitter-user-change="onTwitterUserChange"
+				@pixai-tag-change="onPixaiTagChange"
 				@gallery-mode-change="onGalleryModeChange"
 			/>
 

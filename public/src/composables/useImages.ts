@@ -37,6 +37,12 @@ export interface TwitterUserFilter {
 	userId: string | null;
 }
 
+export interface PixAITagFilter {
+	tag: string;
+	category: 'character' | 'feature' | 'ip';
+	confidence: 'high' | 'medium' | 'low';
+}
+
 const PAGE_SIZE = 50;
 
 const loading = ref(false);
@@ -45,6 +51,7 @@ const currentSort = ref<SortOption | null>(null);
 const currentRatingFilter = ref<RatingFilter | null>(null);
 const currentAgeFilter = ref<AgeFilter | null>(null);
 const currentTwitterUserFilter = ref<TwitterUserFilter | null>(null);
+const currentPixAITagFilter = ref<PixAITagFilter | null>(null);
 
 // Store page data with cursors for navigation
 const pageCache = ref<
@@ -67,6 +74,7 @@ export function useImages() {
 		ratingFilter: RatingFilter | null = null,
 		ageFilter: AgeFilter | null = null,
 		twitterUserFilter: TwitterUserFilter | null = null,
+		pixaiTagFilter: PixAITagFilter | null = null,
 		direction: 'forward' | 'backward' = 'forward',
 	) {
 		let effectivePage = page;
@@ -85,12 +93,18 @@ export function useImages() {
 		const twitterUserFilterChanged =
 			currentTwitterUserFilter.value?.userId !== twitterUserFilter?.userId;
 
+		const pixaiTagFilterChanged =
+			currentPixAITagFilter.value?.tag !== pixaiTagFilter?.tag ||
+			currentPixAITagFilter.value?.category !== pixaiTagFilter?.category ||
+			currentPixAITagFilter.value?.confidence !== pixaiTagFilter?.confidence;
+
 		if (
 			currentSort.value?.field !== sort.field ||
 			currentSort.value?.direction !== sort.direction ||
 			ratingFilterChanged ||
 			ageFilterChanged ||
-			twitterUserFilterChanged
+			twitterUserFilterChanged ||
+			pixaiTagFilterChanged
 		) {
 			pageCache.value.clear();
 			hasNextPage.value = true;
@@ -99,6 +113,7 @@ export function useImages() {
 			currentRatingFilter.value = ratingFilter;
 			currentAgeFilter.value = ageFilter;
 			currentTwitterUserFilter.value = twitterUserFilter;
+			currentPixAITagFilter.value = pixaiTagFilter;
 			effectivePage = 0;
 		}
 
@@ -147,8 +162,17 @@ export function useImages() {
 				constraints.push(where(ageField, '<=', ageFilter.max));
 			}
 
-			// Add orderBy
-			constraints.push(orderBy(sort.field, sort.direction));
+			// Add PixAI tag filter if present
+			if (pixaiTagFilter?.tag) {
+				const confidenceLevel = `${pixaiTagFilter.confidence}_confidence`;
+				const tagField = `tags.pixai.tag_list.${confidenceLevel}.${pixaiTagFilter.category}.${pixaiTagFilter.tag}`;
+				constraints.push(where(tagField, '==', true));
+			}
+
+			// Add orderBy (skip when PixAI tag filter is active to avoid index requirements)
+			if (!pixaiTagFilter?.tag) {
+				constraints.push(orderBy(sort.field, sort.direction));
+			}
 
 			// Add pagination
 			if (direction === 'forward' && effectivePage > 0) {

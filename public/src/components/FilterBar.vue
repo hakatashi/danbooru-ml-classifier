@@ -13,6 +13,9 @@ const props = defineProps<{
 	currentAgeMin: number | null;
 	currentAgeMax: number | null;
 	currentTwitterUserId: string | null;
+	currentPixaiTag: string | null;
+	currentPixaiCategory: 'character' | 'feature' | 'ip' | null;
+	currentPixaiConfidence: 'high' | 'medium' | 'low' | null;
 	canGoNext: boolean;
 	canGoPrev: boolean;
 	galleryMode: boolean;
@@ -28,12 +31,19 @@ export interface TwitterUserFilter {
 	userId: string | null;
 }
 
+export interface PixAITagFilter {
+	tag: string;
+	category: 'character' | 'feature' | 'ip';
+	confidence: 'high' | 'medium' | 'low';
+}
+
 const emit = defineEmits<{
 	(e: 'sort-change', sort: SortOption, sortKey: string): void;
 	(e: 'page-change', page: number): void;
 	(e: 'rating-change', ratingFilter: RatingFilter): void;
 	(e: 'age-change', ageFilter: AgeFilter): void;
 	(e: 'twitter-user-change', twitterUserFilter: TwitterUserFilter): void;
+	(e: 'pixai-tag-change', pixaiTagFilter: PixAITagFilter | null): void;
 	(e: 'gallery-mode-change', enabled: boolean): void;
 }>();
 
@@ -49,6 +59,13 @@ const ageProvider = ref<'joycaption' | 'minicpm'>(props.currentAgeProvider);
 const ageMin = ref<number | null>(props.currentAgeMin);
 const ageMax = ref<number | null>(props.currentAgeMax);
 const twitterUserId = ref<string | null>(props.currentTwitterUserId);
+const pixaiTag = ref<string | null>(props.currentPixaiTag);
+const pixaiCategory = ref<'character' | 'feature' | 'ip' | null>(
+	props.currentPixaiCategory,
+);
+const pixaiConfidence = ref<'high' | 'medium' | 'low' | null>(
+	props.currentPixaiConfidence,
+);
 const totalCount = ref<number | null>(null);
 const perPage = 50; // Images per page
 
@@ -129,6 +146,50 @@ watch(
 watch(twitterUserId, (newUserId) => {
 	emit('twitter-user-change', {userId: newUserId});
 });
+
+// Sync PixAI tag filters with props
+watch(
+	() => props.currentPixaiTag,
+	(newTag) => {
+		pixaiTag.value = newTag;
+	},
+);
+
+watch(
+	() => props.currentPixaiCategory,
+	(newCategory) => {
+		pixaiCategory.value = newCategory;
+	},
+);
+
+watch(
+	() => props.currentPixaiConfidence,
+	(newConfidence) => {
+		pixaiConfidence.value = newConfidence;
+	},
+);
+
+// Emit PixAI tag change when filters change
+watch(
+	[pixaiTag, pixaiCategory, pixaiConfidence],
+	([newTag, newCategory, newConfidence]) => {
+		if (newTag && newCategory && newConfidence) {
+			emit('pixai-tag-change', {
+				tag: newTag,
+				category: newCategory,
+				confidence: newConfidence,
+			});
+		} else {
+			emit('pixai-tag-change', null);
+		}
+	},
+);
+
+function clearPixaiFilter() {
+	pixaiTag.value = null;
+	pixaiCategory.value = null;
+	pixaiConfidence.value = null;
+}
 
 const sortOptions = [
 	{
@@ -489,6 +550,57 @@ function next() {
 						</button>
 					</div>
 
+					<!-- PixAI Tag filter -->
+					<div class="flex items-center gap-2 min-w-0">
+						<label class="text-sm font-medium text-gray-700 shrink-0">
+							PixAI Tag:
+						</label>
+						<input
+							v-model="pixaiTag"
+							type="text"
+							placeholder="Tag name"
+							class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent w-28"
+						>
+						<select
+							v-model="pixaiCategory"
+							class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						>
+							<option :value="null">Category</option>
+							<option value="character">Character</option>
+							<option value="feature">Feature</option>
+							<option value="ip">IP</option>
+						</select>
+						<select
+							v-model="pixaiConfidence"
+							class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						>
+							<option :value="null">Confidence</option>
+							<option value="high">High</option>
+							<option value="medium">Medium</option>
+							<option value="low">Low</option>
+						</select>
+						<button
+							v-if="pixaiTag || pixaiCategory || pixaiConfidence"
+							@click="clearPixaiFilter"
+							class="p-1 text-gray-500 hover:text-gray-700"
+							title="Clear filter"
+						>
+							<svg
+								class="w-4 h-4"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M6 18L18 6M6 6l12 12"
+								/>
+							</svg>
+						</button>
+					</div>
+
 					<!-- Gallery mode toggle -->
 					<div class="flex items-center gap-2">
 						<label class="text-sm font-medium text-gray-700 shrink-0">
@@ -754,6 +866,63 @@ function next() {
 											/>
 										</svg>
 									</button>
+								</div>
+							</div>
+
+							<!-- PixAI Tag filter -->
+							<div class="space-y-2">
+								<label class="text-sm font-medium text-gray-700">
+									PixAI Tag Filter
+								</label>
+								<div class="space-y-3">
+									<div class="flex items-center gap-2">
+										<input
+											v-model="pixaiTag"
+											type="text"
+											placeholder="Enter tag name"
+											class="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+										<button
+											v-if="pixaiTag || pixaiCategory || pixaiConfidence"
+											@click="clearPixaiFilter"
+											class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+											title="Clear filter"
+										>
+											<svg
+												class="w-5 h-5"
+												fill="none"
+												stroke="currentColor"
+												viewBox="0 0 24 24"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M6 18L18 6M6 6l12 12"
+												/>
+											</svg>
+										</button>
+									</div>
+									<div class="grid grid-cols-2 gap-2">
+										<select
+											v-model="pixaiCategory"
+											class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option :value="null">Category</option>
+											<option value="character">Character</option>
+											<option value="feature">Feature</option>
+											<option value="ip">IP</option>
+										</select>
+										<select
+											v-model="pixaiConfidence"
+											class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option :value="null">Confidence</option>
+											<option value="high">High</option>
+											<option value="medium">Medium</option>
+											<option value="low">Low</option>
+										</select>
+									</div>
 								</div>
 							</div>
 
