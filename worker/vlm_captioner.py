@@ -90,6 +90,12 @@ MODELS = {
         "language_file": "Qwen3-14B-Q6_K.gguf",
         "vision_file": None,  # Text-only model
     },
+    "pixai": {
+        "name": "PixAI Tagger v0.9",
+        "backend": "pytorch",
+        "repository": "pixai-labs/pixai-tagger-v0.9",
+        "model_dir": Path.home() / ".cache" / "pixai-tagger",
+    },
 }
 
 # Load prompts from files
@@ -831,6 +837,71 @@ def process_images_with_joycaption(file_infos, db, media_mapping, generate_expla
     return processed_count
 
 
+def process_images_with_pixai(file_infos, db, media_mapping):
+    """Process batch of images with PixAI Tagger
+
+    Args:
+        file_infos: List of file info dicts with 's3_uri', 'key' fields
+        db: Firestore database instance
+        media_mapping: Twitter media ID to tweet metadata mapping
+
+    Returns:
+        int: Number of images successfully processed
+    """
+    global _shutdown_requested
+    from pixai_tagger import PixAITagger
+
+    model_key = "pixai"
+    model_config = MODELS[model_key]
+
+    # Initialize PixAI tagger
+    print(f"[PixAI] Initializing tagger...")
+    tagger = PixAITagger(model_dir=model_config["model_dir"])
+
+    processed_count = 0
+
+    try:
+        for file_info in file_infos:
+            # Check for shutdown request before processing next image
+            if _shutdown_requested:
+                print("\n✓ Shutdown requested. Stopping PixAI processing gracefully.")
+                break
+
+            # Download image just before processing
+            local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
+            print(f"\nDownloading: {file_info['key']}")
+            if not download_from_s3(file_info['s3_uri'], local_path, file_info['key'], db, media_mapping):
+                print(f"Failed to download: {file_info['key']}")
+                continue
+
+            print(f"Processing with PixAI: {local_path}")
+
+            # Open and tag image
+            from PIL import Image
+            image = Image.open(local_path)
+
+            result = tagger.tag_image(image)
+
+            print(f"[PixAI] Inference time: {result['inference_time']:.3f}s")
+            print(f"[PixAI] High confidence tags:")
+            print(f"  - Features: {len(result['tag_list']['high_confidence']['feature'])}")
+            print(f"  - Characters: {len(result['tag_list']['high_confidence']['character'])}")
+            print(f"  - IPs: {len(result['tag_list']['high_confidence']['ip'])}")
+
+            # Save to Firestore
+            save_pixai_tags_to_firestore(
+                db, local_path, model_key, model_config, result
+            )
+
+            processed_count += 1
+            print(f"✓ Completed {local_path.name} ({processed_count}/{len(file_infos)})")
+
+    finally:
+        tagger.close()
+
+    return processed_count
+
+
 def save_to_firestore(db, image_path, model_key, model_config, caption, moderation_raw, moderation_result, explanation=None, age_estimation_raw=None, age_estimation_result=None):
     """Save caption, moderation, and age estimation results to Firestore"""
     image_name = Path(image_path).name
@@ -935,6 +1006,60 @@ def save_to_firestore(db, image_path, model_key, model_config, caption, moderati
     print(f"Saved results for {doc_id} with model {model_key}")
 
 
+def save_pixai_tags_to_firestore(db, image_path, model_key, model_config, result):
+    """Save PixAI tagging results to Firestore
+
+    Args:
+        db: Firestore database instance
+        image_path: Path to image file
+        model_key: Model identifier (e.g., 'pixai')
+        model_config: Model configuration dict
+        result: Tagging result dict with 'tag_list' and 'raw_scores'
+    """
+    image_name = Path(image_path).name
+    # Use URL-encoded S3 path as document ID (e.g., "twitter/abcde.png" -> "twitter%2Fabcde.png")
+    s3_key = f"twitter/{image_name}"
+    doc_id = quote(s3_key, safe='')
+    doc_ref = db.collection('images').document(doc_id)
+
+    # Get current timestamp
+    current_time = datetime.now(timezone.utc)
+
+    # Prepare tag data according to the specified structure
+    tag_data = {
+        "tag_list": result["tag_list"],
+        "raw_scores": result["raw_scores"],
+        "metadata": {
+            "model": model_config["name"],
+            "backend": model_config["backend"],
+            "repository": model_config["repository"],
+            "inference_time": result["inference_time"],
+            "createdAt": current_time,
+        },
+    }
+
+    # Get existing document data or create new structure
+    doc = doc_ref.get()
+    if doc.exists:
+        existing_data = doc.to_dict()
+    else:
+        existing_data = {}
+
+    # Update tags with nested structure
+    tags = existing_data.get("tags", {})
+    tags[model_key] = tag_data
+
+    # Prepare update data
+    update_data = {
+        "tags": tags,
+    }
+
+    # Use merge to update the document
+    doc_ref.set(update_data, merge=True)
+
+    print(f"[PixAI] Saved tags for {doc_id}")
+
+
 def run_vlm_captioner(models=None, generate_explanation=False):
     """Main function to run VLM captioning
 
@@ -1009,6 +1134,12 @@ def run_vlm_captioner(models=None, generate_explanation=False):
         count = process_images_with_minicpm(files_to_process, db, media_mapping, generate_explanation)
         total_processed += count
         print(f"MiniCPM processed {count} images")
+
+    if 'pixai' in models and not _shutdown_requested:
+        print(f"\n=== Processing up to {len(files_to_process)} images with PixAI ===")
+        count = process_images_with_pixai(files_to_process, db, media_mapping)
+        total_processed += count
+        print(f"PixAI processed {count} images")
 
     print("\nVLM Captioner finished")
     print(f"Total images processed: {total_processed}")

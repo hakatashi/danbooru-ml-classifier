@@ -23,7 +23,7 @@ Scheduled functions that fetch image rankings and queue downloads:
 - `updateModerationStats` - Firestore trigger that maintains moderation statistics per provider (count and sum) in the `moderationStats` collection
 
 ### Worker (Python - `worker/`)
-ML inference function triggered by Firestore document creation:
+ML inference and image processing functions:
 - `onImageCreated` - Batches pending images (waits for 100+), downloads from Storage, runs inference
 - Uses DeepDanbooru ResNet50 model to extract 6000 tag probabilities from images
 - Runs three preference classifiers on tag probabilities:
@@ -31,6 +31,14 @@ ML inference function triggered by Firestore document creation:
   - sklearn AdaBoost
   - PyTorch shallow network (6000→512→128→128→3)
 - Updates Firestore documents with `topTagProbs` and `inferences`
+- `vlm_captioner.py` - VLM-based captioning, moderation, age estimation, and tagging:
+  - Supports multiple models: MiniCPM, JoyCaption, PixAI Tagger
+  - PixAI Tagger v0.9: Generates ~13.5k Danbooru-style tags with confidence levels
+    - Feature tags: high (≥0.35), medium (≥0.25), low (≥0.1), raw_scores (≥0.05)
+    - Character tags: high (≥0.9), medium (≥0.8), low (≥0.5), raw_scores (≥0.2)
+    - IP (copyright) tags: automatically extracted from character tags
+    - Model: EVA02-Large encoder (frozen) + classification head (13,461 tags)
+    - Performance: ~0.7s/image on ROCm GPU
 
 ### Public Website (Vue 3 + TypeScript - `public/`)
 Web application for browsing VLM-captioned images:
@@ -81,17 +89,35 @@ venv/bin/pip install -r requirements.txt
 
 **VLM Captioner**: Generates captions, moderation ratings, and age estimations
 ```bash
-# Basic usage
+# Basic usage (MiniCPM only)
 python vlm_captioner.py
 
-# Control which steps to run
-python vlm_captioner.py --skip-caption --skip-moderation --skip-age-estimation
-python vlm_captioner.py --only-caption
-python vlm_captioner.py --only-moderation
-python vlm_captioner.py --only-age-estimation
+# Specify models to run
+python vlm_captioner.py --models minicpm joycaption
+python vlm_captioner.py --models pixai
+
+# Generate explanation for moderation ratings
+python vlm_captioner.py --models minicpm --generate-explanation
 
 # Backfill age estimation for existing images
 python backfill_age_estimation.py --caption-model minicpm --age-model qwen3
+```
+
+**PixAI Tagger**: Generates Danbooru-style tags for images
+```bash
+# Tag images with PixAI Tagger v0.9
+python vlm_captioner.py --models pixai
+
+# Backfill PixAI tags for all existing images
+python backfill_pixai_tags.py
+
+# Backfill with options
+python backfill_pixai_tags.py --max-images 100           # Limit number of images
+python backfill_pixai_tags.py --no-skip-existing        # Reprocess existing tags
+python backfill_pixai_tags.py --dry-run                 # Preview what would be processed
+
+# Test single image
+python test_pixai_tagger.py /path/to/image.jpg
 ```
 
 **Prompts**: Stored in `worker/prompts/` directory
@@ -143,6 +169,7 @@ firebase emulators:start
    - Generates captions (JoyCaption/MiniCPM)
    - Generates moderation ratings with explanations (0-10 scale)
    - Generates age estimations using caption-based inference with Qwen3-14B
+   - Generates Danbooru-style tags (PixAI Tagger v0.9) with confidence levels and IP extraction
    - Loads Twitter source metadata from cache (if available)
    - Updates `images/` documents with all results
 6. `updateModerationStats` function automatically maintains aggregated statistics (count, sum) per provider in `moderationStats/` collection
@@ -157,6 +184,7 @@ Main collection storing image metadata and ML results:
 - `captions.[provider]`: VLM caption data with metadata
 - `moderations.[provider]`: Moderation results with numeric rating (0-10 scale) and explanation
 - `ageEstimations.[provider]`: Age estimation results with main_character_age (pre-calculated for queries), estimated_age_range, confidence_level, gender, reasoning, and metadata
+- `tags.[provider]`: PixAI tagging results with tag_list (high/medium/low confidence × character/feature/ip), raw_scores, and metadata
 - `twitterSource`: Twitter metadata (tweetId, text, user, retweetedTweet) if image is from Twitter
 - `favorites`: User favorites data (isFavorited, categories array)
 - `topTagProbs`: ML tag probabilities
