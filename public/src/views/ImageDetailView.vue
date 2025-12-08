@@ -144,7 +144,7 @@ function getTagOpacity(confidence: ConfidenceLevel): string {
 	}
 }
 
-const tagCategoryOrder : Record<TagCategory, number> = {
+const tagCategoryOrder: Record<TagCategory, number> = {
 	character: 1,
 	ip: 2,
 	feature: 3,

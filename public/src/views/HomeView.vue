@@ -1,27 +1,24 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
 import {Heart, Image as ImageIcon, Lock, TrendingUp} from 'lucide-vue-next';
-import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
-import {useRoute, useRouter} from 'vue-router';
+import {computed, onMounted, ref, watch} from 'vue';
 import FilterBar from '../components/FilterBar.vue';
 import ImageCard from '../components/ImageCard.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
-import {
-	type AgeFilter,
-	type PixAITagFilter,
-	type RatingFilter,
-	type SortOption,
-	useImages,
-} from '../composables/useImages';
+import {useFilterSync} from '../composables/useFilterSync';
+import {useGallery} from '../composables/useGallery';
+import {useImages} from '../composables/useImages';
 import type {ImageDocument} from '../types';
 
 const props = defineProps<{
 	user: User | null;
 }>();
 
-const router = useRouter();
-const route = useRoute();
+// URL synchronization
+const {sortValue, sort, page, filters, updateSort, updatePage, updateFilters} =
+	useFilterSync();
 
+// Image loading
 const {
 	loading,
 	error,
@@ -31,264 +28,66 @@ const {
 	toggleFavorite,
 	isFavorite,
 } = useImages();
-const currentPage = ref(0);
-const currentSort = ref<SortOption | null>(null);
+
+// Gallery functionality
+const {
+	imageAspectRatios,
+	galleryRows,
+	handleImageLoad,
+	calculateGalleryRows,
+	getGalleryImageContainerStyle,
+	getGalleryImageStyle,
+	resetGallery,
+	handleResize,
+} = useGallery();
+
+// Local state
 const currentImages = ref<ImageDocument[]>([]);
 const galleryMode = ref(false);
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref<string>('');
-const imageAspectRatios = ref<Map<string, number>>(new Map());
-const galleryRows = ref<Array<Array<ImageDocument & {height: number}>>>([]);
 const savingFavorites = ref<Set<string>>(new Set());
-
-// Sort options mapping
-const sortOptionsMap = {
-	'joycaption-desc': {
-		field: 'moderations.joycaption.result',
-		direction: 'desc' as const,
-	},
-	'joycaption-asc': {
-		field: 'moderations.joycaption.result',
-		direction: 'asc' as const,
-	},
-	'minicpm-desc': {
-		field: 'moderations.minicpm.result',
-		direction: 'desc' as const,
-	},
-	'minicpm-asc': {
-		field: 'moderations.minicpm.result',
-		direction: 'asc' as const,
-	},
-	'joycaption-age-desc': {
-		field: 'ageEstimations.joycaption.main_character_age',
-		direction: 'desc' as const,
-	},
-	'joycaption-age-asc': {
-		field: 'ageEstimations.joycaption.main_character_age',
-		direction: 'asc' as const,
-	},
-	'minicpm-age-desc': {
-		field: 'ageEstimations.minicpm.main_character_age',
-		direction: 'desc' as const,
-	},
-	'minicpm-age-asc': {
-		field: 'ageEstimations.minicpm.main_character_age',
-		direction: 'asc' as const,
-	},
-	'qwen3-age-desc': {
-		field: 'ageEstimations.qwen3.main_character_age',
-		direction: 'desc' as const,
-	},
-	'qwen3-age-asc': {
-		field: 'ageEstimations.qwen3.main_character_age',
-		direction: 'asc' as const,
-	},
-	'joycaption-created-desc': {
-		field: 'captions.joycaption.metadata.createdAt',
-		direction: 'desc' as const,
-	},
-	'joycaption-created-asc': {
-		field: 'captions.joycaption.metadata.createdAt',
-		direction: 'asc' as const,
-	},
-	'minicpm-created-desc': {
-		field: 'captions.minicpm.metadata.createdAt',
-		direction: 'desc' as const,
-	},
-	'minicpm-created-asc': {
-		field: 'captions.minicpm.metadata.createdAt',
-		direction: 'asc' as const,
-	},
-};
-
-// Get sort and page values from query params
-const sortValue = computed(() => {
-	const sortQuery = route.query.sort;
-	return typeof sortQuery === 'string' ? sortQuery : 'minicpm-created-desc';
-});
-
-const pageValue = computed(() => {
-	const pageQuery = route.query.page;
-	if (typeof pageQuery === 'string') {
-		const parsed = Number.parseInt(pageQuery, 10);
-		return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
-	}
-	return 0;
-});
-
-const ratingProviderValue = computed(() => {
-	const providerQuery = route.query.ratingProvider;
-	if (
-		typeof providerQuery === 'string' &&
-		(providerQuery === 'joycaption' || providerQuery === 'minicpm')
-	) {
-		return providerQuery;
-	}
-	return 'minicpm';
-});
-
-const ratingMinValue = computed(() => {
-	const minQuery = route.query.ratingMin;
-	if (typeof minQuery === 'string') {
-		const parsed = Number.parseInt(minQuery, 10);
-		return Number.isNaN(parsed) ? null : parsed;
-	}
-	return null;
-});
-
-const ratingMaxValue = computed(() => {
-	const maxQuery = route.query.ratingMax;
-	if (typeof maxQuery === 'string') {
-		const parsed = Number.parseInt(maxQuery, 10);
-		return Number.isNaN(parsed) ? null : parsed;
-	}
-	return null;
-});
-
-const ageProviderValue = computed(() => {
-	const providerQuery = route.query.ageProvider;
-	if (
-		typeof providerQuery === 'string' &&
-		(providerQuery === 'joycaption' || providerQuery === 'minicpm')
-	) {
-		return providerQuery;
-	}
-	return 'minicpm';
-});
-
-const ageMinValue = computed(() => {
-	const minQuery = route.query.ageMin;
-	if (typeof minQuery === 'string') {
-		const parsed = Number.parseInt(minQuery, 10);
-		return Number.isNaN(parsed) ? null : parsed;
-	}
-	return null;
-});
-
-const ageMaxValue = computed(() => {
-	const maxQuery = route.query.ageMax;
-	if (typeof maxQuery === 'string') {
-		const parsed = Number.parseInt(maxQuery, 10);
-		return Number.isNaN(parsed) ? null : parsed;
-	}
-	return null;
-});
-
-const twitterUserIdValue = computed(() => {
-	const userIdQuery = route.query.twitterUserId;
-	return typeof userIdQuery === 'string' ? userIdQuery : null;
-});
-
-const pixaiTagValue = computed(() => {
-	const tagQuery = route.query.pixaiTag;
-	return typeof tagQuery === 'string' ? tagQuery : null;
-});
-
-const pixaiCategoryValue = computed(() => {
-	const categoryQuery = route.query.pixaiCategory;
-	if (
-		typeof categoryQuery === 'string' &&
-		(categoryQuery === 'character' ||
-			categoryQuery === 'feature' ||
-			categoryQuery === 'ip')
-	) {
-		return categoryQuery;
-	}
-	return 'feature';
-});
-
-const pixaiConfidenceValue = computed(() => {
-	const confidenceQuery = route.query.pixaiConfidence;
-	if (
-		typeof confidenceQuery === 'string' &&
-		(confidenceQuery === 'high' ||
-			confidenceQuery === 'medium' ||
-			confidenceQuery === 'low')
-	) {
-		return confidenceQuery;
-	}
-	return 'high';
-});
 
 // Watch for user authentication and query parameter changes
 watch(
-	[
-		() => props.user,
-		sortValue,
-		pageValue,
-		ratingProviderValue,
-		ratingMinValue,
-		ratingMaxValue,
-		ageProviderValue,
-		ageMinValue,
-		ageMaxValue,
-		twitterUserIdValue,
-		pixaiTagValue,
-		pixaiCategoryValue,
-		pixaiConfidenceValue,
-	],
-	async ([
-		newUser,
-		newSort,
-		newPage,
-		newRatingProvider,
-		newRatingMin,
-		newRatingMax,
-		newAgeProvider,
-		newAgeMin,
-		newAgeMax,
-		newTwitterUserId,
-		newPixaiTag,
-		newPixaiCategory,
-		newPixaiConfidence,
-	]) => {
+	[() => props.user, sort, page, filters],
+	async ([newUser, newSort, newPage, newFilters]) => {
 		if (newUser && newSort) {
-			const sortOption =
-				sortOptionsMap[newSort as keyof typeof sortOptionsMap] ||
-				sortOptionsMap['minicpm-created-desc'];
-			currentSort.value = sortOption;
-
-			const ratingFilter: RatingFilter = {
-				provider: newRatingProvider,
-				min: newRatingMin,
-				max: newRatingMax,
-			};
-
-			const ageFilter: AgeFilter = {
-				provider: newAgeProvider,
-				min: newAgeMin,
-				max: newAgeMax,
-			};
-
-			const twitterUserFilter = {
-				userId: newTwitterUserId,
-			};
-
-			const pixaiTagFilter: PixAITagFilter | null = newPixaiTag
-				? {
-						tag: newPixaiTag,
-						category: newPixaiCategory,
-						confidence: newPixaiConfidence,
-					}
-				: null;
-
-			const result = await loadPage(
-				sortOption,
-				newPage,
-				ratingFilter,
-				ageFilter,
-				twitterUserFilter,
-				pixaiTagFilter,
-			);
+			const result = await loadPage(newSort, newPage, newFilters);
 			currentImages.value = result.images;
-			currentPage.value = result.page;
 
 			// Reset gallery state when images change
-			imageAspectRatios.value.clear();
-			galleryRows.value = [];
+			resetGallery();
 		}
 	},
-	{immediate: true},
+	{immediate: true, deep: true},
+);
+
+// Watch for gallery mode and images changes to recalculate rows
+watch(
+	[galleryMode, currentImages],
+	([isGallery, images]) => {
+		if (isGallery && images.length > 0) {
+			// Collect aspect ratios from already loaded images
+			setTimeout(() => {
+				const imgElements = document.querySelectorAll('.gallery-image');
+				imgElements.forEach((img) => {
+					const imgEl = img as HTMLImageElement;
+					if (imgEl.complete && imgEl.naturalWidth > 0) {
+						const imageId = imgEl.alt;
+						const aspectRatio = imgEl.naturalWidth / imgEl.naturalHeight;
+						imageAspectRatios.value.set(imageId, aspectRatio);
+					}
+				});
+
+				// If we have all aspect ratios, calculate rows
+				if (imageAspectRatios.value.size === images.length) {
+					calculateGalleryRows(images);
+				}
+			}, 100);
+		}
+	},
+	{deep: true},
 );
 
 const canGoNext = computed(() => {
@@ -299,225 +98,9 @@ const canGoPrev = computed(() => {
 	return hasPrevPage.value;
 });
 
-async function onSortChange(_sort: SortOption, sortKey: string) {
-	// Update URL with new sort, reset page to 0
-	await router.push({
-		query: {
-			sort: sortKey,
-			page: '0',
-		},
-	});
-}
-
-async function onPageChange(page: number) {
-	if (!currentSort.value || !props.user) return;
-
+async function handlePageChange(newPage: number) {
 	window.scrollTo({top: 0, behavior: 'smooth'});
-
-	// Update URL with new page, preserve all filters
-	const query: Record<string, string> = {
-		sort: sortValue.value,
-		page: page.toString(),
-	};
-
-	if (ratingProviderValue.value !== 'minicpm') {
-		query.ratingProvider = ratingProviderValue.value;
-	}
-	if (ratingMinValue.value !== null) {
-		query.ratingMin = ratingMinValue.value.toString();
-	}
-	if (ratingMaxValue.value !== null) {
-		query.ratingMax = ratingMaxValue.value.toString();
-	}
-	if (ageProviderValue.value !== 'minicpm') {
-		query.ageProvider = ageProviderValue.value;
-	}
-	if (ageMinValue.value !== null) {
-		query.ageMin = ageMinValue.value.toString();
-	}
-	if (ageMaxValue.value !== null) {
-		query.ageMax = ageMaxValue.value.toString();
-	}
-	if (twitterUserIdValue.value) {
-		query.twitterUserId = twitterUserIdValue.value;
-	}
-	// Preserve PixAI tag filter
-	if (pixaiTagValue.value) {
-		query.pixaiTag = pixaiTagValue.value;
-		query.pixaiCategory = pixaiCategoryValue.value;
-		query.pixaiConfidence = pixaiConfidenceValue.value;
-	}
-
-	await router.push({query});
-}
-
-async function onRatingChange(ratingFilter: RatingFilter) {
-	// Update URL with new rating filter, reset page to 0
-	const query: Record<string, string> = {
-		sort: sortValue.value,
-		page: '0',
-	};
-
-	if (ratingFilter.provider !== 'minicpm') {
-		query.ratingProvider = ratingFilter.provider;
-	}
-	if (ratingFilter.min !== null) {
-		query.ratingMin = ratingFilter.min.toString();
-	}
-	if (ratingFilter.max !== null) {
-		query.ratingMax = ratingFilter.max.toString();
-	}
-
-	// Preserve age filters
-	if (ageProviderValue.value !== 'minicpm') {
-		query.ageProvider = ageProviderValue.value;
-	}
-	if (ageMinValue.value !== null) {
-		query.ageMin = ageMinValue.value.toString();
-	}
-	if (ageMaxValue.value !== null) {
-		query.ageMax = ageMaxValue.value.toString();
-	}
-	// Preserve Twitter user filter
-	if (twitterUserIdValue.value) {
-		query.twitterUserId = twitterUserIdValue.value;
-	}
-	// Preserve PixAI tag filter
-	if (pixaiTagValue.value) {
-		query.pixaiTag = pixaiTagValue.value;
-		query.pixaiCategory = pixaiCategoryValue.value;
-		query.pixaiConfidence = pixaiConfidenceValue.value;
-	}
-
-	await router.push({query});
-}
-
-async function onAgeChange(ageFilter: AgeFilter) {
-	// Update URL with new age filter, reset page to 0
-	const query: Record<string, string> = {
-		sort: sortValue.value,
-		page: '0',
-	};
-
-	// Preserve rating filters
-	if (ratingProviderValue.value !== 'minicpm') {
-		query.ratingProvider = ratingProviderValue.value;
-	}
-	if (ratingMinValue.value !== null) {
-		query.ratingMin = ratingMinValue.value.toString();
-	}
-	if (ratingMaxValue.value !== null) {
-		query.ratingMax = ratingMaxValue.value.toString();
-	}
-
-	// Add age filters
-	if (ageFilter.provider !== 'minicpm') {
-		query.ageProvider = ageFilter.provider;
-	}
-	if (ageFilter.min !== null) {
-		query.ageMin = ageFilter.min.toString();
-	}
-	if (ageFilter.max !== null) {
-		query.ageMax = ageFilter.max.toString();
-	}
-	// Preserve Twitter user filter
-	if (twitterUserIdValue.value) {
-		query.twitterUserId = twitterUserIdValue.value;
-	}
-	// Preserve PixAI tag filter
-	if (pixaiTagValue.value) {
-		query.pixaiTag = pixaiTagValue.value;
-		query.pixaiCategory = pixaiCategoryValue.value;
-		query.pixaiConfidence = pixaiConfidenceValue.value;
-	}
-
-	await router.push({query});
-}
-
-async function onTwitterUserChange(twitterUserFilter: {userId: string | null}) {
-	// Update URL with new Twitter user filter, reset page to 0
-	const query: Record<string, string> = {
-		sort: sortValue.value,
-		page: '0',
-	};
-
-	// Preserve rating filters
-	if (ratingProviderValue.value !== 'minicpm') {
-		query.ratingProvider = ratingProviderValue.value;
-	}
-	if (ratingMinValue.value !== null) {
-		query.ratingMin = ratingMinValue.value.toString();
-	}
-	if (ratingMaxValue.value !== null) {
-		query.ratingMax = ratingMaxValue.value.toString();
-	}
-	// Preserve age filters
-	if (ageProviderValue.value !== 'minicpm') {
-		query.ageProvider = ageProviderValue.value;
-	}
-	if (ageMinValue.value !== null) {
-		query.ageMin = ageMinValue.value.toString();
-	}
-	if (ageMaxValue.value !== null) {
-		query.ageMax = ageMaxValue.value.toString();
-	}
-	// Add Twitter user filter
-	if (twitterUserFilter.userId) {
-		query.twitterUserId = twitterUserFilter.userId;
-	}
-	// Preserve PixAI tag filter
-	if (pixaiTagValue.value) {
-		query.pixaiTag = pixaiTagValue.value;
-		query.pixaiCategory = pixaiCategoryValue.value;
-		query.pixaiConfidence = pixaiConfidenceValue.value;
-	}
-
-	await router.push({query});
-}
-
-async function onPixaiTagChange(pixaiTagFilter: PixAITagFilter | null) {
-	// Update URL with new PixAI tag filter, reset page to 0
-	const query: Record<string, string> = {
-		sort: sortValue.value,
-		page: '0',
-	};
-
-	// Preserve rating filters
-	if (ratingProviderValue.value !== 'minicpm') {
-		query.ratingProvider = ratingProviderValue.value;
-	}
-	if (ratingMinValue.value !== null) {
-		query.ratingMin = ratingMinValue.value.toString();
-	}
-	if (ratingMaxValue.value !== null) {
-		query.ratingMax = ratingMaxValue.value.toString();
-	}
-	// Preserve age filters
-	if (ageProviderValue.value !== 'minicpm') {
-		query.ageProvider = ageProviderValue.value;
-	}
-	if (ageMinValue.value !== null) {
-		query.ageMin = ageMinValue.value.toString();
-	}
-	if (ageMaxValue.value !== null) {
-		query.ageMax = ageMaxValue.value.toString();
-	}
-	// Preserve Twitter user filter
-	if (twitterUserIdValue.value) {
-		query.twitterUserId = twitterUserIdValue.value;
-	}
-	// Add PixAI tag filter
-	if (pixaiTagFilter?.tag) {
-		query.pixaiTag = pixaiTagFilter.tag;
-		query.pixaiCategory = pixaiTagFilter.category;
-		query.pixaiConfidence = pixaiTagFilter.confidence;
-	}
-
-	await router.push({query});
-}
-
-function onGalleryModeChange(enabled: boolean) {
-	galleryMode.value = enabled;
+	await updatePage(newPage);
 }
 
 function getImageUrl(image: ImageDocument): string {
@@ -550,153 +133,6 @@ function closeLightbox() {
 	lightboxAlt.value = '';
 }
 
-function handleImageLoad(event: Event, imageId: string) {
-	const img = event.target as HTMLImageElement;
-	const aspectRatio = img.naturalWidth / img.naturalHeight;
-	imageAspectRatios.value.set(imageId, aspectRatio);
-
-	// すべての画像がロードされたら行を再計算
-	if (imageAspectRatios.value.size === currentImages.value.length) {
-		calculateGalleryRows();
-	}
-}
-
-function calculateGalleryRows() {
-	const containerWidth = window.innerWidth - 32; // padding考慮
-	const rowGap = 8; // gap-2 = 8px
-	const targetRowHeight = 480;
-	const images = currentImages.value;
-
-	const rows: Array<Array<ImageDocument & {height: number}>> = [];
-	let currentRow: Array<ImageDocument & {height: number}> = [];
-	let currentRowWidth = 0;
-
-	for (const image of images) {
-		const aspectRatio = imageAspectRatios.value.get(image.id);
-		if (!aspectRatio) continue;
-
-		// 縦横比を制限
-		let constrainedAspectRatio = aspectRatio;
-		if (aspectRatio > 2) constrainedAspectRatio = 2;
-		else if (aspectRatio < 0.5) constrainedAspectRatio = 0.5;
-
-		const imageWidth = targetRowHeight * constrainedAspectRatio;
-
-		// 現在の行に追加できるかチェック
-		const wouldBeWidth =
-			currentRowWidth + imageWidth + (currentRow.length > 0 ? rowGap : 0);
-
-		if (currentRow.length > 0 && wouldBeWidth > containerWidth) {
-			// 現在の行を確定し、高さを調整
-			const totalWidth = currentRowWidth;
-			const scale = containerWidth / totalWidth;
-			const rowHeight = targetRowHeight * scale;
-
-			for (const img of currentRow) {
-				img.height = rowHeight;
-			}
-
-			rows.push(currentRow);
-			currentRow = [];
-			currentRowWidth = 0;
-		}
-
-		currentRow.push({...image, height: targetRowHeight});
-		currentRowWidth += imageWidth + (currentRow.length > 1 ? rowGap : 0);
-	}
-
-	// 最後の行を追加（幅が足りなくてもそのまま）
-	if (currentRow.length > 0) {
-		rows.push(currentRow);
-	}
-
-	galleryRows.value = rows;
-}
-
-function getGalleryImageContainerStyle(imageId: string, height: number) {
-	const aspectRatio = imageAspectRatios.value.get(imageId);
-	if (!aspectRatio) return {};
-
-	let width: number;
-
-	// 横長すぎる (2:1より横長) → 2:1の比率で表示
-	if (aspectRatio > 2) {
-		width = height * 2;
-	}
-	// 縦長すぎる (1:2より縦長) → 1:2の比率で表示
-	else if (aspectRatio < 0.5) {
-		width = height / 2;
-	}
-	// 通常の縦横比 → そのまま表示
-	else {
-		width = height * aspectRatio;
-	}
-
-	return {width: `${width}px`, height: `${height}px`};
-}
-
-function getGalleryImageStyle(imageId: string, height: number) {
-	const aspectRatio = imageAspectRatios.value.get(imageId);
-	if (!aspectRatio) return {};
-
-	let width: number;
-	let objectFit: 'cover' | 'contain';
-
-	// 横長すぎる (2:1より横長) → 2:1の比率で表示
-	if (aspectRatio > 2) {
-		width = height * 2;
-		objectFit = 'cover';
-	}
-	// 縦長すぎる (1:2より縦長) → 1:2の比率で表示
-	else if (aspectRatio < 0.5) {
-		width = height / 2;
-		objectFit = 'cover';
-	}
-	// 通常の縦横比 → そのまま表示
-	else {
-		width = height * aspectRatio;
-		objectFit = 'contain';
-	}
-
-	return {
-		width: `${width}px`,
-		height: `${height}px`,
-		objectFit,
-	};
-}
-
-// Window resize handler for gallery mode
-let resizeTimeout: number | null = null;
-
-function handleResize() {
-	// Debounce resize events
-	if (resizeTimeout !== null) {
-		window.clearTimeout(resizeTimeout);
-	}
-
-	resizeTimeout = window.setTimeout(() => {
-		// Recalculate gallery rows if we have aspect ratios
-		if (
-			galleryMode.value &&
-			imageAspectRatios.value.size === currentImages.value.length
-		) {
-			calculateGalleryRows();
-		}
-	}, 300);
-}
-
-// Add/remove resize listener
-onMounted(() => {
-	window.addEventListener('resize', handleResize);
-});
-
-onUnmounted(() => {
-	window.removeEventListener('resize', handleResize);
-	if (resizeTimeout !== null) {
-		window.clearTimeout(resizeTimeout);
-	}
-});
-
 async function handleToggleFavorite(event: Event, imageId: string) {
 	event.preventDefault();
 	event.stopPropagation();
@@ -706,12 +142,34 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 	savingFavorites.value.add(imageId);
 	try {
 		await toggleFavorite(imageId);
-	} catch (error) {
-		console.error('Failed to toggle favorite:', error);
+	} catch (err) {
+		console.error('Failed to toggle favorite:', err);
 	} finally {
 		savingFavorites.value.delete(imageId);
 	}
 }
+
+// Handle image load in gallery mode
+function onImageLoad(event: Event, imageId: string) {
+	handleImageLoad(event, imageId);
+
+	// Automatically calculate rows when all aspect ratios are available
+	if (
+		galleryMode.value &&
+		imageAspectRatios.value.size === currentImages.value.length
+	) {
+		calculateGalleryRows(currentImages.value);
+	}
+}
+
+// Handle window resize
+onMounted(() => {
+	window.addEventListener('resize', () => {
+		if (galleryMode.value) {
+			handleResize(currentImages.value);
+		}
+	});
+});
 </script>
 
 <template>
@@ -737,28 +195,16 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 		<!-- Main Content -->
 		<template v-else>
 			<FilterBar
-				:current-page="currentPage"
-				:current-sort="sortValue"
-				:current-rating-provider="ratingProviderValue"
-				:current-rating-min="ratingMinValue"
-				:current-rating-max="ratingMaxValue"
-				:current-age-provider="ageProviderValue"
-				:current-age-min="ageMinValue"
-				:current-age-max="ageMaxValue"
-				:current-twitter-user-id="twitterUserIdValue"
-				:current-pixai-tag="pixaiTagValue"
-				:current-pixai-category="pixaiCategoryValue"
-				:current-pixai-confidence="pixaiConfidenceValue"
+				:filters="filters"
+				:sort="sortValue"
+				:current-page="page"
 				:can-go-next="canGoNext"
 				:can-go-prev="canGoPrev"
 				:gallery-mode="galleryMode"
-				@sort-change="onSortChange"
-				@page-change="onPageChange"
-				@rating-change="onRatingChange"
-				@age-change="onAgeChange"
-				@twitter-user-change="onTwitterUserChange"
-				@pixai-tag-change="onPixaiTagChange"
-				@gallery-mode-change="onGalleryModeChange"
+				@update:filters="updateFilters"
+				@update:sort="updateSort"
+				@page-change="handlePageChange"
+				@update:gallery-mode="(v) => (galleryMode = v)"
 			/>
 
 			<!-- Loading State -->
@@ -814,10 +260,10 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 							<img
 								:src="getImageUrl(image)"
 								:alt="image.id"
-								class="bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+								class="gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 								:style="getGalleryImageStyle(image.id, image.height)"
 								loading="lazy"
-								@load="(e) => handleImageLoad(e, image.id)"
+								@load="(e) => onImageLoad(e, image.id)"
 							>
 							<!-- Top-left buttons (hover) -->
 							<div
@@ -834,7 +280,9 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
 										savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
 									]"
-									:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
+									:title="
+										isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'
+									"
 								>
 									<Heart
 										:size="16"
@@ -888,10 +336,10 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 						<img
 							:src="getImageUrl(image)"
 							:alt="image.id"
-							class="bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+							class="gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 							:style="getGalleryImageStyle(image.id, 480)"
 							loading="lazy"
-							@load="(e) => handleImageLoad(e, image.id)"
+							@load="(e) => onImageLoad(e, image.id)"
 						>
 						<!-- Top-left buttons (hover) -->
 						<div
@@ -908,7 +356,9 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
 									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
 								]"
-								:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
+								:title="
+									isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'
+								"
 							>
 								<Heart
 									:size="16"
@@ -951,7 +401,7 @@ async function handleToggleFavorite(event: Event, imageId: string) {
 				</div>
 			</div>
 
-			<!-- Image Grid - Increased density -->
+			<!-- Image Grid -->
 			<div
 				v-else
 				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3"

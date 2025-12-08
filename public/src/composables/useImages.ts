@@ -15,43 +15,14 @@ import {
 import {ref} from 'vue';
 import {db} from '../firebase';
 import type {ImageDocument} from '../types';
-
-export interface SortOption {
-	field: string;
-	direction: 'asc' | 'desc';
-}
-
-export interface RatingFilter {
-	provider: 'joycaption' | 'minicpm';
-	min: number | null;
-	max: number | null;
-}
-
-export interface AgeFilter {
-	provider: 'joycaption' | 'minicpm';
-	min: number | null;
-	max: number | null;
-}
-
-export interface TwitterUserFilter {
-	userId: string | null;
-}
-
-export interface PixAITagFilter {
-	tag: string;
-	category: 'character' | 'feature' | 'ip';
-	confidence: 'high' | 'medium' | 'low';
-}
+import type {FiltersState, SortOption} from '../types/filters';
 
 const PAGE_SIZE = 50;
 
 const loading = ref(false);
 const error = ref<string | null>(null);
 const currentSort = ref<SortOption | null>(null);
-const currentRatingFilter = ref<RatingFilter | null>(null);
-const currentAgeFilter = ref<AgeFilter | null>(null);
-const currentTwitterUserFilter = ref<TwitterUserFilter | null>(null);
-const currentPixAITagFilter = ref<PixAITagFilter | null>(null);
+const currentFilters = ref<FiltersState | null>(null);
 
 // Store page data with cursors for navigation
 const pageCache = ref<
@@ -67,53 +38,43 @@ const pageCache = ref<
 const hasNextPage = ref(true);
 const hasPrevPage = ref(false);
 
+function filtersEqual(a: FiltersState | null, b: FiltersState | null): boolean {
+	if (a === null || b === null) return a === b;
+
+	return (
+		a.rating.provider === b.rating.provider &&
+		a.rating.min === b.rating.min &&
+		a.rating.max === b.rating.max &&
+		a.age.provider === b.age.provider &&
+		a.age.min === b.age.min &&
+		a.age.max === b.age.max &&
+		a.twitterUser.userId === b.twitterUser.userId &&
+		a.pixaiTag?.tag === b.pixaiTag?.tag &&
+		a.pixaiTag?.category === b.pixaiTag?.category &&
+		a.pixaiTag?.confidence === b.pixaiTag?.confidence
+	);
+}
+
 export function useImages() {
 	async function loadPage(
 		sort: SortOption,
 		page: number,
-		ratingFilter: RatingFilter | null = null,
-		ageFilter: AgeFilter | null = null,
-		twitterUserFilter: TwitterUserFilter | null = null,
-		pixaiTagFilter: PixAITagFilter | null = null,
+		filters: FiltersState,
 		direction: 'forward' | 'backward' = 'forward',
 	) {
 		let effectivePage = page;
 
 		// If sort or filters changed, reset cache
-		const ratingFilterChanged =
-			currentRatingFilter.value?.provider !== ratingFilter?.provider ||
-			currentRatingFilter.value?.min !== ratingFilter?.min ||
-			currentRatingFilter.value?.max !== ratingFilter?.max;
-
-		const ageFilterChanged =
-			currentAgeFilter.value?.provider !== ageFilter?.provider ||
-			currentAgeFilter.value?.min !== ageFilter?.min ||
-			currentAgeFilter.value?.max !== ageFilter?.max;
-
-		const twitterUserFilterChanged =
-			currentTwitterUserFilter.value?.userId !== twitterUserFilter?.userId;
-
-		const pixaiTagFilterChanged =
-			currentPixAITagFilter.value?.tag !== pixaiTagFilter?.tag ||
-			currentPixAITagFilter.value?.category !== pixaiTagFilter?.category ||
-			currentPixAITagFilter.value?.confidence !== pixaiTagFilter?.confidence;
-
 		if (
 			currentSort.value?.field !== sort.field ||
 			currentSort.value?.direction !== sort.direction ||
-			ratingFilterChanged ||
-			ageFilterChanged ||
-			twitterUserFilterChanged ||
-			pixaiTagFilterChanged
+			!filtersEqual(currentFilters.value, filters)
 		) {
 			pageCache.value.clear();
 			hasNextPage.value = true;
 			hasPrevPage.value = false;
 			currentSort.value = sort;
-			currentRatingFilter.value = ratingFilter;
-			currentAgeFilter.value = ageFilter;
-			currentTwitterUserFilter.value = twitterUserFilter;
-			currentPixAITagFilter.value = pixaiTagFilter;
+			currentFilters.value = filters;
 			effectivePage = 0;
 		}
 
@@ -136,41 +97,41 @@ export function useImages() {
 			const constraints = [];
 
 			// Add Twitter user filter if present
-			if (twitterUserFilter?.userId) {
+			if (filters.twitterUser.userId) {
 				constraints.push(
-					where('source.user.id_str', '==', twitterUserFilter.userId),
+					where('source.user.id_str', '==', filters.twitterUser.userId),
 				);
 			}
 
 			// Add rating filters if present
-			if (ratingFilter?.min !== null && ratingFilter?.min !== undefined) {
-				const ratingField = `moderations.${ratingFilter.provider}.result`;
-				constraints.push(where(ratingField, '>=', ratingFilter.min));
+			if (filters.rating.min !== null && filters.rating.min !== undefined) {
+				const ratingField = `moderations.${filters.rating.provider}.result`;
+				constraints.push(where(ratingField, '>=', filters.rating.min));
 			}
-			if (ratingFilter?.max !== null && ratingFilter?.max !== undefined) {
-				const ratingField = `moderations.${ratingFilter.provider}.result`;
-				constraints.push(where(ratingField, '<=', ratingFilter.max));
+			if (filters.rating.max !== null && filters.rating.max !== undefined) {
+				const ratingField = `moderations.${filters.rating.provider}.result`;
+				constraints.push(where(ratingField, '<=', filters.rating.max));
 			}
 
 			// Add age filters if present
-			if (ageFilter?.min !== null && ageFilter?.min !== undefined) {
-				const ageField = `ageEstimations.${ageFilter.provider}.main_character_age`;
-				constraints.push(where(ageField, '>=', ageFilter.min));
+			if (filters.age.min !== null && filters.age.min !== undefined) {
+				const ageField = `ageEstimations.${filters.age.provider}.main_character_age`;
+				constraints.push(where(ageField, '>=', filters.age.min));
 			}
-			if (ageFilter?.max !== null && ageFilter?.max !== undefined) {
-				const ageField = `ageEstimations.${ageFilter.provider}.main_character_age`;
-				constraints.push(where(ageField, '<=', ageFilter.max));
+			if (filters.age.max !== null && filters.age.max !== undefined) {
+				const ageField = `ageEstimations.${filters.age.provider}.main_character_age`;
+				constraints.push(where(ageField, '<=', filters.age.max));
 			}
 
 			// Add PixAI tag filter if present
-			if (pixaiTagFilter?.tag) {
-				const confidenceLevel = `${pixaiTagFilter.confidence}_confidence`;
-				const tagField = `tags.pixai.tag_list.${confidenceLevel}.${pixaiTagFilter.category}.${pixaiTagFilter.tag}`;
+			if (filters.pixaiTag?.tag) {
+				const confidenceLevel = `${filters.pixaiTag.confidence}_confidence`;
+				const tagField = `tags.pixai.tag_list.${confidenceLevel}.${filters.pixaiTag.category}.${filters.pixaiTag.tag}`;
 				constraints.push(where(tagField, '==', true));
 			}
 
 			// Add orderBy (skip when PixAI tag filter is active to avoid index requirements)
-			if (!pixaiTagFilter?.tag) {
+			if (!filters.pixaiTag?.tag) {
 				constraints.push(orderBy(sort.field, sort.direction));
 			}
 
