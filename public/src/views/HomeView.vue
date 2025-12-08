@@ -105,7 +105,7 @@ async function handlePageChange(newPage: number) {
 
 function getImageUrl(image: ImageDocument): string {
 	const IMAGE_BASE_URL =
-		'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
+		'https://matrix-images.hakatashi.com/hakataarchive/twitter/';
 	const filename = image.key ? image.key.split('/').pop() : image.id;
 	return IMAGE_BASE_URL + filename;
 }

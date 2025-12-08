@@ -16,7 +16,7 @@ const isFavorited = computed(() => isFavorite(props.image));
 const isSaving = ref(false);
 
 const IMAGE_BASE_URL =
-	'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
+	'https://matrix-images.hakatashi.com/hakataarchive/twitter/';
 
 const showLightbox = ref(false);
 const models = computed(() => Object.keys(props.image.captions || {}));

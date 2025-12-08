@@ -30,7 +30,7 @@ function goBack() {
 }
 
 const IMAGE_BASE_URL =
-	'https://matrix.hakatashi.com/images/hakataarchive/twitter/';
+	'https://matrix-images.hakatashi.com/hakataarchive/twitter/';
 
 const image = ref<ImageDocument | null>(null);
 const loading = ref(true);
