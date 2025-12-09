@@ -169,7 +169,9 @@ export function useFilterSync() {
 	}
 
 	// Update filters and reset page
-	async function updateFilters(newFilters: FiltersState | Partial<FiltersState>) {
+	async function updateFilters(
+		newFilters: FiltersState | Partial<FiltersState>,
+	) {
 		await router.push({
 			query: buildQuery(undefined, 0, newFilters),
 		});
