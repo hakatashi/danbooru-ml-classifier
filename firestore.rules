@@ -41,6 +41,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Allow read access to generated_novels for authenticated user
+    match /generated_novels/{novelId} {
+      allow read: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
+      allow create, update, delete: if false;
+    }
+
     // Default: deny all access
     match /{document=**} {
       allow read, write: if false;

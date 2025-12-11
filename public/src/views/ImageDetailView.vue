@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
-import {ChevronLeft, Heart} from 'lucide-vue-next';
+import {httpsCallable} from 'firebase/functions';
+import {BookOpen, ChevronLeft, Heart} from 'lucide-vue-next';
 import {computed, onMounted, ref} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import {useImages} from '../composables/useImages';
+import {functions} from '../firebase';
 import type {ImageDocument, TagData, TagList} from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
@@ -231,6 +233,62 @@ function handleTagClick(
 		},
 	});
 }
+
+// Novel generation
+const isGeneratingNovel = ref(false);
+const novelGenerationError = ref<string | null>(null);
+const generatedNovelId = ref<string | null>(null);
+
+async function generateNovel(
+	mode: 'image' | 'caption',
+	captionProvider?: 'joycaption' | 'minicpm',
+) {
+	if (!image.value || isGeneratingNovel.value) return;
+
+	isGeneratingNovel.value = true;
+	novelGenerationError.value = null;
+	generatedNovelId.value = null;
+
+	try {
+		const generateNovelFromImage = httpsCallable(
+			functions,
+			'generateNovelFromImage',
+			{
+				timeout: 540000, // 9 minutes (matches server-side timeout)
+			},
+		);
+		const result = await generateNovelFromImage({
+			imageId: image.value.id,
+			mode,
+			captionProvider,
+		});
+
+		const data = result.data as {success: boolean; novelId: string};
+		if (data.success) {
+			generatedNovelId.value = data.novelId;
+		}
+	} catch (err) {
+		console.error('Failed to generate novel:', err);
+		novelGenerationError.value =
+			err instanceof Error ? err.message : 'Failed to generate novel';
+	} finally {
+		isGeneratingNovel.value = false;
+	}
+}
+
+async function handleGenerateFromImage() {
+	await generateNovel('image');
+}
+
+async function handleGenerateFromCaption() {
+	// Use the first available caption provider
+	const provider = models.value[0] as 'joycaption' | 'minicpm' | undefined;
+	if (!provider) {
+		novelGenerationError.value = 'No captions available';
+		return;
+	}
+	await generateNovel('caption', provider);
+}
 </script>
 
 <template>
@@ -323,6 +381,65 @@ function handleTagClick(
 							</dd>
 						</div>
 					</dl>
+				</div>
+
+				<!-- Novel Generation -->
+				<div class="bg-white rounded-xl shadow-md p-4">
+					<h2 class="text-lg font-semibold text-gray-900 mb-4">
+						Novel Generation
+					</h2>
+
+					<!-- Generation Buttons -->
+					<div class="space-y-3">
+						<button
+							@click="handleGenerateFromImage"
+							:disabled="isGeneratingNovel"
+							class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						>
+							<BookOpen :size="20"/>
+							<span v-if="!isGeneratingNovel">Generate Novel from Image</span>
+							<span v-else>Generating...</span>
+						</button>
+
+						<button
+							@click="handleGenerateFromCaption"
+							:disabled="isGeneratingNovel || models.length === 0"
+							class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						>
+							<BookOpen :size="20"/>
+							<span v-if="!isGeneratingNovel">Generate Novel from Caption</span>
+							<span v-else>Generating...</span>
+						</button>
+					</div>
+
+					<!-- Progress indicator -->
+					<div v-if="isGeneratingNovel" class="mt-4">
+						<div class="flex items-center gap-2 text-sm text-gray-600">
+							<div
+								class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
+							></div>
+							<span>Generating novel... This may take several minutes.</span>
+						</div>
+					</div>
+
+					<!-- Error message -->
+					<div
+						v-if="novelGenerationError"
+						class="mt-4 bg-red-50 border border-red-200 rounded-lg p-3"
+					>
+						<p class="text-sm text-red-700">{{ novelGenerationError }}</p>
+					</div>
+
+					<!-- Success message -->
+					<div
+						v-if="generatedNovelId"
+						class="mt-4 bg-green-50 border border-green-200 rounded-lg p-3"
+					>
+						<p class="text-sm text-green-700">
+							Novel generated successfully! Novel ID:
+							<span class="font-mono">{{ generatedNovelId }}</span>
+						</p>
+					</div>
 				</div>
 
 				<!-- Twitter Source Information -->

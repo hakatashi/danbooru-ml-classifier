@@ -7,3 +7,4 @@ export * from './pixiv';
 export * from './danbooru';
 export * from './gelbooru';
 export * from './moderation-stats';
+export * from './novel-generator';
