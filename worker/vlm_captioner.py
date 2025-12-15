@@ -837,13 +837,49 @@ def process_images_with_joycaption(file_infos, db, media_mapping, generate_expla
     return processed_count
 
 
-def process_images_with_pixai(file_infos, db, media_mapping):
+def has_been_processed_by_any_model(db, s3_key, models_to_check):
+    """Check if an image has been processed by any of the specified models
+
+    Args:
+        db: Firestore database instance
+        s3_key: S3 key (e.g., "twitter/FVYuylQagAU2WHq.jpg")
+        models_to_check: List of model keys to check (e.g., ['minicpm', 'joycaption'])
+
+    Returns:
+        bool: True if processed by any model, False otherwise
+    """
+    doc_id = quote(s3_key, safe='')
+    doc_ref = db.collection('images').document(doc_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        return False
+
+    data = doc.to_dict()
+
+    # Check if any of the models have processed this image
+    for model_key in models_to_check:
+        if model_key in ['minicpm', 'joycaption']:
+            # Check for captions and moderations
+            if data.get('captions', {}).get(model_key) or data.get('moderations', {}).get(model_key):
+                return True
+        elif model_key == 'pixai':
+            # Check for tags
+            if data.get('tags', {}).get(model_key):
+                return True
+
+    return False
+
+
+def process_images_with_pixai(file_infos, db, media_mapping, processed_by_other_models=None):
     """Process batch of images with PixAI Tagger
 
     Args:
         file_infos: List of file info dicts with 's3_uri', 'key' fields
         db: Firestore database instance
         media_mapping: Twitter media ID to tweet metadata mapping
+        processed_by_other_models: List of model keys that have already processed images in this batch
+                                    (used to determine whether to continue processing during shutdown)
 
     Returns:
         int: Number of images successfully processed
@@ -863,9 +899,20 @@ def process_images_with_pixai(file_infos, db, media_mapping):
     try:
         for file_info in file_infos:
             # Check for shutdown request before processing next image
+            # For PixAI (lightweight processing), continue if image was processed by other models
             if _shutdown_requested:
-                print("\n✓ Shutdown requested. Stopping PixAI processing gracefully.")
-                break
+                # Check if this image was processed by any other model in this batch
+                was_processed = False
+                if processed_by_other_models:
+                    was_processed = has_been_processed_by_any_model(
+                        db, file_info['key'], processed_by_other_models
+                    )
+
+                if was_processed:
+                    print(f"\n⚠️  Shutdown requested, but {file_info['key']} was processed by other models. Continuing with PixAI...")
+                else:
+                    print(f"\n✓ Shutdown requested and {file_info['key']} wasn't processed yet. Stopping PixAI processing gracefully.")
+                    break
 
             # Download image just before processing
             local_path = LOCAL_IMAGE_DIR / Path(file_info['key']).name
@@ -1122,22 +1169,29 @@ def run_vlm_captioner(models=None, generate_explanation=False):
 
     # Process with selected models (download happens per-image)
     total_processed = 0
+    processed_models = []  # Track which models have processed images
 
     if 'joycaption' in models and not _shutdown_requested:
         print(f"\n=== Processing up to {len(files_to_process)} images with JoyCaption ===")
         count = process_images_with_joycaption(files_to_process, db, media_mapping, generate_explanation)
         total_processed += count
         print(f"JoyCaption processed {count} images")
+        if count > 0:
+            processed_models.append('joycaption')
 
     if 'minicpm' in models and not _shutdown_requested:
         print(f"\n=== Processing up to {len(files_to_process)} images with MiniCPM ===")
         count = process_images_with_minicpm(files_to_process, db, media_mapping, generate_explanation)
         total_processed += count
         print(f"MiniCPM processed {count} images")
+        if count > 0:
+            processed_models.append('minicpm')
 
-    if 'pixai' in models and not _shutdown_requested:
+    if 'pixai' in models:
+        # PixAI runs even during shutdown if other models have processed images
+        # Pass the list of processed models to determine behavior during shutdown
         print(f"\n=== Processing up to {len(files_to_process)} images with PixAI ===")
-        count = process_images_with_pixai(files_to_process, db, media_mapping)
+        count = process_images_with_pixai(files_to_process, db, media_mapping, processed_by_other_models=processed_models)
         total_processed += count
         print(f"PixAI processed {count} images")
 
@@ -1189,7 +1243,7 @@ if __name__ == "__main__":
         "--models",
         nargs="+",
         choices=list(MODELS.keys()),
-        default=["minicpm"],
+        default=["minicpm", "pixai"],
         help="Models to run (default: minicpm only). Can specify multiple models: --models minicpm joycaption"
     )
     parser.add_argument(
