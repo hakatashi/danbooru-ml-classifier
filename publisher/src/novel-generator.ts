@@ -24,6 +24,7 @@ interface GrokResponse {
 		prompt_tokens: number;
 		completion_tokens: number;
 		total_tokens: number;
+		reasoning_tokens?: number;
 	};
 }
 
@@ -36,18 +37,21 @@ interface NovelGenerationData {
 	imageId: string;
 	mode: 'caption' | 'image';
 	captionProvider?: 'joycaption' | 'minicpm';
+	model?: 'grok-4-1-fast-non-reasoning' | 'grok-4-1-fast-reasoning';
 }
 
 interface TokenUsage {
 	promptTokens: number;
 	completionTokens: number;
 	totalTokens: number;
+	reasoningTokens?: number;
 }
 
 interface NovelDocument {
 	imageId: string;
 	mode: 'caption' | 'image';
 	captionProvider: string;
+	model: string;
 	outline: string;
 	plot: string;
 	scenes: Scene[];
@@ -90,17 +94,19 @@ const remainingSceneTemplate = readFileSync(
  * Call Grok API with conversation history
  * @param {GrokMessage[]} messages - Conversation history
  * @param {string} apiKey - Grok API key
+ * @param {string} model - Model to use
  * @return {Promise<Object>} Generated text and token usage
  */
 const callGrok = async (
 	messages: GrokMessage[],
 	apiKey: string,
+	model = 'grok-4-1-fast-non-reasoning',
 ): Promise<{content: string; usage: TokenUsage}> => {
 	try {
 		const response = await axios.post<GrokResponse>(
 			'https://api.x.ai/v1/chat/completions',
 			{
-				model: 'grok-4-1-fast-non-reasoning',
+				model,
 				messages,
 				temperature: 0.7,
 			},
@@ -123,6 +129,11 @@ const callGrok = async (
 			totalTokens: response.data.usage.total_tokens,
 		};
 
+		// Add reasoning tokens if present (for reasoning models)
+		if (response.data.usage.reasoning_tokens !== undefined) {
+			usage.reasoningTokens = response.data.usage.reasoning_tokens;
+		}
+
 		return {content, usage};
 	} catch (err) {
 		error('Grok API error:', err);
@@ -141,6 +152,72 @@ const getImageUrl = (storageKey: string): string => {
 };
 
 /**
+ * Add token usage to total
+ * @param {TokenUsage} total - Total token usage
+ * @param {TokenUsage} usage - Usage to add
+ * @return {void}
+ */
+const addTokenUsage = (total: TokenUsage, usage: TokenUsage): void => {
+	total.promptTokens += usage.promptTokens;
+	total.completionTokens += usage.completionTokens;
+	total.totalTokens += usage.totalTokens;
+	if (usage.reasoningTokens !== undefined) {
+		total.reasoningTokens = (total.reasoningTokens || 0) + usage.reasoningTokens;
+	}
+};
+
+interface CallGrokOptions {
+	conversationHistories: GrokMessage[];
+	userMessage: string | Array<{type: string; image_url?: {url: string}; text?: string}>;
+	apiKey: string;
+	model: string;
+	totalUsage: TokenUsage;
+}
+
+/**
+ * Call Grok API and update conversation history and token usage
+ * @param {CallGrokOptions} options - Options
+ * @return {Promise<string>} Assistant's response content
+ */
+const callGrokAndUpdate = async (options: CallGrokOptions): Promise<string> => {
+	const {conversationHistories, userMessage, apiKey, model, totalUsage} = options;
+	conversationHistories.push({
+		role: 'user',
+		content: userMessage,
+	});
+	const result = await callGrok(conversationHistories, apiKey, model);
+	addTokenUsage(totalUsage, result.usage);
+	conversationHistories.push({
+		role: 'assistant',
+		content: result.content,
+	});
+	return result.content;
+};
+
+/**
+ * Clean scene content by removing lines starting with '#',
+ * collapsing multiple empty lines, and trimming whitespace
+ * @param {string} content - Raw scene content
+ * @return {string} Cleaned scene content
+ */
+const cleanSceneContent = (content: string): string => {
+	// Split into lines
+	const lines = content.split('\n');
+
+	// Remove lines starting with '#'
+	const filteredLines = lines.filter((line) => !line.trimStart().startsWith('#'));
+
+	// Join back and collapse multiple empty lines to single empty line
+	let cleaned = filteredLines.join('\n');
+	cleaned = cleaned.replace(/\n\n+/g, '\n\n');
+
+	// Trim leading and trailing whitespace
+	cleaned = cleaned.trim();
+
+	return cleaned;
+};
+
+/**
  * Generate novel from image
  * @param {NovelGenerationData} data - Generation data
  * @param {string} apiKey - Grok API key
@@ -151,7 +228,7 @@ const generateNovel = async (
 	apiKey: string,
 ): Promise<NovelDocument> => {
 	const db = getFirestore();
-	const {imageId, mode, captionProvider} = data;
+	const {imageId, mode, captionProvider, model = 'grok-4-1-fast-non-reasoning'} = data;
 
 	// Fetch image document
 	const imageDoc = await db.collection('images').doc(imageId).get();
@@ -170,6 +247,7 @@ const generateNovel = async (
 		promptTokens: 0,
 		completionTokens: 0,
 		totalTokens: 0,
+		reasoningTokens: 0,
 	};
 
 	// Step 1: Generate outline
@@ -188,86 +266,39 @@ const generateNovel = async (
 		}
 
 		const prompt = render(outlineFromCaptionTemplate, {caption});
-		conversationHistories.push({
-			role: 'user',
-			content: prompt,
-		});
-		const result = await callGrok(conversationHistories, apiKey);
-		outline = result.content;
-		totalUsage.promptTokens += result.usage.promptTokens;
-		totalUsage.completionTokens += result.usage.completionTokens;
-		totalUsage.totalTokens += result.usage.totalTokens;
-		conversationHistories.push({
-			role: 'assistant',
-			content: outline,
-		});
+		outline = await callGrokAndUpdate({conversationHistories, userMessage: prompt, apiKey, model, totalUsage});
 	} else {
 		// Get image URL
 		const imageUrl = getImageUrl(imageData.key);
-		conversationHistories.push({
-			role: 'user',
-			content: [
-				{
-					type: 'image_url',
-					image_url: {
-						url: imageUrl,
-					},
+		const imageMessages = [
+			{
+				type: 'image_url',
+				image_url: {
+					url: imageUrl,
 				},
-				{
-					type: 'text',
-					text: outlineFromImageTemplate,
-				},
-			],
-		});
-		const result = await callGrok(conversationHistories, apiKey);
-		outline = result.content;
-		totalUsage.promptTokens += result.usage.promptTokens;
-		totalUsage.completionTokens += result.usage.completionTokens;
-		totalUsage.totalTokens += result.usage.totalTokens;
-		conversationHistories.push({
-			role: 'assistant',
-			content: outline,
-		});
+			},
+			{
+				type: 'text',
+				text: outlineFromImageTemplate,
+			},
+		];
+		outline = await callGrokAndUpdate({conversationHistories, userMessage: imageMessages, apiKey, model, totalUsage});
 	}
 
 	info(`Generated outline: ${outline.substring(0, 100)}...`);
 
 	// Step 2: Generate plot
 	info('Generating plot');
-	conversationHistories.push({
-		role: 'user',
-		content: plotTemplate,
-	});
-	const plotResult = await callGrok(conversationHistories, apiKey);
-	const plot = plotResult.content;
-	totalUsage.promptTokens += plotResult.usage.promptTokens;
-	totalUsage.completionTokens += plotResult.usage.completionTokens;
-	totalUsage.totalTokens += plotResult.usage.totalTokens;
-	conversationHistories.push({
-		role: 'assistant',
-		content: plot,
-	});
+	const plot = await callGrokAndUpdate({conversationHistories, userMessage: plotTemplate, apiKey, model, totalUsage});
 	info(`Generated plot: ${plot.substring(0, 100)}...`);
 
 	// Step 3: Generate first scene
 	info('Generating first scene');
-	conversationHistories.push({
-		role: 'user',
-		content: firstSceneTemplate,
-	});
-	const firstSceneResult = await callGrok(conversationHistories, apiKey);
-	const firstSceneContent = firstSceneResult.content;
-	totalUsage.promptTokens += firstSceneResult.usage.promptTokens;
-	totalUsage.completionTokens += firstSceneResult.usage.completionTokens;
-	totalUsage.totalTokens += firstSceneResult.usage.totalTokens;
-	conversationHistories.push({
-		role: 'assistant',
-		content: firstSceneContent,
-	});
+	const firstSceneContent = await callGrokAndUpdate({conversationHistories, userMessage: firstSceneTemplate, apiKey, model, totalUsage});
 	const scenes: Scene[] = [
 		{
 			sceneNumber: 1,
-			content: firstSceneContent,
+			content: cleanSceneContent(firstSceneContent),
 		},
 	];
 
@@ -279,41 +310,42 @@ const generateNovel = async (
 			scene_number: sceneNumber,
 			next_scene_number: nextSceneNumber,
 		});
-		conversationHistories.push({
-			role: 'user',
-			content: remainingScenePrompt,
-		});
-		const sceneResult = await callGrok(conversationHistories, apiKey);
-		const sceneContent = sceneResult.content;
-		totalUsage.promptTokens += sceneResult.usage.promptTokens;
-		totalUsage.completionTokens += sceneResult.usage.completionTokens;
-		totalUsage.totalTokens += sceneResult.usage.totalTokens;
-		conversationHistories.push({
-			role: 'assistant',
-			content: sceneContent,
-		});
+		const sceneContent = await callGrokAndUpdate({conversationHistories, userMessage: remainingScenePrompt, apiKey, model, totalUsage});
 		scenes.push({
 			sceneNumber,
-			content: sceneContent,
+			content: cleanSceneContent(sceneContent),
 		});
 	}
 
 	// Calculate API costs
-	// grok-4-1-fast-non-reasoning pricing: $0.20/1M input tokens, $0.50/1M output tokens
-	const inputCost = (totalUsage.promptTokens / 1_000_000) * 0.20;
-	const outputCost = (totalUsage.completionTokens / 1_000_000) * 0.50;
-	const totalCost = inputCost + outputCost;
+	// Both grok-4-1-fast-non-reasoning and grok-4-1-fast-reasoning use the same pricing:
+	// $0.20/1M input tokens, $0.50/1M output tokens (reasoning tokens charged same as output)
+	const inputRate = 0.20;
+	const outputRate = 0.50;
 
+	const inputCost = (totalUsage.promptTokens / 1_000_000) * inputRate;
+	const outputCost = (totalUsage.completionTokens / 1_000_000) * outputRate;
+	// Reasoning tokens are charged at the same rate as output tokens
+	const reasoningCost = totalUsage.reasoningTokens
+		? (totalUsage.reasoningTokens / 1_000_000) * outputRate
+		: 0;
+	const totalCost = inputCost + outputCost + reasoningCost;
+
+	const reasoningInfo = totalUsage.reasoningTokens ? `, Reasoning: ${totalUsage.reasoningTokens}` : '';
 	info(
-		`Token usage - Prompt: ${totalUsage.promptTokens}, Completion: ${totalUsage.completionTokens}, Total: ${totalUsage.totalTokens}`,
+		`Token usage - Prompt: ${totalUsage.promptTokens}, Completion: ${totalUsage.completionTokens}${reasoningInfo}, Total: ${totalUsage.totalTokens}`,
 	);
-	info(`Estimated cost - Input: $${inputCost.toFixed(4)}, Output: $${outputCost.toFixed(4)}, Total: $${totalCost.toFixed(4)}`);
+	const costBreakdown = reasoningCost > 0
+		? `Input: $${inputCost.toFixed(4)}, Output: $${outputCost.toFixed(4)}, Reasoning: $${reasoningCost.toFixed(4)}, Total: $${totalCost.toFixed(4)}`
+		: `Input: $${inputCost.toFixed(4)}, Output: $${outputCost.toFixed(4)}, Total: $${totalCost.toFixed(4)}`;
+	info(`Estimated cost - ${costBreakdown}`);
 
 	// Create novel document
 	const novelDoc: NovelDocument = {
 		imageId,
 		mode,
 		captionProvider: mode === 'caption' && captionProvider ? captionProvider : '',
+		model,
 		outline,
 		plot,
 		scenes,
@@ -354,7 +386,7 @@ export const generateNovelFromImage = onCall(
 		}
 
 		const data = request.data as NovelGenerationData;
-		const {imageId, mode, captionProvider} = data;
+		const {imageId, mode, captionProvider, model} = data;
 
 		// Validate input
 		if (!imageId || typeof imageId !== 'string') {
@@ -380,6 +412,13 @@ export const generateNovelFromImage = onCall(
 			}
 		}
 
+		if (model && !['grok-4-1-fast-non-reasoning', 'grok-4-1-fast-reasoning'].includes(model)) {
+			throw new HttpsError(
+				'invalid-argument',
+				'model must be either "grok-4-1-fast-non-reasoning" or "grok-4-1-fast-reasoning"',
+			);
+		}
+
 		const db = getFirestore();
 
 		try {
@@ -389,6 +428,7 @@ export const generateNovelFromImage = onCall(
 				imageId,
 				mode,
 				captionProvider: mode === 'caption' && captionProvider ? captionProvider : '',
+				model: model || 'grok-4-1-fast-non-reasoning',
 				status: 'generating',
 				createdAt: FieldValue.serverTimestamp(),
 			});
