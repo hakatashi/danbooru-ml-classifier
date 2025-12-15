@@ -22,12 +22,30 @@ function onAuthChange(newUser: User | null) {
 		<header class="bg-white shadow-sm sticky top-0 z-40">
 			<div class="w-full px-4 sm:px-6 lg:px-8 py-4">
 				<div class="flex justify-between items-center">
-					<RouterLink
-						to="/"
-						class="text-2xl font-bold text-gray-900 hover:text-blue-600 transition-colors"
-					>
-						VLM Caption Viewer
-					</RouterLink>
+					<div class="flex items-center gap-6">
+						<RouterLink
+							to="/"
+							class="text-2xl font-bold text-gray-900 hover:text-blue-600 transition-colors"
+						>
+							VLM Caption Viewer
+						</RouterLink>
+						<nav class="flex gap-4">
+							<RouterLink
+								to="/"
+								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+								active-class="text-blue-600"
+							>
+								Gallery
+							</RouterLink>
+							<RouterLink
+								to="/novels"
+								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+								active-class="text-blue-600"
+							>
+								Novels
+							</RouterLink>
+						</nav>
+					</div>
 					<AuthButton @auth-change="onAuthChange"/>
 				</div>
 			</div>

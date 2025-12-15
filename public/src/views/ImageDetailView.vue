@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
+import {collection, getDocs, orderBy, query, where} from 'firebase/firestore';
 import {httpsCallable} from 'firebase/functions';
 import {BookOpen, ChevronLeft, Heart} from 'lucide-vue-next';
 import {computed, onMounted, ref} from 'vue';
@@ -7,8 +8,8 @@ import {useRoute, useRouter} from 'vue-router';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import {useImages} from '../composables/useImages';
-import {functions} from '../firebase';
-import type {ImageDocument, TagData, TagList} from '../types';
+import {db, functions} from '../firebase';
+import type {ImageDocument, NovelDocument, TagData, TagList} from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
 type TagCategory = 'character' | 'feature' | 'ip';
@@ -105,6 +106,9 @@ onMounted(async () => {
 			image.value = await getImageById(documentId);
 			if (!image.value) {
 				error.value = 'Image not found';
+			} else {
+				// Fetch generated novels for this image
+				await fetchGeneratedNovels();
 			}
 		} catch (e) {
 			error.value = (e as Error).message;
@@ -239,6 +243,31 @@ const isGeneratingNovel = ref(false);
 const novelGenerationError = ref<string | null>(null);
 const generatedNovelId = ref<string | null>(null);
 
+const generatedNovels = ref<NovelDocument[]>([]);
+const novelsLoading = ref(false);
+
+async function fetchGeneratedNovels() {
+	if (!image.value) return;
+
+	novelsLoading.value = true;
+	try {
+		const novelsQuery = query(
+			collection(db, 'generated_novels'),
+			where('imageId', '==', image.value.id),
+			orderBy('createdAt', 'desc'),
+		);
+		const snapshot = await getDocs(novelsQuery);
+		generatedNovels.value = snapshot.docs.map((doc) => ({
+			id: doc.id,
+			...doc.data(),
+		})) as NovelDocument[];
+	} catch (err) {
+		console.error('Failed to fetch generated novels:', err);
+	} finally {
+		novelsLoading.value = false;
+	}
+}
+
 async function generateNovel(
 	mode: 'image' | 'caption',
 	captionProvider?: 'joycaption' | 'minicpm',
@@ -261,11 +290,14 @@ async function generateNovel(
 			imageId: image.value.id,
 			mode,
 			captionProvider,
+			model: 'grok-4-1-fast-reasoning',
 		});
 
 		const data = result.data as {success: boolean; novelId: string};
 		if (data.success) {
 			generatedNovelId.value = data.novelId;
+			// Refetch novels list
+			await fetchGeneratedNovels();
 		}
 	} catch (err) {
 		console.error('Failed to generate novel:', err);
@@ -288,6 +320,10 @@ async function handleGenerateFromCaption() {
 		return;
 	}
 	await generateNovel('caption', provider);
+}
+
+function viewNovel(novelId: string) {
+	router.push(`/novels/${novelId}`);
 }
 </script>
 
@@ -439,6 +475,73 @@ async function handleGenerateFromCaption() {
 							Novel generated successfully! Novel ID:
 							<span class="font-mono">{{ generatedNovelId }}</span>
 						</p>
+					</div>
+
+					<!-- Generated Novels List -->
+					<div
+						v-if="generatedNovels.length > 0"
+						class="mt-6 border-t border-gray-200 pt-4"
+					>
+						<h3 class="text-md font-semibold text-gray-900 mb-3">
+							Generated Novels ({{ generatedNovels.length }})
+						</h3>
+						<div v-if="novelsLoading" class="flex justify-center py-4">
+							<div
+								class="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"
+							></div>
+						</div>
+						<div v-else class="space-y-2">
+							<button
+								v-for="novel in generatedNovels"
+								:key="novel.id"
+								@click="viewNovel(novel.id)"
+								class="w-full text-left bg-gray-50 hover:bg-gray-100 rounded-lg p-3 transition-colors group"
+							>
+								<div class="flex items-start justify-between">
+									<div class="flex-1">
+										<div class="flex items-center gap-2 mb-1">
+											<span
+												:class="[
+													'px-2 py-0.5 rounded text-xs font-medium',
+													novel.status === 'completed'
+														? 'bg-green-100 text-green-800'
+														: novel.status === 'generating'
+															? 'bg-blue-100 text-blue-800'
+															: 'bg-red-100 text-red-800',
+												]"
+											>
+												{{ novel.status }}
+											</span>
+											<span class="text-xs text-gray-500">
+												{{ novel.mode === 'image' ? 'From Image' : `From ${novel.captionProvider}` }}
+											</span>
+										</div>
+										<p class="text-sm text-gray-700 line-clamp-2">
+											{{ novel.scenes[0]?.content.substring(0, 150) }}...
+										</p>
+										<div
+											class="flex items-center gap-3 mt-2 text-xs text-gray-500"
+										>
+											<span>{{ novel.scenes.length }}scenes</span>
+											<span>•</span>
+											<span
+												>{{ new Date(novel.createdAt.seconds * 1000).toLocaleDateString() }}</span
+											>
+											<span v-if="novel.estimatedCost">•</span>
+											<span
+												v-if="novel.estimatedCost"
+												class="text-green-600 font-medium"
+											>
+												${{ novel.estimatedCost.totalCost.toFixed(4) }}
+											</span>
+										</div>
+									</div>
+									<div class="ml-2 text-gray-400 group-hover:text-gray-600">
+										→
+									</div>
+								</div>
+							</button>
+						</div>
 					</div>
 				</div>
 

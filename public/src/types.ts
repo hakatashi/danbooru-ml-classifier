@@ -142,3 +142,28 @@ export interface ImageDocument {
 	favorites?: FavoritesData;
 	source?: TwitterSourceData;
 }
+
+export interface NovelDocument {
+	id: string;
+	imageId: string;
+	mode: 'caption' | 'image';
+	captionProvider: string;
+	model: string;
+	outline: string;
+	plot: string;
+	scenes: Array<{sceneNumber: number; content: string}>;
+	createdAt: {seconds: number; nanoseconds: number};
+	status: 'generating' | 'completed' | 'failed';
+	error?: string;
+	tokenUsage: {
+		promptTokens: number;
+		completionTokens: number;
+		totalTokens: number;
+		reasoningTokens?: number;
+	};
+	estimatedCost: {
+		inputCost: number;
+		outputCost: number;
+		totalCost: number;
+	};
+}

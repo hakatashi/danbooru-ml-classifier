@@ -31,7 +31,13 @@
 		}
 	},
 	"files": {
-		"includes": ["**", "!**/node_modules", "!**/dist"]
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/dist",
+			"!src/views/HomeView.vue",
+			"!src/components/FilterBar.vue"
+		]
 	},
 	"javascript": {
 		"formatter": {
