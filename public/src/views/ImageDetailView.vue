@@ -334,7 +334,7 @@ function viewNovel(novelId: string) {
 			@click="goBack"
 			class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
 		>
-			<ChevronLeft :size="20"/>
+			<ChevronLeft :size="20" />
 			Back to Gallery
 		</button>
 
@@ -432,7 +432,7 @@ function viewNovel(novelId: string) {
 							:disabled="isGeneratingNovel"
 							class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						>
-							<BookOpen :size="20"/>
+							<BookOpen :size="20" />
 							<span v-if="!isGeneratingNovel">Generate Novel from Image</span>
 							<span v-else>Generating...</span>
 						</button>
@@ -442,7 +442,7 @@ function viewNovel(novelId: string) {
 							:disabled="isGeneratingNovel || models.length === 0"
 							class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						>
-							<BookOpen :size="20"/>
+							<BookOpen :size="20" />
 							<span v-if="!isGeneratingNovel">Generate Novel from Caption</span>
 							<span v-else>Generating...</span>
 						</button>
@@ -805,16 +805,14 @@ function viewNovel(novelId: string) {
 							<h3 class="font-semibold text-gray-900 capitalize">
 								{{ model }}
 							</h3>
-							<div class="flex items-center gap-2">
-								<span
-									:class="[
+							<div class="flex items-center gap-2"><span
+								:class="[
 										getRatingColorClass(image.moderations?.[model]?.result ?? null),
 										'px-2 py-0.5 rounded text-white text-xs font-medium'
 									]"
-								>
-									Rating: {{ image.moderations?.[model]?.result ?? 'N/A' }}
-								</span>
-							</div>
+							>
+								Rating: {{ image.moderations?.[model]?.result ?? 'N/A' }}
+							</span></div>
 						</div>
 						<p class="text-xs text-gray-500 mt-1">
 							{{ image.captions?.[model]?.metadata?.repository || 'Unknown model' }}

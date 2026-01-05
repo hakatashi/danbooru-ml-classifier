@@ -147,7 +147,7 @@ function viewImage(imageId: string) {
 							v-else
 							class="w-full h-full flex items-center justify-center text-gray-400"
 						>
-							<BookOpen :size="48"/>
+							<BookOpen :size="48" />
 						</div>
 					</div>
 
@@ -191,7 +191,7 @@ function viewImage(imageId: string) {
 						<!-- Stats Grid -->
 						<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 							<div class="flex items-center gap-2 text-sm">
-								<Layers :size="16" class="text-gray-400"/>
+								<Layers :size="16" class="text-gray-400" />
 								<div>
 									<div class="text-gray-500 text-xs">Scenes</div>
 									<div class="font-semibold text-gray-900">
@@ -201,7 +201,7 @@ function viewImage(imageId: string) {
 							</div>
 
 							<div class="flex items-center gap-2 text-sm">
-								<BookOpen :size="16" class="text-gray-400"/>
+								<BookOpen :size="16" class="text-gray-400" />
 								<div>
 									<div class="text-gray-500 text-xs">Tokens</div>
 									<div class="font-semibold text-gray-900">
@@ -211,7 +211,7 @@ function viewImage(imageId: string) {
 							</div>
 
 							<div class="flex items-center gap-2 text-sm">
-								<Coins :size="16" class="text-gray-400"/>
+								<Coins :size="16" class="text-gray-400" />
 								<div>
 									<div class="text-gray-500 text-xs">Cost</div>
 									<div class="font-semibold text-green-600">
@@ -221,7 +221,7 @@ function viewImage(imageId: string) {
 							</div>
 
 							<div class="flex items-center gap-2 text-sm">
-								<Calendar :size="16" class="text-gray-400"/>
+								<Calendar :size="16" class="text-gray-400" />
 								<div>
 									<div class="text-gray-500 text-xs">Created</div>
 									<div class="font-semibold text-gray-900">
@@ -250,7 +250,7 @@ function viewImage(imageId: string) {
 			v-else
 			class="bg-gray-50 border border-gray-200 rounded-xl p-12 text-center"
 		>
-			<BookOpen :size="48" class="mx-auto text-gray-400 mb-4"/>
+			<BookOpen :size="48" class="mx-auto text-gray-400 mb-4" />
 			<p class="text-gray-600 text-lg">No novels have been generated yet</p>
 		</div>
 	</div>

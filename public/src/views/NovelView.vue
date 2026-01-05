@@ -123,7 +123,7 @@ function getModelDisplayName(modelName: string): string {
 					@click="goBackToImage"
 					class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900"
 				>
-					<ChevronLeft :size="20"/>
+					<ChevronLeft :size="20" />
 					Back to Image Details
 				</button>
 
