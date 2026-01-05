@@ -34,7 +34,7 @@ function handleKeydown(event: KeyboardEvent) {
 				@click="emit('close')"
 				class="absolute top-4 right-4 p-2 text-white/80 hover:text-white transition-colors"
 			>
-				<X :size="32"/>
+				<X :size="32" />
 			</button>
 			<img
 				:src="src"

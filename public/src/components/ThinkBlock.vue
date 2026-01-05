@@ -78,8 +78,7 @@ function isExpanded(index: number) {
 	<div class="whitespace-pre-wrap">
 		<template v-for="(part, i) in parsedContent" :key="i">
 			<span v-if="part.type === 'text'"
-				>{{ part.content
-				}}
+				>{{ part.content }}
 				<span
 					v-if="i < parsedContent.length - 1 && parsedContent[i + 1]?.type === 'text'"
 				> </span></span

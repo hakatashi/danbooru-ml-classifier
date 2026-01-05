@@ -110,7 +110,7 @@ async function handleToggleFavorite(event: Event) {
 				]"
 				:title="isFavorited ? 'Remove from favorites' : 'Add to favorites'"
 			>
-				<Heart :size="20" :fill="isFavorited ? 'currentColor' : 'none'"/>
+				<Heart :size="20" :fill="isFavorited ? 'currentColor' : 'none'" />
 			</button>
 			<!-- Stacked ratings -->
 			<div class="absolute top-3 right-3 flex flex-col gap-1.5">
@@ -145,9 +145,7 @@ async function handleToggleFavorite(event: Event) {
 					{{ filename }}
 				</RouterLink>
 				<span class="bg-gray-100 px-2 py-0.5 rounded text-xs"
-					>{{
-					image.type || 'unknown'
-				}}</span
+					>{{ image.type || 'unknown' }}</span
 				>
 			</div>
 

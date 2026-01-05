@@ -46,13 +46,13 @@ function onAuthChange(newUser: User | null) {
 							</RouterLink>
 						</nav>
 					</div>
-					<AuthButton @auth-change="onAuthChange"/>
+					<AuthButton @auth-change="onAuthChange" />
 				</div>
 			</div>
 		</header>
 
 		<main class="w-full px-4 sm:px-6 lg:px-8 py-6">
-			<RouterView :user="user"/>
+			<RouterView :user="user" />
 		</main>
 	</div>
 </template>
