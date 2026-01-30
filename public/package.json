@@ -17,7 +17,7 @@
 		"lucide-vue-next": "^0.563.0",
 		"tailwindcss": "^4.1.18",
 		"vue": "^3.5.27",
-		"vue-router": "^4.6.4"
+		"vue-router": "^5.0.1"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.3.13",
