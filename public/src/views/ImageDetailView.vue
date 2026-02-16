@@ -805,14 +805,16 @@ function viewNovel(novelId: string) {
 							<h3 class="font-semibold text-gray-900 capitalize">
 								{{ model }}
 							</h3>
-							<div class="flex items-center gap-2"><span
-								:class="[
+							<div class="flex items-center gap-2">
+								<span
+									:class="[
 										getRatingColorClass(image.moderations?.[model]?.result ?? null),
 										'px-2 py-0.5 rounded text-white text-xs font-medium'
 									]"
-							>
-								Rating: {{ image.moderations?.[model]?.result ?? 'N/A' }}
-							</span></div>
+								>
+									Rating: {{ image.moderations?.[model]?.result ?? 'N/A' }}
+								</span>
+							</div>
 						</div>
 						<p class="text-xs text-gray-500 mt-1">
 							{{ image.captions?.[model]?.metadata?.repository || 'Unknown model' }}
