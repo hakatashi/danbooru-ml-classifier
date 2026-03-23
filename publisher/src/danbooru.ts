@@ -31,7 +31,7 @@ export const fetchDanbooruDailyRankings = async (): Promise<void> => {
 		console.log(`[Danbooru] Fetching ranking page ${page + 1}/100...`);
 		await sleep(5000);
 
-		let posts: Record<string, unknown>[];
+		let posts: Record<string, unknown>[] = [];
 		try {
 			const {data, status} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
 				params: {
@@ -94,8 +94,8 @@ export const fetchDanbooruDailyRankings = async (): Promise<void> => {
 			console.log(`[Danbooru] Downloading post ${postId}...`);
 			await sleep(1000);
 
-			let imageBuffer: Uint8Array;
-			let contentType: string;
+			let imageBuffer: Uint8Array = new Uint8Array();
+			let contentType = '';
 			try {
 				const response = await axios.get(url, {responseType: 'arraybuffer'});
 				imageBuffer = new Uint8Array(response.data as ArrayBuffer);
@@ -106,9 +106,9 @@ export const fetchDanbooruDailyRankings = async (): Promise<void> => {
 			}
 
 			const dirPath = path.join(IMAGE_CACHE_DIR, 'danbooru');
-			fs.mkdirSync(dirPath, {recursive: true});
+			await fs.promises.mkdir(dirPath, {recursive: true});
 			const filePath = path.join(dirPath, filename);
-			fs.writeFileSync(filePath, imageBuffer);
+			await fs.promises.writeFile(filePath, imageBuffer);
 			console.log(`[Danbooru] Saved ${filename} to ${filePath}`);
 
 			await imagesCollection.updateOne(

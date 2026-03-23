@@ -8,7 +8,7 @@ import {getDb} from './db';
 
 // Gelbooru is behind Cloudflare which blocks axios (JA3 fingerprint).
 // Use the built-in fetch (undici) which is accepted.
-const gelbooruFetch = async (url: string): Promise<Response> => fetch(url, {
+const gelbooruFetch = (url: string): Promise<Response> => fetch(url, {
 	headers: {
 		'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 		Accept: 'application/json, text/plain, */*',
@@ -38,7 +38,7 @@ export const fetchGelbooruDailyImages = async (): Promise<void> => {
 		console.log(`[Gelbooru] Fetching page ${page + 1}/20...`);
 		await sleep(10000);
 
-		let posts: Record<string, unknown>[];
+		let posts: Record<string, unknown>[] = [];
 		try {
 			const qs = querystring.stringify({
 				page: 'dapi',
@@ -105,8 +105,8 @@ export const fetchGelbooruDailyImages = async (): Promise<void> => {
 			console.log(`[Gelbooru] Downloading post ${postId}...`);
 			await sleep(1000);
 
-			let imageBuffer: Uint8Array;
-			let contentType: string;
+			let imageBuffer: Uint8Array = new Uint8Array();
+			let contentType = '';
 			try {
 				const response = await axios.get(url, {responseType: 'arraybuffer'});
 				imageBuffer = new Uint8Array(response.data as ArrayBuffer);
@@ -117,9 +117,9 @@ export const fetchGelbooruDailyImages = async (): Promise<void> => {
 			}
 
 			const dirPath = path.join(IMAGE_CACHE_DIR, 'gelbooru');
-			fs.mkdirSync(dirPath, {recursive: true});
+			await fs.promises.mkdir(dirPath, {recursive: true});
 			const filePath = path.join(dirPath, filename);
-			fs.writeFileSync(filePath, imageBuffer);
+			await fs.promises.writeFile(filePath, imageBuffer);
 			console.log(`[Gelbooru] Saved ${filename} to ${filePath}`);
 
 			await imagesCollection.updateOne(

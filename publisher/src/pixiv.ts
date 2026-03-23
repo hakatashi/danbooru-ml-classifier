@@ -81,8 +81,8 @@ const downloadPixivArtwork = async (
 		console.log(`[Pixiv] Downloading artwork ${artworkId} page ${page}...`);
 		await sleep(2000);
 
-		let imageBuffer: Uint8Array;
-		let contentType: string;
+		let imageBuffer: Uint8Array = new Uint8Array();
+		let contentType = '';
 		try {
 			const response = await axios.get(url, {
 				responseType: 'arraybuffer',
@@ -100,9 +100,9 @@ const downloadPixivArtwork = async (
 		}
 
 		const dirPath = path.join(IMAGE_CACHE_DIR, 'pixiv');
-		fs.mkdirSync(dirPath, {recursive: true});
+		await fs.promises.mkdir(dirPath, {recursive: true});
 		const filePath = path.join(dirPath, filename);
-		fs.writeFileSync(filePath, imageBuffer);
+		await fs.promises.writeFile(filePath, imageBuffer);
 		console.log(`[Pixiv] Saved ${filename} to ${filePath}`);
 
 		await imagesCollection.updateOne(
@@ -153,7 +153,7 @@ export const fetchPixivDailyRankings = async (): Promise<void> => {
 			console.log(`[Pixiv] Fetching ${mode} ranking page ${page + 1}/${pageCount}...`);
 			await sleep(10000);
 
-			let data: {contents: Record<string, unknown>[], date: string};
+			let data: {contents: Record<string, unknown>[], date: string} = {contents: [], date: ''};
 			try {
 				const response = await axios.get('https://www.pixiv.net/ranking.php', {
 					params: {

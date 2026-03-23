@@ -33,6 +33,7 @@ const COLLECTIONS = COLLECTIONS_ENV ? COLLECTIONS_ENV.split(',').map((s) => s.tr
 /**
  * Recursively convert Firestore Timestamps to JS Date objects.
  */
+// eslint-disable-next-line valid-jsdoc
 const convertTimestamps = (value: unknown): unknown => {
 	if (value instanceof Timestamp) {
 		return value.toDate();
@@ -55,6 +56,7 @@ const convertTimestamps = (value: unknown): unknown => {
  * Firestore document IDs become MongoDB `_id` fields.
  * Uses cursor-based pagination to handle arbitrarily large collections.
  */
+// eslint-disable-next-line valid-jsdoc
 const importCollection = async (
 	firestore: admin.firestore.Firestore,
 	mongo: Db,
@@ -69,7 +71,7 @@ const importCollection = async (
 
 	while (true) {
 		const paginatedQuery: admin.firestore.Query<admin.firestore.DocumentData> =
-			lastDoc !== null ? query.startAfter(lastDoc) : query;
+			lastDoc === null ? query : query.startAfter(lastDoc);
 		const snapshot: admin.firestore.QuerySnapshot<admin.firestore.DocumentData> =
 			await paginatedQuery.get();
 
@@ -107,6 +109,7 @@ const importCollection = async (
 const main = async (): Promise<void> => {
 	if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
 		console.error('GOOGLE_APPLICATION_CREDENTIALS is not set');
+		// eslint-disable-next-line no-process-exit, node/no-process-exit
 		process.exit(1);
 	}
 
@@ -137,5 +140,6 @@ const main = async (): Promise<void> => {
 
 main().catch((error) => {
 	console.error('Fatal error:', error);
+	// eslint-disable-next-line no-process-exit, node/no-process-exit
 	process.exit(1);
 });

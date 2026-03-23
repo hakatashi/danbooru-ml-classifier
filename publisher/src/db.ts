@@ -9,8 +9,10 @@ export const getDb = async (): Promise<Db> => {
 	if (db !== null) {
 		return db;
 	}
+	// eslint-disable-next-line require-atomic-updates
 	client = new MongoClient(MONGODB_URI);
 	await client.connect();
+	// eslint-disable-next-line require-atomic-updates
 	db = client.db(MONGODB_DB);
 	return db;
 };
@@ -18,6 +20,7 @@ export const getDb = async (): Promise<Db> => {
 export const closeDb = async (): Promise<void> => {
 	if (client !== null) {
 		await client.close();
+		// eslint-disable-next-line require-atomic-updates
 		client = null;
 		db = null;
 	}
