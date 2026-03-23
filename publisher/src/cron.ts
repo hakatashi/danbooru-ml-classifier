@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import cron from 'node-cron';
-import {closeDb} from './db';
 import {fetchDanbooruDailyRankings} from './danbooru';
+import {closeDb} from './db';
 import {fetchGelbooruDailyImages} from './gelbooru';
 import {fetchPixivDailyRankings} from './pixiv';
 

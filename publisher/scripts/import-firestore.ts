@@ -15,7 +15,8 @@
 
 import * as admin from 'firebase-admin';
 import {getFirestore, Timestamp} from 'firebase-admin/firestore';
-import {MongoClient, type Db, type Document} from 'mongodb';
+import {MongoClient} from 'mongodb';
+import type {Db, Document} from 'mongodb';
 
 type FirestoreDoc = Document & {_id: string};
 
@@ -62,7 +63,7 @@ const importCollection = async (
 	console.log(`\n[${collectionName}] Starting import...`);
 
 	const mongoCollection = mongo.collection<FirestoreDoc>(collectionName);
-	let query = firestore.collection(collectionName).orderBy('__name__').limit(BATCH_SIZE);
+	const query = firestore.collection(collectionName).orderBy('__name__').limit(BATCH_SIZE);
 	let totalImported = 0;
 	let lastDoc: admin.firestore.QueryDocumentSnapshot | null = null;
 

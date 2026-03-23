@@ -1,6 +1,5 @@
 import fs from 'fs';
-import path from 'path';
-import {extname} from 'path';
+import path, {extname} from 'path';
 import axios from './axios';
 import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';

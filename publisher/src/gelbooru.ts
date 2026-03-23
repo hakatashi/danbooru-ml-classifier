@@ -1,10 +1,19 @@
 import fs from 'fs';
-import path from 'path';
-import {extname} from 'path';
+import path, {extname} from 'path';
+import querystring from 'querystring';
 import axios from './axios';
 import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';
 import {getDb} from './db';
+
+// Gelbooru is behind Cloudflare which blocks axios (JA3 fingerprint).
+// Use the built-in fetch (undici) which is accepted.
+const gelbooruFetch = async (url: string): Promise<Response> => fetch(url, {
+	headers: {
+		'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+		Accept: 'application/json, text/plain, */*',
+	},
+});
 
 const SUPPORTED_EXTENSIONS = ['.jpg', '.png', '.gif', '.tiff', '.jpeg'];
 
@@ -31,27 +40,26 @@ export const fetchGelbooruDailyImages = async (): Promise<void> => {
 
 		let posts: Record<string, unknown>[];
 		try {
-			const {data, status} = await axios.get('https://gelbooru.com/index.php', {
-				params: {
-					page: 'dapi',
-					s: 'post',
-					q: 'index',
-					tags: 'score:>1',
-					limit: '100',
-					pid: page + 1,
-					user_id: gelbooruApiUser,
-					api_key: gelbooruApiKey,
-					json: '1',
-				},
-				validateStatus: null,
+			const qs = querystring.stringify({
+				page: 'dapi',
+				s: 'post',
+				q: 'index',
+				tags: 'score:>1',
+				limit: 100,
+				pid: page,
+				user_id: gelbooruApiUser,
+				api_key: gelbooruApiKey,
+				json: 1,
 			});
+			const response = await gelbooruFetch(`https://gelbooru.com/index.php?${qs}`);
 
-			if (status !== 200) {
-				console.warn(`[Gelbooru] Failed to fetch page ${page + 1} (status = ${status})`);
+			if (!response.ok) {
+				console.warn(`[Gelbooru] Failed to fetch page ${page + 1} (status = ${response.status})`);
 				continue;
 			}
 
-			posts = (data as {post: Record<string, unknown>[]})?.post;
+			const data = await response.json() as {post: Record<string, unknown>[]};
+			posts = data?.post;
 		} catch (error) {
 			console.error(`[Gelbooru] Error fetching page ${page + 1}:`, error);
 			continue;

@@ -1,4 +1,5 @@
-import {MongoClient, type Db} from 'mongodb';
+import {MongoClient} from 'mongodb';
+import type {Db} from 'mongodb';
 import {MONGODB_DB, MONGODB_URI} from './config';
 
 let client: MongoClient | null = null;
