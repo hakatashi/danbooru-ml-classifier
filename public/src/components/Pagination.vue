@@ -23,6 +23,7 @@ function next() {
 <template>
 	<div class="flex justify-center items-center gap-4 py-6">
 		<button
+			type="button"
 			@click="prev"
 			:disabled="!canGoPrev"
 			:class="[
@@ -34,6 +35,7 @@ function next() {
 		>
 			<span class="flex items-center gap-2">
 				<svg
+					aria-hidden="true"
 					class="w-5 h-5"
 					fill="none"
 					stroke="currentColor"
@@ -55,6 +57,7 @@ function next() {
 		</span>
 
 		<button
+			type="button"
 			@click="next"
 			:disabled="!canGoNext"
 			:class="[
@@ -67,6 +70,7 @@ function next() {
 			<span class="flex items-center gap-2">
 				Next
 				<svg
+					aria-hidden="true"
 					class="w-5 h-5"
 					fill="none"
 					stroke="currentColor"

@@ -99,6 +99,7 @@ async function handleToggleFavorite(event: Event) {
 			>
 			<!-- Favorite button (top-left) -->
 			<button
+				type="button"
 				@click="handleToggleFavorite"
 				:disabled="isSaving"
 				:class="[
@@ -152,6 +153,7 @@ async function handleToggleFavorite(event: Event) {
 			<div class="flex gap-1.5 mb-2 flex-wrap">
 				<button
 					v-for="model in models"
+					type="button"
 					:key="model"
 					:class="[
 						'px-2 py-1 text-xs font-medium rounded transition-colors',
