@@ -8,7 +8,12 @@
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "cron": "node lib/src/cron.js",
+    "run:pixiv": "node lib/src/cron.js --run pixiv",
+    "run:danbooru": "node lib/src/cron.js --run danbooru",
+    "run:gelbooru": "node lib/src/cron.js --run gelbooru",
+    "run:all": "node lib/src/cron.js --run all"
   },
   "engines": {
     "node": "20"
@@ -20,20 +25,25 @@
     "axios": "^1.13.5",
     "axios-retry": "^3.6.0",
     "dayjs": "^1.11.9",
+    "dotenv": "^16.5.0",
     "ejs": "^3.1.10",
     "firebase-admin": "^11.8.0",
     "firebase-functions": "^4.3.1",
     "google-auth-library": "^9.0.0",
-    "lodash": "^4.17.23"
+    "lodash": "^4.17.23",
+    "mongodb": "^6.17.0",
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "@hakatashi/eslint-config": "^1.20.0",
+    "@types/node-cron": "^3.0.11",
     "@typescript-eslint/eslint-plugin": "^5.12.0",
     "@typescript-eslint/parser": "^5.12.0",
     "eslint": "^8.9.0",
     "eslint-config-google": "^0.14.0",
     "eslint-plugin-import": "^2.25.4",
     "firebase-functions-test": "^3.1.0",
+    "ts-node": "^10.9.2",
     "typescript": "^4.9.0"
   },
   "private": true
