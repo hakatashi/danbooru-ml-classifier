@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path, {extname} from 'path';
 import querystring from 'querystring';
-import axios from './axios';
 import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';
 import {getDb} from './db';
@@ -12,6 +11,7 @@ const gelbooruFetch = (url: string): Promise<Response> => fetch(url, {
 	headers: {
 		'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 		Accept: 'application/json, text/plain, */*',
+		Referer: 'https://gelbooru.com/',
 	},
 });
 
@@ -108,9 +108,13 @@ export const fetchGelbooruDailyImages = async (): Promise<void> => {
 			let imageBuffer: Uint8Array = new Uint8Array();
 			let contentType = '';
 			try {
-				const response = await axios.get(url, {responseType: 'arraybuffer'});
-				imageBuffer = new Uint8Array(response.data as ArrayBuffer);
-				contentType = String(response.headers['content-type'] ?? 'application/octet-stream');
+				const response = await gelbooruFetch(url);
+				if (!response.ok) {
+					console.error(`[Gelbooru] Error downloading post ${postId} (status = ${response.status})`);
+					continue;
+				}
+				imageBuffer = new Uint8Array(await response.arrayBuffer());
+				contentType = response.headers.get('content-type') ?? 'application/octet-stream';
 			} catch (error) {
 				console.error(`[Gelbooru] Error downloading post ${postId}:`, error);
 				continue;
