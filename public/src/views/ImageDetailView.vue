@@ -331,6 +331,7 @@ function viewNovel(novelId: string) {
 	<div>
 		<!-- Back link -->
 		<button
+			type="button"
 			@click="goBack"
 			class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
 		>
@@ -366,6 +367,7 @@ function viewNovel(novelId: string) {
 					>
 					<!-- Favorite button overlay -->
 					<button
+						type="button"
 						@click="handleToggleFavorite"
 						:disabled="isSavingFavorite"
 						:class="[
@@ -428,6 +430,7 @@ function viewNovel(novelId: string) {
 					<!-- Generation Buttons -->
 					<div class="space-y-3">
 						<button
+							type="button"
 							@click="handleGenerateFromImage"
 							:disabled="isGeneratingNovel"
 							class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -438,6 +441,7 @@ function viewNovel(novelId: string) {
 						</button>
 
 						<button
+							type="button"
 							@click="handleGenerateFromCaption"
 							:disabled="isGeneratingNovel || models.length === 0"
 							class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -492,6 +496,7 @@ function viewNovel(novelId: string) {
 						</div>
 						<div v-else class="space-y-2">
 							<button
+								type="button"
 								v-for="novel in generatedNovels"
 								:key="novel.id"
 								@click="viewNovel(novel.id)"
@@ -683,7 +688,7 @@ function viewNovel(novelId: string) {
 								class="space-y-3"
 							>
 								<div
-									v-for="character in image.ageEstimations?.[model]?.result.characters ?? []"
+									v-for="character in (image.ageEstimations?.[model]?.result?.characters ?? [])"
 									:key="character.id"
 									class="bg-gray-50 rounded-lg p-3"
 								>
@@ -768,6 +773,7 @@ function viewNovel(novelId: string) {
 
 						<div v-if="image.tags?.[model]" class="flex flex-wrap gap-2">
 							<button
+								type="button"
 								v-for="tag in getFilteredTags(image.tags[model])"
 								:key="`${tag.category}-${tag.name}-${tag.confidence}`"
 								@click="handleTagClick(tag.name, tag.category, tag.confidence)"
