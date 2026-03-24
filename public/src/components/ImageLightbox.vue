@@ -65,6 +65,7 @@ function handleKeydown(event: KeyboardEvent) {
 			ref="backdrop"
 		>
 			<button
+				type="button"
 				@click="handleClose"
 				class="absolute top-4 right-4 p-2 text-white/80 hover:text-white transition-colors z-10"
 			>

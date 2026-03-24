@@ -85,10 +85,12 @@ function isExpanded(index: number) {
 			>
 			<div v-else class="my-2">
 				<button
+					type="button"
 					@click="toggleBlock(part.index)"
 					class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-md transition-colors"
 				>
 					<svg
+						aria-hidden="true"
 						:class="[
 							'w-3 h-3 transition-transform',
 							isExpanded(part.index) ? 'rotate-90' : '',

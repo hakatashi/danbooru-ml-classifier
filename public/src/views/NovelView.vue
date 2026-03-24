@@ -120,6 +120,7 @@ function getModelDisplayName(modelName: string): string {
 			<div class="md:overflow-y-auto md:h-screen p-0 space-y-6">
 				<!-- Back link -->
 				<button
+					type="button"
 					@click="goBackToImage"
 					class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900"
 				>
