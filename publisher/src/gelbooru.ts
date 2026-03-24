@@ -11,16 +11,10 @@ import {onDocumentCreated} from 'firebase-functions/v2/firestore';
 import {onSchedule} from 'firebase-functions/v2/scheduler';
 import axios from './axios';
 import dayjs from './dayjs';
+import {escapeFirestoreKey} from './utils';
 
 const gelbooruApiUser = defineSecret('GELBOORU_API_USER');
 const gelbooruApiKey = defineSecret('GELBOORU_API_KEY');
-
-const escapeFirestoreKey = (key: string) => (
-	key
-		.replaceAll(/%/g, '%25')
-		.replaceAll(/\//g, '%2F')
-		.replaceAll(/\./g, '%2E')
-);
 
 export const downloadGelbooruImage = tasks.onTaskDispatched(
 	{

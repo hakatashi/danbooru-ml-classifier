@@ -1,0 +1,38 @@
+name: Test Publisher
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'publisher/**'
+      - '.github/workflows/test-publisher.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'publisher/**'
+      - '.github/workflows/test-publisher.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 20
+        cache: npm
+        cache-dependency-path: publisher/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd publisher
+        npm ci
+
+    - name: Run tests
+      run: |
+        cd publisher
+        npm test
