@@ -4,6 +4,10 @@ updates:
     directory: public
     schedule:
       interval: daily
+  - package-ecosystem: npm
+    directory: publisher
+    schedule:
+      interval: daily
   - package-ecosystem: github-actions
     directory: '/'
     schedule:
