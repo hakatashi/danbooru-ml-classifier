@@ -21,7 +21,7 @@
     "axios": "^1.13.5",
     "axios-retry": "^3.6.0",
     "dayjs": "^1.11.20",
-    "ejs": "^3.1.10",
+    "ejs": "^5.0.1",
     "firebase-admin": "^11.8.0",
     "firebase-functions": "^4.3.1",
     "google-auth-library": "^10.6.2",
