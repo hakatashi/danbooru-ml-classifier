@@ -14,7 +14,7 @@
 	"dependencies": {
 		"@tailwindcss/vite": "^4.2.2",
 		"firebase": "^12.11.0",
-		"lucide-vue-next": "^0.577.0",
+		"lucide-vue-next": "^1.0.0",
 		"tailwindcss": "^4.1.18",
 		"vue": "^3.5.30",
 		"vue-router": "^5.0.4"
