@@ -22,7 +22,7 @@
     "axios-retry": "^3.6.0",
     "dayjs": "^1.11.20",
     "ejs": "^5.0.1",
-    "firebase-admin": "^11.8.0",
+    "firebase-admin": "^13.7.0",
     "firebase-functions": "^7.2.2",
     "google-auth-library": "^10.6.2",
     "lodash": "^4.17.23"
