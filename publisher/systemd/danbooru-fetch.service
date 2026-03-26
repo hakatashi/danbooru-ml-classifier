@@ -1,0 +1,12 @@
+[Unit]
+Description=Danbooru ML Classifier - Fetch daily rankings
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=REPO_DIR/publisher
+Environment=PATH=ASDF_SHIMS_DIR:ASDF_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=ASDF_SHIMS_DIR/npm run fetch:all
+StandardOutput=journal
+StandardError=journal
