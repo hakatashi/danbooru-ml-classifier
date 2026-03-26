@@ -4,23 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Firebase-based ML image classification system that:
-1. Fetches daily rankings from Pixiv, Danbooru, and Gelbooru
-2. Downloads images to Cloud Storage
-3. Runs ML inference to predict user preference (not_bookmarked, bookmarked_public, bookmarked_private)
-4. Provides a public web viewer to browse and filter VLM-captioned images
+This is a hybrid ML image classification system that:
+1. Fetches daily rankings from Pixiv, Danbooru, and Gelbooru (local cron job)
+2. Downloads images to local disk (`/mnt/cache/danbooru-ml-classifier/images`)
+3. Stores image metadata in local MongoDB
+4. Runs ML inference to predict user preference (not_bookmarked, bookmarked_public, bookmarked_private)
+5. Provides a public web viewer to browse and filter VLM-captioned images
 
 ## Architecture
 
 The project consists of three main components:
 
 ### Publisher (TypeScript - `publisher/`)
-Scheduled functions that fetch image rankings and queue downloads:
-- `fetchPixivDailyRankings` - Fetches Pixiv rankings daily at 15:00 JST
-- `fetchDanbooruDailyRankings` - Fetches Danbooru popular posts daily
-- `fetchGelbooruDailyImages` - Fetches Gelbooru images daily
-- Task queue handlers (`downloadPixivImage`, `downloadDanbooruImage`, `downloadGelbooruImage`) that download images to Cloud Storage and create Firestore documents with `status: 'pending'`
+Split into two parts:
+
+**Local cron job** (`src/cron.ts`) — runs on local machine, no Firebase required:
+- `fetchPixivDailyRankings` - Fetches Pixiv rankings and downloads images
+- `fetchDanbooruDailyRankings` - Fetches Danbooru popular posts and downloads images
+- `fetchGelbooruDailyImages` - Fetches Gelbooru images and downloads images
+- Images saved to `IMAGE_CACHE_DIR` (default: `/mnt/cache/danbooru-ml-classifier/images`)
+- Metadata stored in local MongoDB collections: `images`, `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `pixivPages`
+
+**Firebase Functions** (`src/index.ts`) — still deployed to Firebase:
 - `updateModerationStats` - Firestore trigger that maintains moderation statistics per provider (count and sum) in the `moderationStats` collection
+- API functions and novel generator (see `src/api.ts`, `src/novel-generator.ts`)
 
 ### Worker (Python - `worker/`)
 ML inference and image processing functions:
@@ -68,16 +75,49 @@ cd publisher
 npm install
 npm run build        # Compile TypeScript
 npm run lint         # ESLint
-npm run serve        # Build + start emulators
+npm run serve        # Build + start emulators (Firebase Functions only)
 ```
 
 **Runtime**: Node.js 20
 
-**Initial Data Population**:
+**Local cron job** (fetch rankings + download images to `/mnt/cache`):
 ```bash
-# Initialize moderationStats collection from existing images data
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json \
-npx ts-node scripts/init-moderation-stats.ts
+cd publisher
+
+# Run scheduler (daily at 15:00 Asia/Tokyo)
+npx ts-node src/cron.ts
+
+# Run a specific job immediately
+npx ts-node src/cron.ts --run all
+npx ts-node src/cron.ts --run pixiv
+npx ts-node src/cron.ts --run danbooru
+npx ts-node src/cron.ts --run gelbooru
+```
+
+**Environment variables** for local cron (can be set in `publisher/.env`):
+- `IMAGE_CACHE_DIR` - Directory to save downloaded images (default: `/mnt/cache/danbooru-ml-classifier/images`)
+- `MONGODB_URI` - MongoDB connection URI (default: `mongodb://localhost:27017`)
+- `MONGODB_DB` - MongoDB database name (default: `danbooru-ml-classifier`)
+- `PIXIV_SESSION_ID` - Pixiv session cookie
+- `DANBOORU_API_USER` / `DANBOORU_API_KEY` - Danbooru API credentials
+- `GELBOORU_API_USER` / `GELBOORU_API_KEY` - Gelbooru API credentials
+
+**Firestore → MongoDB migration**:
+```bash
+# Import all Firestore collections to local MongoDB
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
+npx ts-node --project publisher/tsconfig.json publisher/scripts/import-firestore.ts
+
+# Import specific collections only
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
+COLLECTIONS=images,pixivRanking \
+npx ts-node --project publisher/tsconfig.json publisher/scripts/import-firestore.ts
+
+# Options (env vars):
+#   MONGODB_URI      - MongoDB URI (default: mongodb://localhost:27017)
+#   MONGODB_DB       - Database name (default: danbooru-ml-classifier)
+#   IMPORT_BATCH     - Firestore page size (default: 500)
+#   COLLECTIONS      - Comma-separated list (default: images,pixivRanking,danbooruRanking,gelbooruImage)
 ```
 
 ### Worker (Python)
@@ -161,24 +201,23 @@ firebase emulators:start
 
 ## Key Data Flow
 
-1. Scheduled function fetches rankings → writes to `pixivRanking/`, `danbooruRanking/`, or `gelbooruImage/` collection
-2. Firestore trigger queues download task
-3. Task downloads image to `danbooru-ml-classifier-images` bucket, creates doc in `images/` with `status: 'pending'`
-4. Worker function batches 100+ pending images, runs inference, updates status to `inferred`
-5. VLM captioner processes images:
+1. Local cron job (`src/cron.ts`) fetches rankings → saves to MongoDB (`pixivRanking`, `danbooruRanking`, `gelbooruImage`)
+2. Cron job downloads images to `IMAGE_CACHE_DIR`, creates doc in MongoDB `images` with `status: 'pending'`
+3. Worker function batches 100+ pending images, runs inference, updates status to `inferred`
+4. VLM captioner processes images:
    - Generates captions (JoyCaption/MiniCPM)
    - Generates moderation ratings with explanations (0-10 scale)
    - Generates age estimations using caption-based inference with Qwen3-14B
    - Generates Danbooru-style tags (PixAI Tagger v0.9) with confidence levels and IP extraction
    - Loads Twitter source metadata from cache (if available)
-   - Updates `images/` documents with all results
-6. `updateModerationStats` function automatically maintains aggregated statistics (count, sum) per provider in `moderationStats/` collection
-7. Public website queries `images/` collection with pagination (50 images per page) and displays total page count from `moderationStats/` collection
+   - Updates `images` documents (MongoDB) with all results
+5. `updateModerationStats` Firebase Function automatically maintains aggregated statistics (count, sum) per provider in `moderationStats/` Firestore collection
+6. Public website queries Firestore `images/` collection with pagination (50 images per page) and displays total page count from `moderationStats/` collection
 
-## Firestore Collections
+## MongoDB Collections (local)
 
-### `images/`
-Main collection storing image metadata and ML results:
+### `images`
+Main collection storing image metadata and ML results (mirrors Firestore `images/`):
 - `status`: Image processing status (pending, inferred)
 - `type`: Image source (pixiv, danbooru, gelbooru, twitter)
 - `captions.[provider]`: VLM caption data with metadata
@@ -190,15 +229,23 @@ Main collection storing image metadata and ML results:
 - `topTagProbs`: ML tag probabilities
 - `inferences`: Preference classification results
 
+### `pixivRanking`, `danbooruRanking`, `gelbooruImage`
+Source ranking data from external APIs. Document `_id` = Firestore document ID (string).
+
+### `pixivPages`
+Pixiv per-artwork page URL data. Document `_id` = Pixiv artwork ID.
+
+## Firestore Collections (Firebase — used by public website and Firebase Functions)
+
+### `images/`
+Mirror of MongoDB `images` collection, updated by worker and VLM captioner.
+
 ### `moderationStats/`
 Aggregated statistics per VLM provider (joycaption, minicpm):
 - `count`: Total number of images with moderation ratings
 - `sum`: Sum of all moderation ratings
 - `updatedAt`: Last update timestamp
 - Automatically maintained by `updateModerationStats` Firebase Function
-
-### `pixivRanking/`, `danbooruRanking/`, `gelbooruImage/`
-Source ranking data from external APIs.
 
 ## Firestore Security Rules
 
@@ -222,5 +269,7 @@ The project uses 20+ composite indexes for efficient querying:
 ## External Dependencies
 
 - Firebase project: `danbooru-ml-classifier`
-- Storage buckets: `danbooru-ml-classifier` (models), `danbooru-ml-classifier-images` (images)
-- Required secrets: `PIXIV_SESSION_ID`, `DANBOORU_API_USER`, `DANBOORU_API_KEY`, `GELBOORU_API_USER`, `GELBOORU_API_KEY`
+- Storage buckets: `danbooru-ml-classifier` (models), `danbooru-ml-classifier-images` (images, legacy)
+- Local MongoDB: `danbooru-ml-classifier` database (default: `mongodb://localhost:27017`)
+- Local image cache: `/mnt/cache/danbooru-ml-classifier/images` (configurable via `IMAGE_CACHE_DIR`)
+- Required secrets (publisher cron): `PIXIV_SESSION_ID`, `DANBOORU_API_USER`, `DANBOORU_API_KEY`, `GELBOORU_API_USER`, `GELBOORU_API_KEY`

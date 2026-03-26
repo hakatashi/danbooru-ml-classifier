@@ -1,184 +1,152 @@
-import assert from 'assert';
-import {extname} from 'path';
-import * as firebase from 'firebase-admin';
-import {getFirestore} from 'firebase-admin/firestore';
-import {getFunctions} from 'firebase-admin/functions';
-import {getStorage} from 'firebase-admin/storage';
-import {info, warn} from 'firebase-functions/logger';
-import {defineSecret} from 'firebase-functions/params';
-import {tasks} from 'firebase-functions/v2';
-import {onDocumentCreated} from 'firebase-functions/v2/firestore';
-import {onSchedule} from 'firebase-functions/v2/scheduler';
-import axios from './axios';
+import fs from 'fs';
+import path, {extname} from 'path';
+import querystring from 'querystring';
+import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';
-import {escapeFirestoreKey} from './utils';
+import {getDb} from './db';
 
-const gelbooruApiUser = defineSecret('GELBOORU_API_USER');
-const gelbooruApiKey = defineSecret('GELBOORU_API_KEY');
-
-export const downloadGelbooruImage = tasks.onTaskDispatched(
-	{
-		retryConfig: {
-			maxAttempts: 3,
-			maxBackoffSeconds: 10,
-		},
-		rateLimits: {
-			maxConcurrentDispatches: 1,
-			maxDispatchesPerSecond: 0.1,
-		},
-		secrets: [gelbooruApiUser, gelbooruApiKey],
+// Gelbooru is behind Cloudflare which blocks axios (JA3 fingerprint).
+// Use the built-in fetch (undici) which is accepted.
+const gelbooruFetch = (url: string): Promise<Response> => fetch(url, {
+	headers: {
+		'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+		Accept: 'application/json, text/plain, */*',
+		Referer: 'https://gelbooru.com/',
 	},
-	async (req) => {
-		const {postId, date} = req.data as {postId: number, date: string};
-		const db = getFirestore();
-
-		const imageDoc = db.collection('images')
-			.where('type', '==', 'gelbooru')
-			.where('postId', '==', postId);
-		const imageDocSnapshot = await imageDoc.get();
-		if (!imageDocSnapshot.empty) {
-			info(`Post ${postId} already exists`);
-			return;
-		}
-
-		const imageInfo = await db.collection('gelbooruImage').doc(postId.toString()).get();
-		const imageInfoData = imageInfo.data();
-		assert(imageInfoData, 'Image info not found');
-
-		info(`Downloading artwork ${postId}`);
-		const url = imageInfoData.post.file_url;
-		if (typeof url !== 'string') {
-			warn(`No file_url for post ${postId}`);
-			return;
-		}
-		const extension = extname(url);
-
-		if (!['.jpg', '.png', '.gif', '.tiff', '.jpeg'].includes(extension)) {
-			info(`Unsupported extension ${extension}`);
-			return;
-		}
-
-		const filename = `${postId}${extension}`;
-
-		const response = await axios.get(url, {
-			responseType: 'arraybuffer',
-		});
-
-		info(`Downloaded ${url}`);
-
-		info(`Uploading ${filename} to storage`);
-		const storage = getStorage();
-		const bucket = storage.bucket('danbooru-ml-classifier-images');
-		const file = bucket.file(`gelbooru/${filename}`);
-
-		await file.save(response.data, {
-			metadata: {
-				contentType: response.headers['content-type'],
-			},
-		});
-
-		info(`Saving ${filename} to firestore`);
-		await db.collection('images').doc(escapeFirestoreKey(`gelbooru/${filename}`)).set({
-			status: 'pending',
-			type: 'gelbooru',
-			postId,
-			date,
-			originalUrl: url,
-			key: `gelbooru/${filename}`,
-			downloadedAt: firebase.firestore.FieldValue.serverTimestamp(),
-			inferences: {},
-			topTagProbs: {},
-		});
-	},
-);
-
-export const onGelbooruImageCreated = onDocumentCreated('gelbooruImage/{imageId}', async (event) => {
-	if (!event.data) {
-		return;
-	}
-
-	const image = event.data.data();
-
-	const db = getFirestore();
-
-	const imageDoc = db.collection('images')
-		.where('type', '==', 'gelbooru')
-		.where('postId', '==', image.post.id);
-	const imageDocSnapshot = await imageDoc.get();
-	if (!imageDocSnapshot.empty) {
-		info(`Post ${image.post.id} already exists`);
-		return;
-	}
-
-	const queue = getFunctions().taskQueue('downloadGelbooruImage');
-
-	await queue.enqueue({
-		postId: image.post.id,
-		date: image.image.date,
-	}, {
-		scheduleDelaySeconds: 0,
-		dispatchDeadlineSeconds: 60 * 5,
-	});
 });
 
-export const fetchGelbooruDailyImages = onSchedule({
-	schedule: 'every day 15:00',
-	timeZone: 'Asia/Tokyo',
-	secrets: [gelbooruApiKey, gelbooruApiUser],
-	timeoutSeconds: 540,
-}, async () => {
-	const db = getFirestore();
+const SUPPORTED_EXTENSIONS = ['.jpg', '.png', '.gif', '.tiff', '.jpeg'];
+
+const sleep = (ms: number) => new Promise<void>((resolve) => {
+	setTimeout(resolve, ms);
+});
+
+export const fetchGelbooruDailyImages = async (): Promise<void> => {
+	const gelbooruApiUser = process.env.GELBOORU_API_USER;
+	const gelbooruApiKey = process.env.GELBOORU_API_KEY;
+	if (!gelbooruApiUser || !gelbooruApiKey) {
+		throw new Error('GELBOORU_API_USER or GELBOORU_API_KEY is not set');
+	}
+
+	const db = await getDb();
+	const gelbooruImageCollection = db.collection<{_id: string}>('gelbooruImage');
+	const imagesCollection = db.collection('images');
+
+	console.log('[Gelbooru] Fetching images...');
 
 	for (const page of Array(20).keys()) {
-		info(`Fetching gelbooru image page ${page + 1}...`);
-		await new Promise((resolve) => {
-			setTimeout(resolve, 10000);
-		});
+		console.log(`[Gelbooru] Fetching page ${page + 1}/20...`);
+		await sleep(10000);
 
-		const {data, status} = await axios.get('https://gelbooru.com/index.php', {
-			params: {
+		let posts: Record<string, unknown>[] = [];
+		try {
+			const qs = querystring.stringify({
 				page: 'dapi',
 				s: 'post',
 				q: 'index',
 				tags: 'score:>1',
-				limit: '100',
-				pid: page + 1,
-				user_id: gelbooruApiUser.value(),
-				api_key: gelbooruApiKey.value(),
-				json: '1',
-			},
-			validateStatus: null,
-		});
+				limit: 100,
+				pid: page,
+				user_id: gelbooruApiUser,
+				api_key: gelbooruApiKey,
+				json: 1,
+			});
+			const response = await gelbooruFetch(`https://gelbooru.com/index.php?${qs}`);
 
-		if (status !== 200) {
-			warn(`Failed to fetch gelbooru image page ${page + 1} (status = ${status})`);
+			if (!response.ok) {
+				console.warn(`[Gelbooru] Failed to fetch page ${page + 1} (status = ${response.status})`);
+				continue;
+			}
+
+			const data = await response.json() as {post: Record<string, unknown>[]};
+			posts = data?.post;
+		} catch (error) {
+			console.error(`[Gelbooru] Error fetching page ${page + 1}:`, error);
 			continue;
 		}
-
-		const posts = data?.post;
 
 		if (!Array.isArray(posts) || posts.length === 0) {
-			warn(`No posts found on gelbooru image page ${page + 1}`);
+			console.warn(`[Gelbooru] No posts found on page ${page + 1}`);
 			continue;
 		}
 
-		info(`Fetched gelbooru image page ${page + 1} (count = ${posts.length})`);
-
-		const batch = db.batch();
+		console.log(`[Gelbooru] Fetched page ${page + 1} (count = ${posts.length})`);
 
 		for (const [index, post] of posts.entries()) {
-			const date = dayjs(post.created_at).tz('Asia/Tokyo').format('YYYY-MM-DD');
-			const imageRef = db.collection('gelbooruImage').doc(post.id.toString());
-			batch.set(imageRef, {
-				post,
-				image: {
-					date,
-					page,
-					index,
-				},
-			});
-		}
+			const postId = post.id as number;
+			const date = dayjs(post.created_at as string).tz('Asia/Tokyo').format('YYYY-MM-DD');
 
-		await batch.commit();
+			await gelbooruImageCollection.updateOne(
+				{_id: postId.toString()},
+				{$set: {post, image: {date, page, index}}},
+				{upsert: true},
+			);
+
+			const existing = await imagesCollection.findOne({type: 'gelbooru', postId});
+			if (existing) {
+				continue;
+			}
+
+			const url = post.file_url as string | undefined;
+			if (typeof url !== 'string') {
+				console.warn(`[Gelbooru] No file_url for post ${postId}`);
+				continue;
+			}
+
+			const extension = extname(url);
+			if (!SUPPORTED_EXTENSIONS.includes(extension)) {
+				console.log(`[Gelbooru] Unsupported extension ${extension} for post ${postId}`);
+				continue;
+			}
+
+			const filename = `${postId}${extension}`;
+			const key = `gelbooru/${filename}`;
+
+			console.log(`[Gelbooru] Downloading post ${postId}...`);
+			await sleep(1000);
+
+			let imageBuffer: Uint8Array = new Uint8Array();
+			let contentType = '';
+			try {
+				const response = await gelbooruFetch(url);
+				if (!response.ok) {
+					console.error(`[Gelbooru] Error downloading post ${postId} (status = ${response.status})`);
+					continue;
+				}
+				imageBuffer = new Uint8Array(await response.arrayBuffer());
+				contentType = response.headers.get('content-type') ?? 'application/octet-stream';
+			} catch (error) {
+				console.error(`[Gelbooru] Error downloading post ${postId}:`, error);
+				continue;
+			}
+
+			const dirPath = path.join(IMAGE_CACHE_DIR, 'gelbooru');
+			await fs.promises.mkdir(dirPath, {recursive: true});
+			const filePath = path.join(dirPath, filename);
+			await fs.promises.writeFile(filePath, imageBuffer);
+			console.log(`[Gelbooru] Saved ${filename} to ${filePath}`);
+
+			await imagesCollection.updateOne(
+				{key},
+				{
+					$set: {
+						status: 'pending',
+						type: 'gelbooru',
+						postId,
+						date,
+						originalUrl: url,
+						contentType,
+						key,
+						localPath: filePath,
+						downloadedAt: new Date(),
+						inferences: {},
+						topTagProbs: {},
+					},
+				},
+				{upsert: true},
+			);
+		}
 	}
-});
+
+	console.log('[Gelbooru] Done');
+};

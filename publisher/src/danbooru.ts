@@ -1,179 +1,137 @@
-import assert from 'assert';
-import {extname} from 'path';
-import * as firebase from 'firebase-admin';
-import {getFirestore} from 'firebase-admin/firestore';
-import {getFunctions} from 'firebase-admin/functions';
-import {getStorage} from 'firebase-admin/storage';
-import {info, warn} from 'firebase-functions/logger';
-import {defineSecret} from 'firebase-functions/params';
-import {tasks} from 'firebase-functions/v2';
-import {onDocumentCreated} from 'firebase-functions/v2/firestore';
-import {onSchedule} from 'firebase-functions/v2/scheduler';
+import fs from 'fs';
+import path, {extname} from 'path';
 import axios from './axios';
+import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';
-import {escapeFirestoreKey} from './utils';
+import {getDb} from './db';
 
-const danbooruApiUser = defineSecret('DANBOORU_API_USER');
-const danbooruApiKey = defineSecret('DANBOORU_API_KEY');
+const SUPPORTED_EXTENSIONS = ['.jpg', '.png', '.gif', '.tiff', '.jpeg'];
 
-export const downloadDanbooruImage = tasks.onTaskDispatched(
-	{
-		retryConfig: {
-			maxAttempts: 3,
-			maxBackoffSeconds: 10,
-		},
-		rateLimits: {
-			maxConcurrentDispatches: 1,
-			maxDispatchesPerSecond: 0.1,
-		},
-		secrets: [danbooruApiUser, danbooruApiKey],
-	},
-	async (req) => {
-		const {postId, date} = req.data as {postId: number, date: string};
-		const db = getFirestore();
-
-		const imageDoc = db.collection('images')
-			.where('type', '==', 'danbooru')
-			.where('postId', '==', postId);
-		const imageDocSnapshot = await imageDoc.get();
-		if (!imageDocSnapshot.empty) {
-			info(`Post ${postId} already exists`);
-			return;
-		}
-
-		const rankingInfo = await db.collection('danbooruRanking').doc(`${date}-popular-${postId}`).get();
-		const rankingInfoData = rankingInfo.data();
-		assert(rankingInfoData, 'Ranking info not found');
-
-		info(`Downloading artwork ${postId}`);
-		const url = rankingInfoData.post.file_url;
-		if (typeof url !== 'string') {
-			warn(`No file_url for post ${postId}`);
-			return;
-		}
-		const extension = extname(url);
-
-		if (!['.jpg', '.png', '.gif', '.tiff', '.jpeg'].includes(extension)) {
-			info(`Unsupported extension ${extension}`);
-			return;
-		}
-
-		const filename = `${postId}${extension}`;
-
-		const response = await axios.get(url, {
-			responseType: 'arraybuffer',
-		});
-
-		info(`Downloaded ${url}`);
-
-		info(`Uploading ${filename} to storage`);
-		const storage = getStorage();
-		const bucket = storage.bucket('danbooru-ml-classifier-images');
-		const file = bucket.file(`danbooru/${filename}`);
-
-		await file.save(response.data, {
-			metadata: {
-				contentType: response.headers['content-type'],
-			},
-		});
-
-		info(`Saving ${filename} to firestore`);
-		await db.collection('images').doc(escapeFirestoreKey(`danbooru/${filename}`)).set({
-			status: 'pending',
-			type: 'danbooru',
-			postId,
-			date,
-			originalUrl: url,
-			key: `danbooru/${filename}`,
-			downloadedAt: firebase.firestore.FieldValue.serverTimestamp(),
-			inferences: {},
-			topTagProbs: {},
-		});
-	},
-);
-
-export const onDanbooruRankingArtworkCreated = onDocumentCreated('danbooruRanking/{rankingId}', async (event) => {
-	if (!event.data) {
-		return;
-	}
-
-	const ranking = event.data.data();
-
-	const db = getFirestore();
-
-	const imageDoc = db.collection('images')
-		.where('type', '==', 'danbooru')
-		.where('postId', '==', ranking.post.id);
-	const imageDocSnapshot = await imageDoc.get();
-	if (!imageDocSnapshot.empty) {
-		info(`Post ${ranking.post.id} already exists`);
-		return;
-	}
-
-	const queue = getFunctions().taskQueue('downloadDanbooruImage');
-
-	await queue.enqueue({
-		postId: ranking.post.id,
-		date: ranking.ranking.date,
-	}, {
-		scheduleDelaySeconds: 0,
-		dispatchDeadlineSeconds: 60 * 5,
-	});
+const sleep = (ms: number) => new Promise<void>((resolve) => {
+	setTimeout(resolve, ms);
 });
 
-export const fetchDanbooruDailyRankings = onSchedule({
-	schedule: 'every day 15:00',
-	timeZone: 'Asia/Tokyo',
-	secrets: [danbooruApiKey, danbooruApiUser],
-	timeoutSeconds: 540,
-}, async (event) => {
-	const db = getFirestore();
+export const fetchDanbooruDailyRankings = async (): Promise<void> => {
+	const danbooruApiUser = process.env.DANBOORU_API_USER;
+	const danbooruApiKey = process.env.DANBOORU_API_KEY;
+	if (!danbooruApiUser || !danbooruApiKey) {
+		throw new Error('DANBOORU_API_USER or DANBOORU_API_KEY is not set');
+	}
 
-	const dateString = dayjs(event.scheduleTime).tz('Asia/Tokyo').subtract(2, 'days').format('YYYY-MM-DD');
+	const db = await getDb();
+	const danbooruRankingCollection = db.collection<{_id: string}>('danbooruRanking');
+	const imagesCollection = db.collection('images');
+
+	const dateString = dayjs().tz('Asia/Tokyo').subtract(2, 'days').format('YYYY-MM-DD');
 	const mode = 'popular';
 
-	info(`Fetching danbooru ranking for ${dateString}...`);
+	console.log(`[Danbooru] Fetching rankings for ${dateString}...`);
 
 	for (const page of Array(100).keys()) {
-		info(`Fetching danbooru ranking page ${page + 1}...`);
-		await new Promise((resolve) => {
-			setTimeout(resolve, 5000);
-		});
+		console.log(`[Danbooru] Fetching ranking page ${page + 1}/100...`);
+		await sleep(5000);
 
-		const {data: posts, status} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
-			params: {
-				login: danbooruApiUser.value(),
-				api_key: danbooruApiKey.value(),
-				date: dateString,
-				page: page + 1,
-				scale: 'day',
-			},
-			validateStatus: null,
-		});
+		let posts: Record<string, unknown>[] = [];
+		try {
+			const {data, status} = await axios.get('https://danbooru.donmai.us/explore/posts/popular.json', {
+				params: {
+					login: danbooruApiUser,
+					api_key: danbooruApiKey,
+					date: dateString,
+					page: page + 1,
+					scale: 'day',
+				},
+				validateStatus: null,
+			});
 
-		if (status !== 200) {
-			warn(`Failed to fetch danbooru ranking page ${page + 1} (status = ${status})`);
+			if (status !== 200) {
+				console.warn(`[Danbooru] Failed to fetch ranking page ${page + 1} (status = ${status})`);
+				continue;
+			}
+			posts = data as typeof posts;
+		} catch (error) {
+			console.error(`[Danbooru] Error fetching ranking page ${page + 1}:`, error);
 			continue;
 		}
 
-		info(`Fetched danbooru ranking page ${page + 1} (count = ${posts.length})`);
-
-		const batch = db.batch();
-
-		for (const [index, post] of posts.entries()) {
-			const rankingId = `${dateString}-${mode}-${post.id}`;
-			const rankingRef = db.collection('danbooruRanking').doc(rankingId);
-			batch.set(rankingRef, {
-				post,
-				ranking: {
-					date: dateString,
-					page,
-					mode,
-					index,
-				},
-			});
+		if (!Array.isArray(posts) || posts.length === 0) {
+			console.log(`[Danbooru] No posts on page ${page + 1}, stopping`);
+			break;
 		}
 
-		await batch.commit();
+		console.log(`[Danbooru] Fetched ranking page ${page + 1} (count = ${posts.length})`);
+
+		for (const [index, post] of posts.entries()) {
+			const postId = post.id as number;
+			const rankingId = `${dateString}-${mode}-${postId}`;
+
+			await danbooruRankingCollection.updateOne(
+				{_id: rankingId},
+				{$set: {post, ranking: {date: dateString, page, mode, index}}},
+				{upsert: true},
+			);
+
+			const existing = await imagesCollection.findOne({type: 'danbooru', postId});
+			if (existing) {
+				continue;
+			}
+
+			const url = post.file_url as string | undefined;
+			if (typeof url !== 'string') {
+				console.warn(`[Danbooru] No file_url for post ${postId}`);
+				continue;
+			}
+
+			const extension = extname(url);
+			if (!SUPPORTED_EXTENSIONS.includes(extension)) {
+				console.log(`[Danbooru] Unsupported extension ${extension} for post ${postId}`);
+				continue;
+			}
+
+			const filename = `${postId}${extension}`;
+			const key = `danbooru/${filename}`;
+
+			console.log(`[Danbooru] Downloading post ${postId}...`);
+			await sleep(1000);
+
+			let imageBuffer: Uint8Array = new Uint8Array();
+			let contentType = '';
+			try {
+				const response = await axios.get(url, {responseType: 'arraybuffer'});
+				imageBuffer = new Uint8Array(response.data as ArrayBuffer);
+				contentType = String(response.headers['content-type'] ?? 'application/octet-stream');
+			} catch (error) {
+				console.error(`[Danbooru] Error downloading post ${postId}:`, error);
+				continue;
+			}
+
+			const dirPath = path.join(IMAGE_CACHE_DIR, 'danbooru');
+			await fs.promises.mkdir(dirPath, {recursive: true});
+			const filePath = path.join(dirPath, filename);
+			await fs.promises.writeFile(filePath, imageBuffer);
+			console.log(`[Danbooru] Saved ${filename} to ${filePath}`);
+
+			await imagesCollection.updateOne(
+				{key},
+				{
+					$set: {
+						status: 'pending',
+						type: 'danbooru',
+						postId,
+						date: dateString,
+						originalUrl: url,
+						contentType,
+						key,
+						localPath: filePath,
+						downloadedAt: new Date(),
+						inferences: {},
+						topTagProbs: {},
+					},
+				},
+				{upsert: true},
+			);
+		}
 	}
-});
+
+	console.log('[Danbooru] Done');
+};
