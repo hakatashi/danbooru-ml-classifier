@@ -10,11 +10,11 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "cron": "node lib/src/cron.js",
-    "fetch:pixiv": "node lib/src/cron.js --run pixiv",
-    "fetch:danbooru": "node lib/src/cron.js --run danbooru",
-    "fetch:gelbooru": "node lib/src/cron.js --run gelbooru",
-    "fetch:all": "node lib/src/cron.js --run all"
+    "cron": "npm run build && node lib/src/cron.js",
+    "fetch:pixiv": "npm run build && node lib/src/cron.js --run pixiv",
+    "fetch:danbooru": "npm run build && node lib/src/cron.js --run danbooru",
+    "fetch:gelbooru": "npm run build && node lib/src/cron.js --run gelbooru",
+    "fetch:all": "npm run build && node lib/src/cron.js --run all"
   },
   "engines": {
     "node": "20"

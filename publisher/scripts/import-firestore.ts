@@ -84,7 +84,7 @@ const importCollection = async (
 			return {
 				updateOne: {
 					filter: {_id: doc.id},
-					update: {$set: {_id: doc.id, ...data}},
+					update: {$set: data},
 					upsert: true,
 				},
 			};
