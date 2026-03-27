@@ -33,7 +33,7 @@
     "google-auth-library": "^10.6.2",
     "lodash": "^4.17.23",
     "mongodb": "^6.17.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^4.2.1"
   },
   "devDependencies": {
     "@hakatashi/eslint-config": "^2.1.1",
