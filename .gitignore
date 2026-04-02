@@ -132,6 +132,9 @@ dist
 .ipynb_checkpoints
 temp
 data
+venv
+__pycache__
+*.pyc
 
 .secret.local
 

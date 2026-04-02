@@ -1,0 +1,22 @@
+# Core ML  (install with ROCm: see setup.sh)
+# torch==2.5.1+rocm6.2
+# torchvision==0.20.1+rocm6.2
+timm==1.0.22
+
+# Feature extraction
+huggingface-hub==0.36.0
+numpy>=1.26
+Pillow>=10.0
+
+# Data storage
+h5py>=3.10
+pandas>=2.0
+pyarrow>=14.0
+
+# Training (Phase 3+)
+scikit-learn>=1.4
+pulearn>=0.0.7
+
+# Utilities
+tqdm>=4.66
+boto3>=1.34
