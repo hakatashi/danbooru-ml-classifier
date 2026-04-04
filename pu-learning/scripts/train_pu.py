@@ -827,6 +827,10 @@ def main() -> None:
         help="Number of parallel worker processes (default: 1). "
              "Note: nnPU (GPU) jobs may contend when workers > 1.",
     )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Overwrite existing model files (default: skip combinations whose model already exists)",
+    )
     args = parser.parse_args()
 
     features = ALL_FEATURES if "all" in args.features else args.features
@@ -842,6 +846,12 @@ def main() -> None:
         sys.exit(1)
 
     combos = list(itertools.product(features, labels, methods))
+    if not args.no_save and not args.overwrite:
+        skipped = [c for c in combos if (MODELS_DIR / f"{c[0]}_{c[1]}_{c[2]}.joblib").exists()]
+        combos  = [c for c in combos if c not in skipped]
+        if skipped:
+            log.info("Skipping %d already-trained model(s): %s", len(skipped),
+                     ", ".join(f"{f}_{l}_{m}" for f, l, m in skipped))
     log.info("%d combination(s) to train  (workers=%d)", len(combos), args.workers)
 
     worker_fn = partial(_train_combination, args=args, splits_path=splits_path)
