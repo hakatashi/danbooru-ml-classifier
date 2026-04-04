@@ -9,11 +9,12 @@ This is a hybrid ML image classification system that:
 2. Downloads images to local disk (`/mnt/cache/danbooru-ml-classifier/images`)
 3. Stores image metadata in local MongoDB
 4. Runs ML inference to predict user preference (not_bookmarked, bookmarked_public, bookmarked_private)
-5. Provides a public web viewer to browse and filter VLM-captioned images
+5. Trains PU Learning-based preference classifiers using extracted image features
+6. Provides a public web viewer to browse and filter VLM-captioned images
 
 ## Architecture
 
-The project consists of three main components:
+The project consists of four main components:
 
 ### Publisher (TypeScript - `publisher/`)
 Split into two parts:
@@ -47,6 +48,24 @@ ML inference and image processing functions:
     - Model: EVA02-Large encoder (frozen) + classification head (13,461 tags)
     - Performance: ~0.7s/image on ROCm GPU
 
+### PU Learning (Python - `pu-learning/`)
+PU Learning-based preference classifier for predicting image preference:
+- `scripts/extract_features.py` - Extracts three feature types from images with HDF5 storage and resumable processing:
+  - `deepdanbooru` - 6000-dim tag probability vector (ResNet50)
+  - `eva02` - 1024-dim visual embedding (EVA02-Large encoder)
+  - `pixai` - 13461-dim tag probability vector (PixAI Tagger v0.9)
+  - EVA02 and PixAI share a single forward pass
+- `scripts/build_dataset.py` - Assigns train/val/test splits (stratified by label) and verifies features are extracted
+  - Positive labels: pixiv_public, pixiv_private, twitter (70/15/15% split)
+  - Unlabeled: 90/5/5% split
+- `scripts/train_pu.py` - Trains 27 PU Learning models (3 labels × 3 methods × 3 feature types):
+  - Methods: `elkan_noto` (EM-based), `biased_svm` (asymmetric weights), `nnpu` (non-negative PU risk, GPU)
+  - Outputs: `data/models/{feature}_{label}_{method}.joblib` and `data/results/metrics.csv`
+  - Supports `--workers N` for parallel training via ProcessPoolExecutor
+- `scripts/score_unlabeled.py` - Scores test-split unlabeled images using trained classifiers, computes AUC-ROC, saves top-K montage PNGs to `data/results/`
+- `scripts/config.py` - Shared configuration (paths, dimensions, constants)
+- `notebooks/` - Jupyter notebooks for sklearn and PyTorch classifier experiments
+
 ### Public Website (Vue 3 + TypeScript - `public/`)
 Web application for browsing VLM-captioned images:
 - Built with Vue 3, TypeScript, Vite, and Tailwind CSS
@@ -75,6 +94,7 @@ cd publisher
 npm install
 npm run build        # Compile TypeScript
 npm run lint         # ESLint
+npm run test         # Run unit tests (Vitest)
 npm run serve        # Build + start emulators (Firebase Functions only)
 ```
 
@@ -85,13 +105,24 @@ npm run serve        # Build + start emulators (Firebase Functions only)
 cd publisher
 
 # Run scheduler (daily at 15:00 Asia/Tokyo)
-npx ts-node src/cron.ts
+npm run cron
 
-# Run a specific job immediately
-npx ts-node src/cron.ts --run all
-npx ts-node src/cron.ts --run pixiv
-npx ts-node src/cron.ts --run danbooru
-npx ts-node src/cron.ts --run gelbooru
+# Run a specific job immediately (builds first)
+npm run fetch:all
+npm run fetch:pixiv
+npm run fetch:danbooru
+npm run fetch:gelbooru
+```
+
+**Systemd service** (for production daily automation):
+```bash
+# Install systemd user service/timer
+cd publisher/systemd
+./install.sh    # Copies units to ~/.config/systemd/user/, enables timer
+
+# Files:
+# danbooru-fetch.service - oneshot service running `npm run fetch:all`
+# danbooru-fetch.timer   - fires daily at 15:00 JST (Asia/Tokyo, Persistent=true)
 ```
 
 **Environment variables** for local cron (can be set in `publisher/.env`):
@@ -168,6 +199,58 @@ python test_pixai_tagger.py /path/to/image.jpg
 - `age_estimation_from_caption.txt` - Caption-based age estimation (current)
 - `age_estimation.schema.json` - Age estimation structured output schema
 - `detailed_caption.txt` - Exhaustive image analysis with body part descriptions
+
+### PU Learning (Python)
+```bash
+cd pu-learning
+bash setup.sh              # Create venv and install ROCm-compatible PyTorch + dependencies
+```
+
+**Feature extraction**:
+```bash
+cd pu-learning
+# Extract all feature types
+python scripts/extract_features.py
+
+# Extract specific features (eva02 and pixai always run together)
+python scripts/extract_features.py --features deepdanbooru
+python scripts/extract_features.py --features eva02_pixai
+python scripts/extract_features.py --batch-size 32
+```
+
+**Dataset preparation**:
+```bash
+python scripts/build_dataset.py              # Assign train/val/test splits
+python scripts/build_dataset.py --check-features  # Also verify all features extracted
+```
+
+**Training**:
+```bash
+# Train all 27 models (3 labels × 3 methods × 3 feature types)
+python scripts/train_pu.py
+
+# Train specific combinations
+python scripts/train_pu.py --features eva02 --methods biased_svm
+python scripts/train_pu.py --labels pixiv_public twitter --features all --methods all
+
+# Parallel training
+python scripts/train_pu.py --workers 4
+
+# GPU nnPU with custom epochs
+python scripts/train_pu.py --features eva02 --methods nnpu --epochs 100
+
+# Grid search
+python scripts/train_pu.py --grid-search --features deepdanbooru
+```
+
+**Scoring**:
+```bash
+# Score test-split unlabeled images and save montage PNGs
+python scripts/score_unlabeled.py
+python scripts/score_unlabeled.py --top-k 20
+python scripts/score_unlabeled.py --split val
+python scripts/score_unlabeled.py --classes bookmarked_private bookmarked_public
+```
 
 ### Public Website (Vue 3 + TypeScript)
 ```bash
