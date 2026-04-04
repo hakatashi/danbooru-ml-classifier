@@ -37,11 +37,14 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
+import itertools
 import json
 import logging
 import sys
 import time
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 import h5py
@@ -645,6 +648,108 @@ def _save_montage(
     log.info("  Montage saved → %s", out_path)
 
 
+# ── Per-combination worker ────────────────────────────────────────────────────
+
+def _train_combination(
+    combo: tuple[str, str, str],
+    args,
+    splits_path: Path,
+) -> dict:
+    """
+    Train and evaluate one (feature_name, positive_label, method) combination.
+    Designed to run inside a subprocess via ProcessPoolExecutor.
+    """
+    feature_name, positive_label, method = combo
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    splits      = pd.read_parquet(splits_path)
+    train_df    = splits[splits["split"] == "train"]
+    n_unl_train = (train_df["label"] == UNLABELED_LABEL).sum()
+    rng         = np.random.default_rng(RANDOM_SEED)
+    scale       = not args.no_scale
+
+    if args.pi_p is not None:
+        pi_p = args.pi_p
+    else:
+        n_pos_train = (train_df["label"] == positive_label).sum()
+        pi_p        = n_pos_train / (n_pos_train + n_unl_train)
+
+    prefix = f"[{feature_name}/{positive_label}/{method}]"
+    log.info("%s π_p=%.4f — loading data …", prefix, pi_p)
+    X_train, y_train, _ = build_xy(splits, feature_name, "train", positive_label, args.max_unlabeled, rng)
+    X_val,   y_val,   _ = build_xy(splits, feature_name, "val",   positive_label, None, rng)
+
+    C = args.C
+    if args.grid_search and method != "nnpu":
+        C_grid = [0.01, 0.1, 1.0, 10.0]
+        log.info("%s Grid search over C=%s …", prefix, C_grid)
+        C, _ = grid_search_C(method, X_train.copy(), y_train, X_val.copy(), y_val, pi_p, C_grid, scale)
+    elif args.grid_search and method == "nnpu":
+        log.info("%s Grid search skipped for nnpu", prefix)
+
+    gpu_device = args.gpu_device or ("cuda" if __import__("torch").cuda.is_available() else "cpu")
+    log.info("%s Training …", prefix)
+    run_ts  = datetime.now().isoformat(timespec="seconds")
+    t_start = time.time()
+
+    if method == "elkan_noto":
+        clf = train_elkan_noto(X_train, y_train, C=C, scale=scale)
+    elif method == "biased_svm":
+        clf = train_biased_svm(X_train, y_train, pi_p=pi_p, C=C, scale=scale)
+    else:  # nnpu
+        log.info("%s GPU device: %s", prefix, gpu_device)
+        clf = train_nnpu(
+            X_train, y_train, X_val, y_val,
+            feature_name=feature_name, pi_p=pi_p, device=gpu_device,
+            epochs=args.epochs, lr=args.lr,
+            batch_size=args.nn_batch_size, patience=args.nn_patience,
+            scale=scale,
+        )
+
+    train_sec = time.time() - t_start
+    log.info("%s Training done in %.1f s", prefix, train_sec)
+
+    metrics = evaluate(clf, X_val, y_val)
+    log.info(
+        "%s AUC-ROC=%.4f  AP=%.4f  P@K=%.4f",
+        prefix, metrics["auc_roc"], metrics["avg_precision"], metrics["precision_at_k"],
+    )
+
+    record = {
+        "timestamp":   run_ts,
+        "feature":     feature_name,
+        "label":       positive_label,
+        "method":      method,
+        "C":           C,
+        "pi_p":        round(pi_p, 4),
+        "n_train_pos": int(y_train.sum()),
+        "n_train_unl": int((y_train == 0).sum()),
+        "n_val_pos":   int(y_val.sum()),
+        "n_val_unl":   int((y_val == 0).sum()),
+        "train_sec":   round(train_sec, 1),
+        **{k: round(v, 5) for k, v in metrics.items()},
+    }
+
+    if not args.no_save:
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        model_path = MODELS_DIR / f"{feature_name}_{positive_label}_{method}.joblib"
+        joblib.dump(clf, model_path)
+        log.info("%s Model saved → %s", prefix, model_path)
+
+    if args.top_k > 0:
+        show_top_unlabeled(
+            clf, feature_name, method, splits,
+            n=args.top_k, split=args.top_split, positive_label=positive_label,
+        )
+
+    return record
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -717,131 +822,35 @@ def main() -> None:
         "--gpu-device", type=str, default=None,
         help="PyTorch device for nnPU (default: auto-detect cuda/cpu)",
     )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Number of parallel worker processes (default: 1). "
+             "Note: nnPU (GPU) jobs may contend when workers > 1.",
+    )
     args = parser.parse_args()
 
-    features   = ALL_FEATURES if "all" in args.features else args.features
-    methods    = ALL_METHODS  if "all" in args.methods  else args.methods
-    labels     = ALL_LABELS   if "all" in args.labels   else args.labels
-    scale      = not args.no_scale
-    gpu_device = args.gpu_device or ("cuda" if __import__("torch").cuda.is_available() else "cpu")
-    rng        = np.random.default_rng(RANDOM_SEED)
+    features = ALL_FEATURES if "all" in args.features else args.features
+    methods  = ALL_METHODS  if "all" in args.methods  else args.methods
+    labels   = ALL_LABELS   if "all" in args.labels   else args.labels
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Load splits ───────────────────────────────────────────────────────────
     splits_path = METADATA_DIR / "splits.parquet"
     if not splits_path.exists():
         log.error("splits.parquet not found. Run build_dataset.py first.")
         sys.exit(1)
-    splits = pd.read_parquet(splits_path)
-    train_df = splits[splits["split"] == "train"]
-    n_unl_train = (train_df["label"] == UNLABELED_LABEL).sum()
 
-    records: list[dict] = []
+    combos = list(itertools.product(features, labels, methods))
+    log.info("%d combination(s) to train  (workers=%d)", len(combos), args.workers)
 
-    for feature_name in features:
-        for positive_label in labels:
-            log.info("=" * 60)
-            log.info("Feature: %s  |  Label: %s", feature_name, positive_label)
-            log.info("=" * 60)
+    worker_fn = partial(_train_combination, args=args, splits_path=splits_path)
 
-            # ── Per-label class prior ─────────────────────────────────────────
-            if args.pi_p is not None:
-                pi_p = args.pi_p
-            else:
-                n_pos_train = (train_df["label"] == positive_label).sum()
-                pi_p        = n_pos_train / (n_pos_train + n_unl_train)
-            log.info("  Class prior π_p = %.4f", pi_p)
-
-            log.info("  Loading train features …")
-            X_train, y_train, _ = build_xy(
-                splits, feature_name, "train", positive_label, args.max_unlabeled, rng
-            )
-            log.info("  Loading val features …")
-            X_val, y_val, _     = build_xy(
-                splits, feature_name, "val", positive_label, max_unlabeled=None, rng=rng
-            )
-
-            for method in methods:
-                log.info("── Method: %s ──", method)
-                run_ts = datetime.now().isoformat(timespec="seconds")
-                C      = args.C
-
-                if args.grid_search and method != "nnpu":
-                    C_grid = [0.01, 0.1, 1.0, 10.0]
-                    log.info("  Grid search over C=%s …", C_grid)
-                    C, _ = grid_search_C(
-                        method,
-                        X_train.copy(), y_train,
-                        X_val.copy(),   y_val,
-                        pi_p, C_grid, scale,
-                    )
-                elif args.grid_search and method == "nnpu":
-                    log.info("  Grid search skipped for nnpu (use --lr / --epochs instead)")
-
-                # ── Train ─────────────────────────────────────────────────────
-                log.info("  Training …")
-                t_start = time.time()
-
-                if method == "elkan_noto":
-                    clf = train_elkan_noto(X_train, y_train, C=C, scale=scale)
-                elif method == "biased_svm":
-                    clf = train_biased_svm(X_train, y_train, pi_p=pi_p, C=C, scale=scale)
-                else:  # nnpu
-                    log.info("  GPU device: %s", gpu_device)
-                    clf = train_nnpu(
-                        X_train, y_train, X_val, y_val,
-                        feature_name=feature_name,
-                        pi_p=pi_p,
-                        device=gpu_device,
-                        epochs=args.epochs,
-                        lr=args.lr,
-                        batch_size=args.nn_batch_size,
-                        patience=args.nn_patience,
-                        scale=scale,
-                    )
-
-                train_sec = time.time() - t_start
-                log.info("  Training time: %.1f s", train_sec)
-
-                # ── Evaluate ──────────────────────────────────────────────────
-                log.info("  Evaluating on val set …")
-                metrics = evaluate(clf, X_val, y_val)
-                log.info(
-                    "  AUC-ROC=%.4f  AP=%.4f  P@K=%.4f",
-                    metrics["auc_roc"], metrics["avg_precision"], metrics["precision_at_k"],
-                )
-
-                record = {
-                    "timestamp":      run_ts,
-                    "feature":        feature_name,
-                    "label":          positive_label,
-                    "method":         method,
-                    "C":              C,
-                    "pi_p":           round(pi_p, 4),
-                    "n_train_pos":    int(y_train.sum()),
-                    "n_train_unl":    int((y_train == 0).sum()),
-                    "n_val_pos":      int(y_val.sum()),
-                    "n_val_unl":      int((y_val == 0).sum()),
-                    "train_sec":      round(train_sec, 1),
-                    **{k: round(v, 5) for k, v in metrics.items()},
-                }
-                records.append(record)
-
-                # ── Save model ────────────────────────────────────────────────
-                if not args.no_save:
-                    model_path = MODELS_DIR / f"{feature_name}_{positive_label}_{method}.joblib"
-                    joblib.dump(clf, model_path)
-                    log.info("  Model saved → %s", model_path)
-
-                # ── Top-K unlabeled ───────────────────────────────────────────
-                if args.top_k > 0:
-                    show_top_unlabeled(
-                        clf, feature_name, method, splits,
-                        n=args.top_k, split=args.top_split,
-                        positive_label=positive_label,
-                    )
+    if args.workers == 1:
+        records = [worker_fn(combo) for combo in combos]
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as executor:
+            records = list(executor.map(worker_fn, combos))
 
     # ── Final summary ─────────────────────────────────────────────────────────
     if records:
