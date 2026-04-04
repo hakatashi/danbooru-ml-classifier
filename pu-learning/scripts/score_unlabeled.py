@@ -1,32 +1,36 @@
 #!/usr/bin/env python3
 """
-Score test-split unlabeled images using trained multiclass classifiers and save montage images.
+Score unlabeled images using trained classifiers and save montage images.
 
-Handles two model types (all using 6000-dim DeepDanbooru tag_probs as input):
+Evaluates two model families in order:
 
-  sklearn-multiclass-*.joblib
-    sklearn multiclass classifiers; scored via decision_function (shape N×3).
+1. Legacy multiclass models (6000-dim DeepDanbooru features):
+     sklearn-multiclass-*.joblib      — sklearn classifiers; decision_function (N×3)
+     torch-multiclass-onehot-shallow-network-multilayer
+                                      — PyTorch network (6000→512→128→128→3)
+   Classes: 0=not_bookmarked  1=bookmarked_public  2=bookmarked_private
 
-  torch-multiclass-onehot-shallow-network-multilayer
-    PyTorch Network (6000→512→128→128→3); scored via raw logits (shape N×3).
+2. PU Learning models (train_pu.py):
+     {feature}_{label}_{method}.joblib — binary PU classifiers (one per label)
+   Feature types: deepdanbooru, eva02, pixai
+   Labels:        pixiv_public, pixiv_private, twitter
+   Methods:       elkan_noto, biased_svm, nnpu
 
-Classes:
-  0: not_bookmarked
-  1: bookmarked_public
-  2: bookmarked_private
-
-Output per (model × class):
-  data/results/top{N}_{model_name}_{class_name}_{split}.png
+Output per model:
+  data/results/top{N}_{model_name}_{class_or_label}_{split}.png
 
 Usage:
   python score_unlabeled.py
   python score_unlabeled.py --top-k 20
   python score_unlabeled.py --split val
   python score_unlabeled.py --classes bookmarked_private bookmarked_public
+  python score_unlabeled.py --labels pixiv_public pixiv_private
+  python score_unlabeled.py --features eva02 --methods biased_svm
 """
 
 import argparse
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -52,19 +56,77 @@ log = logging.getLogger(__name__)
 MODELS_DIR  = DATA_DIR / "models"
 RESULTS_DIR = DATA_DIR / "results"
 
-CLASS_NAMES = ["not_bookmarked", "bookmarked_public", "bookmarked_private"]
+# ── Legacy multiclass constants ───────────────────────────────────────────────
+CLASS_NAMES      = ["not_bookmarked", "bookmarked_public", "bookmarked_private"]
+TORCH_MODEL_PATH = MODELS_DIR / "torch-multiclass-onehot-shallow-network-multilayer"
+
+LABEL_TO_CLASS = {
+    "pixiv_public":  1,   # bookmarked_public
+    "pixiv_private": 2,   # bookmarked_private
+    "twitter":       1,   # bookmarked_public (tweets are public bookmarks)
+    "unlabeled":     0,   # not_bookmarked (proxy)
+}
+
+# ── PU Learning constants ─────────────────────────────────────────────────────
+ALL_FEATURES = ["deepdanbooru", "eva02", "pixai"]
+ALL_LABELS   = ["pixiv_public", "pixiv_private", "twitter"]
+ALL_METHODS  = ["elkan_noto", "biased_svm", "nnpu"]
+
+_MODEL_RE = re.compile(
+    r"^(" + "|".join(ALL_FEATURES) + r")"
+    r"_(" + "|".join(ALL_LABELS) + r")"
+    r"_(" + "|".join(ALL_METHODS) + r")$"
+)
 
 
-# ── sklearn version compatibility ────────────────────────────────────────────
+# ── Unpickling support ────────────────────────────────────────────────────────
+# train_pu.py is run as __main__, so these classes are pickled under __main__.
+# Define them here (also __main__) so joblib.load can resolve them.
+
+class _ScaledClassifier:
+    """Thin wrapper: applies StandardScaler before delegating to clf."""
+
+    def __init__(self, scaler, clf):
+        self.scaler = scaler
+        self.clf    = clf
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.clf.predict_proba(self.scaler.transform(X))
+
+    def decision_function(self, X: np.ndarray) -> np.ndarray:
+        return self.clf.decision_function(self.scaler.transform(X))
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.clf.predict(self.scaler.transform(X))
+
+
+class NNPUClassifier:
+    """sklearn-compatible wrapper for a trained nnPU neural network."""
+
+    def __init__(self, model, scaler, device: str):
+        self.model  = model
+        self.scaler = scaler
+        self.device = device
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        import torch
+        if self.scaler is not None:
+            X = self.scaler.transform(X)
+        self.model.eval()
+        probs = []
+        with torch.no_grad():
+            for i in range(0, len(X), 2048):
+                batch  = torch.from_numpy(X[i:i+2048]).float().to(self.device)
+                logits = self.model(batch).squeeze(1)
+                probs.append(torch.sigmoid(logits).cpu().numpy())
+        p1 = np.concatenate(probs)
+        return np.stack([1.0 - p1, p1], axis=1)
+
+
+# ── sklearn version compatibility ─────────────────────────────────────────────
 
 def _fix_sklearn_compat(clf) -> None:
-    """
-    Patch models pickled with sklearn <1.4 so they run under sklearn >=1.4.
-
-    sklearn 1.4 added `monotonic_cst` to DecisionTreeClassifier.
-    Models pickled with 1.3.x lack this attribute and raise AttributeError
-    on prediction.
-    """
+    """Patch models pickled with sklearn <1.4 (missing monotonic_cst)."""
     from sklearn.tree import DecisionTreeClassifier
 
     estimators = []
@@ -72,6 +134,8 @@ def _fix_sklearn_compat(clf) -> None:
         estimators.extend(clf.estimators_)
     if hasattr(clf, "estimator"):
         estimators.append(clf.estimator)
+    if hasattr(clf, "clf"):
+        estimators.append(clf.clf)
 
     for est in estimators:
         if isinstance(est, DecisionTreeClassifier) and not hasattr(est, "monotonic_cst"):
@@ -118,7 +182,7 @@ def _save_montage(
     paths: list[str],
     scores: list[float],
     out_path: Path,
-    thumb_size: int = 224,
+    thumb_size: int = 640,
 ) -> None:
     """Create a grid of thumbnails with score labels and save as PNG."""
     from PIL import Image, ImageDraw, ImageFont
@@ -164,17 +228,13 @@ def _save_montage(
     log.info("  Montage saved → %s", out_path)
 
 
-# ── PyTorch model ────────────────────────────────────────────────────────────
-
-TORCH_MODEL_PATH = MODELS_DIR / "torch-multiclass-onehot-shallow-network-multilayer"
-
+# ── Legacy PyTorch model ─────────────────────────────────────────────────────
 
 def _load_torch_network(device: str):
     """
     Instantiate the shallow Network and load state_dict from TORCH_MODEL_PATH.
 
-    Architecture matches worker/torch_network.py:
-      Linear(6000→512) ReLU → Linear(512→128) ReLU → Linear(128→128) ReLU → Linear(128→3)
+    Architecture: Linear(6000→512) ReLU → Linear(512→128) ReLU → Linear(128→128) ReLU → Linear(128→3)
     """
     import torch
     import torch.nn as nn
@@ -205,10 +265,8 @@ def _load_torch_network(device: str):
 
 class TorchNetworkWrapper:
     """
-    Wraps the PyTorch Network so it can be passed to score_and_save.
-
-    decision_function returns raw logits (shape N×3) as a numpy array,
-    matching the contract expected by score_and_save.
+    Wraps the legacy PyTorch Network.
+    decision_function returns raw logits (shape N×3) as numpy array.
     """
 
     def __init__(self, model, device: str, batch_size: int = 2048):
@@ -227,18 +285,7 @@ class TorchNetworkWrapper:
         return np.concatenate(results, axis=0)   # shape (N, 3)
 
 
-# ── AUC-ROC ───────────────────────────────────────────────────────────────────
-
-# Maps PU-learning split labels → model class index (0/1/2).
-# unlabeled is treated as class 0 (not_bookmarked) — the same proxy
-# assumption as in train_pu.py, where unlabeled is the negative set.
-LABEL_TO_CLASS = {
-    "pixiv_public":  1,   # bookmarked_public
-    "pixiv_private": 2,   # bookmarked_private
-    "twitter":       1,   # bookmarked_public (tweets are public bookmarks)
-    "unlabeled":     0,   # not_bookmarked (proxy)
-}
-
+# ── Legacy AUC-ROC (multiclass) ───────────────────────────────────────────────
 
 def calc_auc(
     scores_all: np.ndarray,       # shape (N_unl + N_labeled, 3)
@@ -253,7 +300,7 @@ def calc_auc(
     For each target class, build binary (y_true, scores) and compute AUC-ROC.
 
     Positive  (y=1): labeled images whose LABEL_TO_CLASS maps to class_idx
-    Negative  (y=0): unlabeled images (same proxy as train_pu.py)
+    Negative  (y=0): unlabeled images (proxy)
 
     scores_all rows: first len(image_ids_unl) rows are unlabeled,
                      then len(image_ids_labeled) rows are labeled.
@@ -268,25 +315,18 @@ def calc_auc(
     for class_idx in target_classes:
         class_name = CLASS_NAMES[class_idx]
 
-        # y=1 for labeled images that map to this class
         pos_mask  = np.array([LABEL_TO_CLASS.get(lbl, -1) == class_idx
                                for lbl in labels_labeled])
-        # exclude labeled images that map to a *different* positive class
         other_pos = np.array([LABEL_TO_CLASS.get(lbl, -1) not in (-1, 0, class_idx)
                                for lbl in labels_labeled])
 
         s_pos   = s_labeled[pos_mask, class_idx]
-        s_other = s_labeled[other_pos, class_idx]   # excluded from scoring
-        s_neg   = s_unl[:, class_idx]
-        # also include labeled images that are NOT a positive for any class
-        # (LABEL_TO_CLASS == 0) together with unlabeled negatives
         neg_from_labeled_mask = np.array([LABEL_TO_CLASS.get(lbl, -1) == 0
                                            for lbl in labels_labeled])
         s_neg_labeled = s_labeled[neg_from_labeled_mask, class_idx]
+        s_neg   = s_unl[:, class_idx]
 
-        scores_bin = np.concatenate([s_pos,
-                                     s_neg,
-                                     s_neg_labeled])
+        scores_bin = np.concatenate([s_pos, s_neg, s_neg_labeled])
         y_true     = np.concatenate([np.ones(len(s_pos)),
                                      np.zeros(len(s_neg) + len(s_neg_labeled))])
 
@@ -303,19 +343,19 @@ def calc_auc(
             model_name, class_name,
         )
         records.append({
-            "model":      model_name,
-            "split":      split,
-            "class":      class_name,
-            "n_pos":      int(y_true.sum()),
-            "n_neg":      int((y_true == 0).sum()),
-            "auc_roc":    round(auc, 5),
+            "model":         model_name,
+            "split":         split,
+            "class":         class_name,
+            "n_pos":         int(y_true.sum()),
+            "n_neg":         int((y_true == 0).sum()),
+            "auc_roc":       round(auc, 5),
             "avg_precision": round(ap, 5),
         })
 
     return records
 
 
-# ── Scoring ───────────────────────────────────────────────────────────────────
+# ── Legacy scoring (multiclass) ───────────────────────────────────────────────
 
 def score_and_save(
     clf,
@@ -331,20 +371,18 @@ def score_and_save(
     split: str,
 ) -> list[dict]:
     """
-    Score unlabeled images, save top-N montages, and compute AUC-ROC.
-
-    Returns a list of metric dicts (one per target class).
+    Score unlabeled images with a multiclass model, save top-N montages per class,
+    and compute AUC-ROC.  Returns a list of metric dicts (one per target class).
     """
     if hasattr(clf, "decision_function"):
-        scores_unl     = clf.decision_function(X_unl)       # (N_unl, 3)
-        scores_labeled = clf.decision_function(X_labeled)   # (N_labeled, 3)
+        scores_unl     = clf.decision_function(X_unl)
+        scores_labeled = clf.decision_function(X_labeled)
     elif hasattr(clf, "predict_proba"):
         scores_unl     = clf.predict_proba(X_unl)
         scores_labeled = clf.predict_proba(X_labeled)
     else:
         raise ValueError(f"Model {model_name} has neither decision_function nor predict_proba")
 
-    # ── Top-N montage per class (unlabeled only) ──────────────────────────────
     for class_idx in target_classes:
         class_name = CLASS_NAMES[class_idx]
         scores     = scores_unl[:, class_idx]
@@ -367,13 +405,139 @@ def score_and_save(
         out_path = RESULTS_DIR / f"top{n}_{model_name}_{class_name}_{split}.png"
         _save_montage(top_paths, top_scores, out_path)
 
-    # ── AUC-ROC ───────────────────────────────────────────────────────────────
     scores_all = np.concatenate([scores_unl, scores_labeled], axis=0)
     return calc_auc(
         scores_all,
         image_ids_unl, image_ids_labeled, labels_labeled,
         target_classes, model_name, split,
     )
+
+
+# ── AUC-ROC (binary PU) ───────────────────────────────────────────────────────
+
+def calc_auc_binary(
+    scores_unl: np.ndarray,      # shape (N_unl,)  — unlabeled images
+    scores_labeled: np.ndarray,  # shape (N_labeled,)
+    labels_labeled: list[str],
+    positive_label: str,
+    model_name: str,
+    split: str,
+) -> dict | None:
+    """
+    Binary AUC-ROC for one PU model.
+
+    Positive (y=1): labeled images whose label == positive_label
+    Negative (y=0): unlabeled images
+    Excluded:       labeled images with other positive labels
+    """
+    from sklearn.metrics import average_precision_score, roc_auc_score
+
+    pos_mask = np.array([lbl == positive_label for lbl in labels_labeled])
+    s_pos    = scores_labeled[pos_mask]
+    s_neg    = scores_unl
+
+    if len(s_pos) == 0 or len(s_neg) == 0:
+        log.warning("  Skipping AUC for %s: no positives or no negatives", model_name)
+        return None
+
+    scores_bin = np.concatenate([s_pos, s_neg])
+    y_true     = np.concatenate([np.ones(len(s_pos)), np.zeros(len(s_neg))])
+
+    auc = float(roc_auc_score(y_true, scores_bin))
+    ap  = float(average_precision_score(y_true, scores_bin))
+    log.info(
+        "  AUC-ROC=%.4f  AP=%.4f  (pos=%d, neg=%d)  [%s]",
+        auc, ap, len(s_pos), len(s_neg), model_name,
+    )
+    return {
+        "model":         model_name,
+        "split":         split,
+        "label":         positive_label,
+        "n_pos":         len(s_pos),
+        "n_neg":         len(s_neg),
+        "auc_roc":       round(auc, 5),
+        "avg_precision": round(ap, 5),
+    }
+
+
+# ── Scoring ───────────────────────────────────────────────────────────────────
+
+def score_model(
+    clf,
+    feature_name: str,
+    positive_label: str,
+    method: str,
+    image_ids_unl: list[str],
+    id_to_path: dict[str, str],
+    image_ids_labeled: list[str],
+    labels_labeled: list[str],
+    X_unl: np.ndarray,
+    X_labeled: np.ndarray,
+    n: int,
+    split: str,
+) -> dict | None:
+    """Score one PU model, save top-N montage, and return AUC-ROC metrics."""
+    model_name = f"{feature_name}_{positive_label}_{method}"
+
+    if hasattr(clf, "predict_proba"):
+        scores_unl     = clf.predict_proba(X_unl)[:, 1]
+        scores_labeled = clf.predict_proba(X_labeled)[:, 1]
+    elif hasattr(clf, "decision_function"):
+        scores_unl     = clf.decision_function(X_unl)
+        scores_labeled = clf.decision_function(X_labeled)
+    else:
+        raise ValueError(f"Model {model_name} has neither predict_proba nor decision_function")
+
+    # ── Top-N montage ─────────────────────────────────────────────────────────
+    top_idx = np.argsort(scores_unl)[::-1][:n]
+    log.info(
+        "  ── Top %d unlabeled  [%s / %s / %s] ──",
+        n, feature_name, positive_label, method,
+    )
+    top_paths  = []
+    top_scores = []
+    for rank, idx in enumerate(top_idx, 1):
+        iid   = image_ids_unl[idx]
+        fpath = id_to_path[iid]
+        score = float(scores_unl[idx])
+        log.info("  %2d. score=%.4f  %s  [%s]", rank, score, fpath, iid)
+        top_paths.append(fpath)
+        top_scores.append(score)
+
+    out_path = RESULTS_DIR / f"top{n}_{model_name}_{split}.png"
+    _save_montage(top_paths, top_scores, out_path)
+
+    # ── AUC-ROC ───────────────────────────────────────────────────────────────
+    return calc_auc_binary(
+        scores_unl, scores_labeled, labels_labeled,
+        positive_label, model_name, split,
+    )
+
+
+# ── Model discovery ───────────────────────────────────────────────────────────
+
+def discover_models(
+    filter_features: list[str],
+    filter_labels: list[str],
+    filter_methods: list[str],
+) -> list[tuple[str, str, str, Path]]:
+    """
+    Return [(feature, label, method, path), ...] for all matching .joblib files.
+    """
+    found = []
+    for p in sorted(MODELS_DIR.glob("*.joblib")):
+        m = _MODEL_RE.match(p.stem)
+        if not m:
+            continue
+        feature, label, method = m.group(1), m.group(2), m.group(3)
+        if feature not in filter_features:
+            continue
+        if label not in filter_labels:
+            continue
+        if method not in filter_methods:
+            continue
+        found.append((feature, label, method, p))
+    return found
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -384,33 +548,47 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--split", choices=["train", "val", "test"], default="test",
+        "--split", choices=["train", "val", "test", "all"], default="test",
         help="Which split to score unlabeled images from (default: test)",
     )
     parser.add_argument(
         "--top-k", type=int, default=30,
-        help="Number of top images per class per model (default: 30)",
+        help="Number of top images per model (default: 30)",
     )
     parser.add_argument(
         "--classes", nargs="+",
         choices=CLASS_NAMES + ["all"], default=["all"],
-        help="Which class scores to rank by (default: all)",
+        help="Which classes to rank for legacy multiclass models (default: all)",
+    )
+    parser.add_argument(
+        "--features", nargs="+",
+        choices=ALL_FEATURES + ["all"], default=["all"],
+        help="Feature type(s) to evaluate for PU models (default: all)",
+    )
+    parser.add_argument(
+        "--labels", nargs="+",
+        choices=ALL_LABELS + ["all"], default=["all"],
+        help="Positive label(s) to evaluate for PU models (default: all)",
+    )
+    parser.add_argument(
+        "--methods", nargs="+",
+        choices=ALL_METHODS + ["all"], default=["all"],
+        help="PU method(s) to evaluate (default: all)",
     )
     parser.add_argument(
         "--gpu-device", type=str, default=None,
-        help="PyTorch device for torch network (default: auto-detect cuda/cpu)",
+        help="PyTorch device for torch/nnpu models (default: auto-detect cuda/cpu)",
     )
     args = parser.parse_args()
 
-    target_classes = (
+    target_classes  = (
         list(range(len(CLASS_NAMES)))
         if "all" in args.classes
         else [CLASS_NAMES.index(c) for c in args.classes]
     )
-
-    import torch
-    gpu_device = args.gpu_device or ("cuda" if torch.cuda.is_available() else "cpu")
-    log.info("PyTorch device: %s", gpu_device)
+    filter_features = ALL_FEATURES if "all" in args.features else args.features
+    filter_labels   = ALL_LABELS   if "all" in args.labels   else args.labels
+    filter_methods  = ALL_METHODS  if "all" in args.methods  else args.methods
 
     # ── Load splits ───────────────────────────────────────────────────────────
     splits_path = METADATA_DIR / "splits.parquet"
@@ -419,99 +597,157 @@ def main() -> None:
         sys.exit(1)
     splits = pd.read_parquet(splits_path)
 
-    unl_df = splits[
-        (splits["split"] == args.split) & (splits["label"] == UNLABELED_LABEL)
-    ].reset_index(drop=True)
+    split_mask = (
+        pd.Series([True] * len(splits), index=splits.index)
+        if args.split == "all"
+        else (splits["split"] == args.split)
+    )
 
+    unl_df = splits[
+        split_mask & (splits["label"] == UNLABELED_LABEL)
+    ].reset_index(drop=True)
     if unl_df.empty:
         log.error("No unlabeled images found in split=%s", args.split)
         sys.exit(1)
-
-    log.info(
-        "Unlabeled images in split=%s: %d",
-        args.split, len(unl_df),
-    )
+    log.info("Unlabeled images in split=%s: %d", args.split, len(unl_df))
 
     image_ids_unl = unl_df["image_id"].tolist()
     id_to_path    = dict(zip(unl_df["image_id"], unl_df["file_path"]))
 
-    # labeled rows in the same split (for AUC-ROC)
     labeled_df        = splits[
-        (splits["split"] == args.split) & (splits["label"] != UNLABELED_LABEL)
+        split_mask & (splits["label"] != UNLABELED_LABEL)
     ].reset_index(drop=True)
     image_ids_labeled = labeled_df["image_id"].tolist()
     labels_labeled    = labeled_df["label"].tolist()
     log.info("Labeled images in split=%s: %d", args.split, len(labeled_df))
 
-    # ── Load deepdanbooru features (used by all GCS models) ──────────────────
-    log.info("Loading deepdanbooru features …")
-    store     = FeatureStore("deepdanbooru")
-    X_unl     = store.load_rows(image_ids_unl)
-    X_labeled = store.load_rows(image_ids_labeled)
-    log.info("Unlabeled feature matrix : %s", X_unl.shape)
-    log.info("Labeled   feature matrix : %s", X_labeled.shape)
-
-    # ── Collect models ────────────────────────────────────────────────────────
+    # ── Discover legacy models ────────────────────────────────────────────────
     sklearn_paths = sorted(MODELS_DIR.glob("sklearn-multiclass-*.joblib"))
     has_torch     = TORCH_MODEL_PATH.exists()
 
-    if not sklearn_paths and not has_torch:
+    # ── Discover PU models ────────────────────────────────────────────────────
+    pu_models = discover_models(filter_features, filter_labels, filter_methods)
+
+    if not sklearn_paths and not has_torch and not pu_models:
         log.error(
             "No models found in %s\n"
-            "  Expected: sklearn-multiclass-*.joblib  or  %s",
+            "  Legacy: sklearn-multiclass-*.joblib  or  %s\n"
+            "  PU:     {feature}_{label}_{method}.joblib  (run train_pu.py first)",
             MODELS_DIR, TORCH_MODEL_PATH.name,
         )
         sys.exit(1)
 
-    log.info("sklearn models : %d", len(sklearn_paths))
+    log.info("Legacy sklearn models : %d", len(sklearn_paths))
     for p in sklearn_paths:
         log.info("  %s", p.name)
-    log.info("torch model    : %s", TORCH_MODEL_PATH.name if has_torch else "(not found)")
+    log.info("Legacy torch model    : %s", TORCH_MODEL_PATH.name if has_torch else "(not found)")
+    log.info("PU models             : %d", len(pu_models))
+    for feature, label, method, path in pu_models:
+        log.info("  %s", path.name)
+
+    # ── PyTorch device ────────────────────────────────────────────────────────
+    need_torch = has_torch or any(method == "nnpu" for _, _, method, _ in pu_models)
+    if need_torch:
+        import torch
+        gpu_device = args.gpu_device or ("cuda" if torch.cuda.is_available() else "cpu")
+        log.info("PyTorch device: %s", gpu_device)
+    else:
+        gpu_device = None
+
+    # ── Feature cache: feature_name → (X_unl, X_labeled) ─────────────────────
+    feature_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+
+    def get_features(feature_name: str) -> tuple[np.ndarray, np.ndarray]:
+        if feature_name not in feature_cache:
+            log.info("Loading features: %s …", feature_name)
+            store = FeatureStore(feature_name)
+            X_u   = store.load_rows(image_ids_unl)
+            X_l   = store.load_rows(image_ids_labeled)
+            log.info("  unl=%s  labeled=%s", X_u.shape, X_l.shape)
+            feature_cache[feature_name] = (X_u, X_l)
+        return feature_cache[feature_name]
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     all_records: list[dict] = []
 
-    # ── Score sklearn models ──────────────────────────────────────────────────
+    # ── 1. Legacy sklearn multiclass models ───────────────────────────────────
     for model_path in sklearn_paths:
         model_name = model_path.stem
         log.info("=" * 60)
-        log.info("Model: %s", model_name)
+        log.info("Legacy Model: %s", model_name)
         log.info("=" * 60)
 
         log.info("  Loading model …")
         clf = joblib.load(model_path)
         _fix_sklearn_compat(clf)
 
+        X_unl_feat, X_labeled_feat = get_features("deepdanbooru")
+
         records = score_and_save(
             clf, model_name,
-            X_unl, image_ids_unl, id_to_path,
-            X_labeled, image_ids_labeled, labels_labeled,
+            X_unl_feat, image_ids_unl, id_to_path,
+            X_labeled_feat, image_ids_labeled, labels_labeled,
             target_classes=target_classes,
             n=args.top_k,
             split=args.split,
         )
         all_records.extend(records)
 
-    # ── Score PyTorch model ───────────────────────────────────────────────────
+    # ── 2. Legacy PyTorch multiclass model ────────────────────────────────────
     if has_torch:
         model_name = "torch-multiclass-onehot-shallow-network"
         log.info("=" * 60)
-        log.info("Model: %s", model_name)
+        log.info("Legacy Model: %s", model_name)
         log.info("=" * 60)
 
         log.info("  Loading model …")
         net = _load_torch_network(gpu_device)
         clf = TorchNetworkWrapper(net, device=gpu_device)
 
+        X_unl_feat, X_labeled_feat = get_features("deepdanbooru")
+
         records = score_and_save(
             clf, model_name,
-            X_unl, image_ids_unl, id_to_path,
-            X_labeled, image_ids_labeled, labels_labeled,
+            X_unl_feat, image_ids_unl, id_to_path,
+            X_labeled_feat, image_ids_labeled, labels_labeled,
             target_classes=target_classes,
             n=args.top_k,
             split=args.split,
         )
         all_records.extend(records)
+
+    # ── 3. PU Learning models ─────────────────────────────────────────────────
+    for feature, label, method, model_path in pu_models:
+        log.info("=" * 60)
+        log.info("PU Model: %s_%s_%s", feature, label, method)
+        log.info("=" * 60)
+
+        log.info("  Loading model …")
+        clf = joblib.load(model_path)
+        _fix_sklearn_compat(clf)
+
+        if isinstance(clf, NNPUClassifier) and gpu_device is not None:
+            clf.model  = clf.model.to(gpu_device)
+            clf.device = gpu_device
+
+        X_unl_feat, X_labeled_feat = get_features(feature)
+
+        record = score_model(
+            clf,
+            feature_name      = feature,
+            positive_label    = label,
+            method            = method,
+            image_ids_unl     = image_ids_unl,
+            id_to_path        = id_to_path,
+            image_ids_labeled = image_ids_labeled,
+            labels_labeled    = labels_labeled,
+            X_unl             = X_unl_feat,
+            X_labeled         = X_labeled_feat,
+            n                 = args.top_k,
+            split             = args.split,
+        )
+        if record is not None:
+            all_records.append(record)
 
     # ── Save metrics ──────────────────────────────────────────────────────────
     if all_records:
@@ -521,10 +757,18 @@ def main() -> None:
             df_new = pd.concat([pd.read_csv(metrics_path), df_new], ignore_index=True)
         df_new.to_csv(metrics_path, index=False)
 
+        df_summary = pd.DataFrame(all_records)
+        # Unify "class" (legacy) and "label" (PU) into one column for display
+        if "class" in df_summary.columns and "label" in df_summary.columns:
+            df_summary["label"] = df_summary["label"].fillna(df_summary["class"])
+        elif "class" in df_summary.columns:
+            df_summary = df_summary.rename(columns={"class": "label"})
         log.info("\n── AUC-ROC summary ──")
-        log.info("\n%s", pd.DataFrame(all_records)[
-            ["model", "class", "auc_roc", "avg_precision"]
-        ].to_string(index=False, float_format="%.4f"))
+        log.info(
+            "\n%s",
+            df_summary[["model", "label", "auc_roc", "avg_precision"]]
+            .to_string(index=False, float_format="%.4f"),
+        )
         log.info("Metrics saved → %s", metrics_path)
 
     log.info("Done. Results saved to %s", RESULTS_DIR)
