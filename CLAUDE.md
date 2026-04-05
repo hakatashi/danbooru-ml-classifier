@@ -252,6 +252,20 @@ python scripts/score_unlabeled.py --split val
 python scripts/score_unlabeled.py --classes bookmarked_private bookmarked_public
 ```
 
+**Manual labeling tool** (`labeler/`):
+```bash
+cd pu-learning
+# Start labeling web UI (uses existing venv)
+source venv/bin/activate
+python labeler/app.py              # → http://localhost:8765
+python labeler/app.py --port 9000  # Custom port
+
+# Labels are saved to: data/labels/manual_labels.json
+# Images to label: DMC images NOT in splits.parquet (~8641 images)
+# Labels: pixiv_public | pixiv_private | not_bookmarked
+# Keyboard shortcuts: 1/Q=public, 2/W=private, 3/E=not_bm, S=skip, ←/→=navigate
+```
+
 ### Public Website (Vue 3 + TypeScript)
 ```bash
 cd public
