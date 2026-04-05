@@ -1,0 +1,35 @@
+.subbar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  background: var(--c-bg-subtle);
+  border-bottom: 1px solid var(--c-border-subtle);
+  flex-shrink: 0;
+}
+
+.subbar.visible {
+  display: flex;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+}
+
+.subTab {
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--c-border-dim);
+  background: var(--c-bg-input);
+  color: var(--c-text-mid);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.subTab.active {
+  background: var(--c-accent-bg);
+  border-color: var(--c-accent);
+  color: var(--c-accent-light);
+}

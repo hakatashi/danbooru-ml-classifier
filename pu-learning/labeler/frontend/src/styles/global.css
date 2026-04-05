@@ -1,0 +1,73 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Backgrounds */
+  --c-bg:          #111;
+  --c-bg-elevated: #1a1a1a;
+  --c-bg-card:     #161616;
+  --c-bg-subtle:   #141414;
+  --c-bg-input:    #1c1c1c;
+  --c-bg-dark:     #0a0a0a;
+
+  /* Borders */
+  --c-border:        #333;
+  --c-border-subtle: #2a2a2a;
+  --c-border-muted:  #444;
+  --c-border-dim:    #383838;
+
+  /* Text */
+  --c-text:       #eee;
+  --c-text-muted: #aaa;
+  --c-text-dim:   #666;
+  --c-text-faint: #555;
+  --c-text-soft:  #888;
+  --c-text-mid:   #999;
+  --c-text-ccc:   #ccc;
+
+  /* Accent (blue) */
+  --c-accent:    #2563eb;
+  --c-accent-bg: #1e3a5f;
+  --c-accent-light: #93c5fd;
+
+  /* Progress */
+  --c-progress: #4ade80;
+
+  /* Label colors */
+  --c-label-public:  #4ade80;
+  --c-label-private: #f472b6;
+  --c-label-not-bm:  #f87171;
+  --c-label-skip:    #555;
+
+  /* Label button colors */
+  --c-btn-public-bg:      #14532d;
+  --c-btn-public-border:  #22c55e;
+  --c-btn-public-text:    #4ade80;
+  --c-btn-public-hover:   #166534;
+  --c-btn-private-bg:     #500724;
+  --c-btn-private-border: #ec4899;
+  --c-btn-private-text:   #f472b6;
+  --c-btn-private-hover:  #831843;
+  --c-btn-notbm-bg:       #450a0a;
+  --c-btn-notbm-border:   #ef4444;
+  --c-btn-notbm-text:     #f87171;
+  --c-btn-notbm-hover:    #7f1d1d;
+
+  /* Rating button */
+  --c-rating-active-bg:     #451a03;
+  --c-rating-active-border: #d97706;
+  --c-rating-active-text:   #fcd34d;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--c-bg);
+  color: var(--c-text);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#root {
+  display: contents;
+}

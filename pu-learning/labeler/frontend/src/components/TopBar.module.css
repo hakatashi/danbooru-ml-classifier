@@ -1,0 +1,53 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--c-bg-elevated);
+  border-bottom: 1px solid var(--c-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.progressText {
+  font-size: 13px;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+
+.progressBarWrap {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  background: var(--c-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  background: var(--c-progress);
+  transition: width 0.3s;
+  border-radius: 3px;
+}
+
+.filterTabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabBtn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--c-border-muted);
+  background: #222;
+  color: var(--c-text-ccc);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tabBtn.active {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: #fff;
+}

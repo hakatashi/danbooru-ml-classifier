@@ -1,0 +1,163 @@
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--c-bg-elevated);
+  border-top: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
+
+/* ── Rating row ── */
+.ratingRow {
+  display: none;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+}
+
+.ratingRow.visible {
+  display: flex;
+}
+
+.ratingRowLabel {
+  font-size: 12px;
+  color: var(--c-text-dim);
+}
+
+.ratingBtn {
+  flex: 1;
+  max-width: 140px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--c-border-muted);
+  background: var(--c-bg-input);
+  color: var(--c-text-soft);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  transition: background 0.08s;
+}
+
+.ratingBtn .shortcut {
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+.ratingBtn:hover { background: #2a2a2a; }
+
+.ratingBtn.active {
+  background: var(--c-rating-active-bg);
+  border-color: var(--c-rating-active-border);
+  color: var(--c-rating-active-text);
+}
+
+/* ── Label buttons ── */
+.labelButtons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.labelBtn {
+  flex: 1;
+  max-width: 220px;
+  padding: 10px 12px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.08s, filter 0.08s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.labelBtn:active { transform: scale(0.97); }
+
+.labelBtn .shortcut {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.labelBtn.selected {
+  filter: brightness(1.4);
+  transform: scale(1.02);
+}
+
+.btnPublic {
+  background: var(--c-btn-public-bg);
+  border-color: var(--c-btn-public-border);
+  color: var(--c-btn-public-text);
+}
+.btnPublic:hover { background: var(--c-btn-public-hover); }
+
+.btnPrivate {
+  background: var(--c-btn-private-bg);
+  border-color: var(--c-btn-private-border);
+  color: var(--c-btn-private-text);
+}
+.btnPrivate:hover { background: var(--c-btn-private-hover); }
+
+.btnNotBm {
+  background: var(--c-btn-notbm-bg);
+  border-color: var(--c-btn-notbm-border);
+  color: var(--c-btn-notbm-text);
+}
+.btnNotBm:hover { background: var(--c-btn-notbm-hover); }
+
+/* ── Nav buttons ── */
+.navButtons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+}
+
+.navBtn {
+  padding: 6px 16px;
+  background: #2a2a2a;
+  border: 1px solid var(--c-border-muted);
+  border-radius: 6px;
+  color: var(--c-text-ccc);
+  font-size: 13px;
+  cursor: pointer;
+}
+.navBtn:hover { background: #333; }
+.navBtn:disabled { opacity: 0.3; cursor: default; }
+
+.btnSkip {
+  padding: 6px 16px;
+  background: #222;
+  border: 1px solid var(--c-text-faint);
+  border-radius: 6px;
+  color: var(--c-text-soft);
+  font-size: 13px;
+  cursor: pointer;
+}
+.btnSkip:hover { background: #2a2a2a; color: var(--c-text-muted); }
+
+.btnUndo {
+  padding: 6px 12px;
+  background: var(--c-bg-elevated);
+  border: 1px solid var(--c-border-muted);
+  border-radius: 6px;
+  color: var(--c-text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btnUndo:hover:not(:disabled) { background: #2a2a2a; color: var(--c-text-muted); }
+.btnUndo:disabled { opacity: 0.3; cursor: default; }
+
+.positionIndicator {
+  font-size: 12px;
+  color: var(--c-text-dim);
+  min-width: 80px;
+  text-align: center;
+}

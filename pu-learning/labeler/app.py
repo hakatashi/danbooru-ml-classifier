@@ -171,9 +171,7 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
         path = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
 
-        if path == "/" or path == "/index.html":
-            self._serve_static("index.html")
-        elif path == "/api/status":
+        if path == "/api/status":
             self._handle_status()
         elif path == "/api/images":
             self._handle_images(params)
@@ -182,7 +180,13 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/thumbnail":
             self._handle_thumbnail(params)
         else:
-            self._send_404()
+            # Serve static assets (Vite build output); fall back to index.html for SPA routing
+            clean = path.lstrip("/") or "index.html"
+            static_path = SCRIPT_DIR / "static" / clean
+            if static_path.is_file():
+                self._serve_static(clean)
+            else:
+                self._serve_static("index.html")
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -397,8 +401,9 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
             return
         data = static_path.read_bytes()
         mime = mimetypes.guess_type(filename)[0] or "text/html"
+        content_type = mime if mime.startswith("image/") else mime + "; charset=utf-8"
         self.send_response(200)
-        self.send_header("Content-Type", mime + "; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self._cors_headers()
         self.end_headers()

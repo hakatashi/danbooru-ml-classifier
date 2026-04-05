@@ -1,0 +1,107 @@
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--c-bg-card);
+  border-right: 1px solid var(--c-border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--c-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #222;
+  flex-shrink: 0;
+}
+
+.count {
+  color: var(--c-text-faint);
+}
+
+/* Virtual scroll */
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+}
+
+.scroll::-webkit-scrollbar { width: 4px; }
+.scroll::-webkit-scrollbar-track { background: var(--c-bg); }
+.scroll::-webkit-scrollbar-thumb { background: var(--c-border-muted); border-radius: 2px; }
+
+.spacer {
+  width: 1px;
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.empty {
+  padding: 12px;
+  color: var(--c-text-faint);
+  font-size: 12px;
+}
+
+/* Thumbnail item */
+.thumbItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--c-text-soft);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  height: 52px;
+}
+
+.thumbItem:hover { background: #222; }
+
+.thumbItem.active {
+  background: var(--c-accent-bg);
+  border-color: var(--c-accent);
+  color: var(--c-text);
+}
+
+.thumbImg {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 2px;
+  flex-shrink: 0;
+  background: #222;
+}
+
+.thumbMeta {
+  overflow: hidden;
+}
+
+.thumbName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.thumbLabel {
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+/* Label color variants */
+.labelPublic  { color: var(--c-label-public); }
+.labelPrivate { color: var(--c-label-private); }
+.labelNotBm   { color: var(--c-label-not-bm); }
+.labelSkip    { color: var(--c-label-skip); }
