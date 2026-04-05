@@ -18,6 +18,7 @@ import http.server
 import io
 import json
 import mimetypes
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -33,6 +34,8 @@ LABELS_DIR      = PROJECT_DIR / "data" / "labels"
 LABELS_FILE     = LABELS_DIR / "manual_labels.json"
 DMC_IMAGES_DIR  = Path("/mnt/cache/danbooru-ml-classifier/images")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+FRONTEND_DIR   = SCRIPT_DIR / "frontend"
 
 VALID_LABELS   = ["pixiv_public", "pixiv_private", "not_bookmarked"]
 RATABLE_LABELS = {"pixiv_public", "pixiv_private"}  # labels that support a 1-3 rating
@@ -452,10 +455,30 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def build_frontend() -> None:
+    """Run `npm install` (if needed) then `npm run build` in the frontend directory."""
+    if not FRONTEND_DIR.is_dir():
+        print("[warn] frontend/ directory not found, skipping build.")
+        return
+
+    node_modules = FRONTEND_DIR / "node_modules"
+    if not node_modules.is_dir():
+        print("[build] Running npm install...")
+        subprocess.run(["npm", "install"], cwd=FRONTEND_DIR, check=True)
+
+    print("[build] Building frontend...")
+    subprocess.run(["npm", "run", "build"], cwd=FRONTEND_DIR, check=True)
+    print("[build] Frontend build complete.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-build", action="store_true", help="Skip frontend build on startup")
     args = parser.parse_args()
+
+    if not args.no_build:
+        build_frontend()
 
     global _images_to_label, _index_map, _labels
     _images_to_label = build_image_list()
