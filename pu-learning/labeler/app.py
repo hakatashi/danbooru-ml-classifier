@@ -39,6 +39,25 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 FRONTEND_DIR   = SCRIPT_DIR / "frontend"
 
+
+def _load_dotenv(dotenv_path: Path) -> None:
+    """Load KEY=value lines from a .env file into os.environ (skip if already set)."""
+    if not dotenv_path.is_file():
+        return
+    with open(dotenv_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+# Load .env from the publisher directory (sibling of pu-learning/)
+_load_dotenv(REPO_DIR / "publisher" / ".env")
+
 # ── External API credentials (optional) ───────────────────────────────────────
 DANBOORU_API_USER = os.environ.get("DANBOORU_API_USER", "")
 DANBOORU_API_KEY  = os.environ.get("DANBOORU_API_KEY", "")
