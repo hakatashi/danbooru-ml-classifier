@@ -49,3 +49,36 @@
   color: var(--c-accent-light);
   text-decoration: underline;
 }
+
+.fetchSourceBtn {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--c-border-muted);
+  background: transparent;
+  color: var(--c-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.fetchSourceBtn:hover:not(:disabled) {
+  background: var(--c-accent-bg);
+  border-color: var(--c-accent);
+  color: var(--c-accent-light);
+}
+
+.fetchSourceBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fetchSourceNone {
+  color: var(--c-text-faint);
+  border-color: #333;
+}
+
+.fetchSourceError {
+  color: var(--c-label-not-bm);
+  border-color: var(--c-btn-notbm-border);
+}

@@ -67,3 +67,10 @@ export function postUnlabel(path: string): Promise<{ ok: boolean }> {
 export function postRating(path: string, rating: number): Promise<RatingResponse> {
   return postJSON('/api/rating', { path, rating });
 }
+
+export async function fetchSource(path: string): Promise<string | null> {
+  const q = new URLSearchParams({ path });
+  const r = await fetch(`/api/source?${q}`);
+  const data = (await r.json()) as { source: string | null };
+  return data.source ?? null;
+}

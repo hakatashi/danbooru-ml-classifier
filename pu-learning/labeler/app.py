@@ -18,10 +18,12 @@ import http.server
 import io
 import json
 import mimetypes
+import os
 import subprocess
 import sys
 import threading
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -36,6 +38,12 @@ DMC_IMAGES_DIR  = Path("/mnt/cache/danbooru-ml-classifier/images")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 FRONTEND_DIR   = SCRIPT_DIR / "frontend"
+
+# ── External API credentials (optional) ───────────────────────────────────────
+DANBOORU_API_USER = os.environ.get("DANBOORU_API_USER", "")
+DANBOORU_API_KEY  = os.environ.get("DANBOORU_API_KEY", "")
+GELBOORU_API_USER = os.environ.get("GELBOORU_API_USER", "")
+GELBOORU_API_KEY  = os.environ.get("GELBOORU_API_KEY", "")
 
 VALID_LABELS   = ["pixiv_public", "pixiv_private", "not_bookmarked"]
 RATABLE_LABELS = {"pixiv_public", "pixiv_private"}  # labels that support a 1-3 rating
@@ -127,6 +135,44 @@ def make_thumbnail(image_path: Path) -> bytes:
     return data
 
 
+def _fetch_post_source(provider: str, stem: str) -> str | None:
+    """Fetch the 'source' field from the Danbooru or Gelbooru API.
+
+    Returns the source string (may be empty or a URL), or None if not supported.
+    Raises urllib.error.URLError / ValueError on network/parse errors.
+    """
+    if provider == "danbooru":
+        post_id = stem  # stem is the numeric ID directly
+        url = f"https://danbooru.donmai.us/posts/{post_id}.json"
+        req = urllib.request.Request(url, headers={"User-Agent": "danbooru-ml-classifier-labeler/1.0"})
+        if DANBOORU_API_USER and DANBOORU_API_KEY:
+            import base64
+            creds = base64.b64encode(f"{DANBOORU_API_USER}:{DANBOORU_API_KEY}".encode()).decode()
+            req.add_header("Authorization", f"Basic {creds}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return data.get("source") or None
+
+    if provider == "gelbooru":
+        post_id = stem  # stem is the numeric ID directly
+        q = urllib.parse.urlencode({
+            "page": "dapi", "s": "post", "q": "index", "json": "1", "id": post_id,
+            **({"api_key": GELBOORU_API_KEY, "user_id": GELBOORU_API_USER}
+               if GELBOORU_API_USER and GELBOORU_API_KEY else {}),
+        })
+        url = f"https://gelbooru.com/index.php?{q}"
+        req = urllib.request.Request(url, headers={"User-Agent": "danbooru-ml-classifier-labeler/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        # Response: {"post": [...]} or {"@attributes": ..., "post": [...]}
+        posts = data.get("post", [])
+        if not posts:
+            return None
+        return posts[0].get("source") or None
+
+    return None  # provider not supported (e.g. pixiv)
+
+
 def load_labels() -> dict:
     LABELS_DIR.mkdir(parents=True, exist_ok=True)
     if not LABELS_FILE.exists():
@@ -182,6 +228,8 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
             self._handle_image(params)
         elif path == "/api/thumbnail":
             self._handle_thumbnail(params)
+        elif path == "/api/source":
+            self._handle_source(params)
         else:
             # Serve static assets (Vite build output); fall back to index.html for SPA routing
             clean = path.lstrip("/") or "index.html"
@@ -321,6 +369,40 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
         self._cors_headers()
         self.end_headers()
         self.wfile.write(data)
+
+    def _handle_source(self, params: dict):
+        """GET /api/source?path=<absolute path>
+        Fetches the 'source' field from the Danbooru or Gelbooru API for the given image.
+        Returns: {"source": "<url or empty string>"}
+        """
+        path_param = params.get("path", [None])[0]
+        if not path_param:
+            self._send_error(400, "Missing 'path' parameter")
+            return
+
+        # Determine provider and post ID from the relative path
+        try:
+            image_path = Path(path_param).resolve()
+            rel = image_path.relative_to(DMC_IMAGES_DIR.resolve())
+        except (ValueError, Exception):
+            self._send_error(403, "Forbidden path")
+            return
+
+        parts = rel.parts  # e.g. ("danbooru", "12345.jpg")
+        if len(parts) < 2:
+            self._send_json({"source": None})
+            return
+
+        provider = parts[0]
+        stem = Path(parts[1]).stem  # filename without extension
+
+        try:
+            source = _fetch_post_source(provider, stem)
+        except Exception as e:
+            self._send_error(502, f"Failed to fetch source: {e}")
+            return
+
+        self._send_json({"source": source})
 
     def _handle_label_post(self):
         """POST /api/label  body: {"path": "...", "label": "...", "rating": 1}"""
