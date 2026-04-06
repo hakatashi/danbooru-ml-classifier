@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ImageItem } from '../types';
+import { sourceUrl } from '../types';
 import { cx } from '../utils/cx';
 import { imageUrl } from '../api';
 import styles from './ImageViewer.module.css';
@@ -21,6 +22,7 @@ export function ImageViewer({ item }: Props) {
   }, [item?.path]);
 
   const dirPart = item?.path.replace(IMAGE_CACHE_PREFIX, '') ?? '';
+  const src = item ? sourceUrl(item.path) : null;
 
   return (
     <div className={styles.imageArea}>
@@ -33,7 +35,20 @@ export function ImageViewer({ item }: Props) {
             onLoad={() => setLoading(false)}
             onError={() => setLoading(false)}
           />
-          <div className={styles.imageInfo}>{dirPart}</div>
+          <div className={styles.imageInfo}>
+            {src ? (
+              <a
+                href={src}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.sourceLink}
+              >
+                {dirPart}
+              </a>
+            ) : (
+              dirPart
+            )}
+          </div>
         </>
       ) : (
         <div className={styles.noImages}>表示できる画像がありません</div>

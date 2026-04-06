@@ -40,3 +40,27 @@ export function labelShort(label: LabelType): string {
 export function isRatable(label: LabelType): boolean {
   return label === 'pixiv_public' || label === 'pixiv_private';
 }
+
+const IMAGE_CACHE_PREFIX = '/mnt/cache/danbooru-ml-classifier/images/';
+
+/** Extract the source URL for a given image path, or null if unrecognised. */
+export function sourceUrl(path: string): string | null {
+  const rel = path.startsWith(IMAGE_CACHE_PREFIX) ? path.slice(IMAGE_CACHE_PREFIX.length) : path;
+  const [provider, filename] = rel.split('/');
+  if (!filename) return null;
+
+  const stem = filename.replace(/\.[^.]+$/, ''); // strip extension
+
+  if (provider === 'danbooru') {
+    return `https://danbooru.donmai.us/posts/${stem}`;
+  }
+  if (provider === 'gelbooru') {
+    return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
+  }
+  if (provider === 'pixiv') {
+    // filename pattern: {id}_p{page}.ext — extract only the numeric ID
+    const id = stem.replace(/_p\d+$/, '');
+    return `https://www.pixiv.net/artworks/${id}`;
+  }
+  return null;
+}

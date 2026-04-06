@@ -37,5 +37,15 @@
   font-size: 11px;
   color: var(--c-text-muted);
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.sourceLink {
+  color: var(--c-text-muted);
+  text-decoration: none;
+}
+
+.sourceLink:hover {
+  color: var(--c-accent-light);
+  text-decoration: underline;
 }
