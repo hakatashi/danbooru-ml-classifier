@@ -296,11 +296,13 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
         Query params:
           offset  (int, default 0)
           limit   (int, default 50)
-          filter  "all" | "unlabeled" | "labeled"
+          filter  "all" | "unlabeled" | "labeled" | "skipped"
+          sort    "asc" (default) | "desc"
         """
         offset = int(params.get("offset", ["0"])[0])
         limit  = int(params.get("limit",  ["50"])[0])
         filt   = params.get("filter", ["all"])[0]
+        sort   = params.get("sort",   ["asc"])[0]
 
         if filt == "unlabeled":
             items = [p for p in _images_to_label if p not in _labels]
@@ -310,6 +312,9 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
             items = [p for p in _images_to_label if get_label(p) == "__skip__"]
         else:
             items = _images_to_label
+
+        if sort == "desc":
+            items = list(reversed(items))
 
         page = items[offset: offset + limit]
         result = []

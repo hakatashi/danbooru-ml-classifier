@@ -38,11 +38,13 @@ export async function fetchImages(
   filter: FilterType,
   offset = 0,
   limit = 5000,
+  sort: 'asc' | 'desc' = 'asc',
 ): Promise<ImagesResponse> {
   const q = new URLSearchParams({
     filter,
     offset: String(offset),
     limit: String(limit),
+    sort,
   });
   const r = await fetch(`/api/images?${q}`);
   return r.json() as Promise<ImagesResponse>;

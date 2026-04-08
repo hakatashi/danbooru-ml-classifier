@@ -64,14 +64,12 @@ export default function App() {
   // ── Load items ──────────────────────────────────────────────────────────
   const loadItems = useCallback(
     async (resetPos: boolean, currentFilter: FilterType, currentSubFilter: LabelSubFilter) => {
-      const d = await api.fetchImages(currentFilter);
+      const sort = currentFilter === 'labeled' ? 'desc' : 'asc';
+      const d = await api.fetchImages(currentFilter, 0, 5000, sort);
       let newItems = d.items;
 
-      if (currentFilter === 'labeled') {
-        newItems = [...newItems].reverse();
-        if (currentSubFilter !== 'all') {
-          newItems = newItems.filter((item) => item.label === currentSubFilter);
-        }
+      if (currentFilter === 'labeled' && currentSubFilter !== 'all') {
+        newItems = newItems.filter((item) => item.label === currentSubFilter);
       }
 
       setItems(newItems);
