@@ -62,5 +62,8 @@ export function sourceUrl(path: string): string | null {
     const id = stem.replace(/_p\d+$/, '');
     return `https://www.pixiv.net/artworks/${id}`;
   }
+  if (provider === 'sankaku') {
+    return `https://chan.sankakucomplex.com/ja/posts/${stem}`;
+  }
   return null;
 }

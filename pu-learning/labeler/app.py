@@ -96,12 +96,21 @@ THUMB_SIZE = 80                        # thumbnail size in pixels
 def build_image_list() -> list[str]:
     """
     Collect DMC images NOT already in splits.parquet.
-    Files with mtime >= CUTOFF_TIME are excluded.
+    Files with mtime >= CUTOFF_TIME are excluded, except sankaku files with
+    mtime in [SANKAKU_WINDOW_START, SANKAKU_WINDOW_END] (JST) which are included.
     Returns sorted list of absolute path strings.
     """
     # 2026-04-05 09:00 JST = 2026-04-05 00:00 UTC
     CUTOFF = datetime.datetime(2026, 4, 5, 0, 0, 0, tzinfo=datetime.timezone.utc)
     cutoff_ts = CUTOFF.timestamp()
+
+    # Sankaku extra window: 2026-04-09 10:00–12:00 JST (inclusive)
+    JST = datetime.timezone(datetime.timedelta(hours=9))
+    SANKAKU_START = datetime.datetime(2026, 4, 9, 10, 0, 0, tzinfo=JST)
+    SANKAKU_END   = datetime.datetime(2026, 4, 9, 12, 0, 0, tzinfo=JST)
+    sankaku_start_ts = SANKAKU_START.timestamp()
+    sankaku_end_ts   = SANKAKU_END.timestamp()
+    SANKAKU_DIR = DMC_IMAGES_DIR / "sankaku"
 
     try:
         import pandas as pd
@@ -116,9 +125,19 @@ def build_image_list() -> list[str]:
     for f in DMC_IMAGES_DIR.rglob("*"):
         if not (f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS):
             continue
-        if f.stat().st_mtime >= cutoff_ts:
-            n_skipped_ts += 1
-            continue
+        mtime = f.stat().st_mtime
+        if mtime >= cutoff_ts:
+            # Allow sankaku files within the extra time window
+            try:
+                f.relative_to(SANKAKU_DIR)
+                in_sankaku = True
+            except ValueError:
+                in_sankaku = False
+            if in_sankaku and sankaku_start_ts <= mtime <= sankaku_end_ts:
+                pass  # include this file
+            else:
+                n_skipped_ts += 1
+                continue
         all_images.append(str(f))
 
     to_label = sorted(p for p in all_images if p not in dataset_files)
