@@ -11,9 +11,12 @@ const SANKAKU_API_BASE = 'https://sankakuapi.com';
 
 const SANKAKU_HEADERS = {
 	Accept: 'application/vnd.sankaku.api+json;v=2',
-	'Api-Version': '',
-	Origin: 'https://sankaku.app',
+	Origin: 'https://www.sankakucomplex.com',
+	Referer: 'https://www.sankakucomplex.com/',
+	'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
 };
+
+const SANKAKU_CRAWL_PAGES = 20;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => {
 	setTimeout(resolve, ms);
@@ -79,8 +82,8 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 
 	let next: string | null = null;
 
-	for (const page of Array(50).keys()) {
-		console.log(`[Sankaku] Fetching page ${page + 1}/50... ${next ? `(next = ${next})` : ''}`);
+	for (const page of Array(SANKAKU_CRAWL_PAGES).keys()) {
+		console.log(`[Sankaku] Fetching page ${page + 1}/${SANKAKU_CRAWL_PAGES}... ${next ? `(next = ${next})` : ''}`);
 		await sleep(5000);
 
 		let posts: SankakuPost[] = [];
