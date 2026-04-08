@@ -71,24 +71,26 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 
 	console.log('[Sankaku] Fetching images...');
 
+	const targetDate = dayjs().tz('Asia/Tokyo')
+		.subtract(5, 'hour')
+		.subtract(3, 'day')
+		.format('YYYY-MM-DD');
+	console.log(`[Sankaku] Target date: ${targetDate}`);
+
 	let next: string | null = null;
 
-	for (const page of Array(20).keys()) {
-		console.log(`[Sankaku] Fetching page ${page + 1}/20...`);
+	for (const page of Array(50).keys()) {
+		console.log(`[Sankaku] Fetching page ${page + 1}/50... ${next ? `(next = ${next})` : ''}`);
 		await sleep(5000);
 
 		let posts: SankakuPost[] = [];
 		try {
-			const targetDate = dayjs().tz('Asia/Tokyo')
-				.subtract(5, 'hour')
-				.subtract(3, 'day')
-				.format('YYYY-MM-DD');
-			console.log(`[Sankaku] Target date: ${targetDate}`);
-
 			const params: Record<string, string | number> = {
-				tags: `order:popular date:${targetDate} -video`,
-				limit: 40,
 				lang: 'en',
+				default_threshold: 0,
+				limit: 100,
+				page: page + 1,
+				tags: `order:popularity threshold:0 file_type:image date:${targetDate}T15:00`,
 			};
 			if (next !== null) {
 				params.next = next;
