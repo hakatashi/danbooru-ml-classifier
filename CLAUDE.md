@@ -24,7 +24,7 @@ Split into two parts:
 - `fetchDanbooruDailyRankings` - Fetches Danbooru popular posts and downloads images
 - `fetchGelbooruDailyImages` - Fetches Gelbooru images and downloads images
 - Images saved to `IMAGE_CACHE_DIR` (default: `/mnt/cache/danbooru-ml-classifier/images`)
-- Metadata stored in local MongoDB collections: `images`, `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `pixivPages`
+- Metadata stored in local MongoDB collections: `images`, `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`, `pixivPages`
 
 **Firebase Functions** (`src/index.ts`) — still deployed to Firebase:
 - `updateModerationStats` - Firestore trigger that maintains moderation statistics per provider (count and sum) in the `moderationStats` collection
@@ -112,6 +112,7 @@ npm run fetch:all
 npm run fetch:pixiv
 npm run fetch:danbooru
 npm run fetch:gelbooru
+npm run fetch:sankaku
 ```
 
 **Systemd service** (for production daily automation):
@@ -132,6 +133,7 @@ cd publisher/systemd
 - `PIXIV_SESSION_ID` - Pixiv session cookie
 - `DANBOORU_API_USER` / `DANBOORU_API_KEY` - Danbooru API credentials
 - `GELBOORU_API_USER` / `GELBOORU_API_KEY` - Gelbooru API credentials
+- `SANKAKU_USERNAME` / `SANKAKU_PASSWORD` - Sankaku Complex account credentials
 
 **Firestore → MongoDB migration**:
 ```bash
@@ -298,7 +300,7 @@ firebase emulators:start
 
 ## Key Data Flow
 
-1. Local cron job (`src/cron.ts`) fetches rankings → saves to MongoDB (`pixivRanking`, `danbooruRanking`, `gelbooruImage`)
+1. Local cron job (`src/cron.ts`) fetches rankings → saves to MongoDB (`pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`)
 2. Cron job downloads images to `IMAGE_CACHE_DIR`, creates doc in MongoDB `images` with `status: 'pending'`
 3. Worker function batches 100+ pending images, runs inference, updates status to `inferred`
 4. VLM captioner processes images:
@@ -326,7 +328,7 @@ Main collection storing image metadata and ML results (mirrors Firestore `images
 - `topTagProbs`: ML tag probabilities
 - `inferences`: Preference classification results
 
-### `pixivRanking`, `danbooruRanking`, `gelbooruImage`
+### `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`
 Source ranking data from external APIs. Document `_id` = Firestore document ID (string).
 
 ### `pixivPages`

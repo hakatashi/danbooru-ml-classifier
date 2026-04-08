@@ -14,6 +14,7 @@
     "fetch:pixiv": "npm run build && node lib/src/cron.js --run pixiv",
     "fetch:danbooru": "npm run build && node lib/src/cron.js --run danbooru",
     "fetch:gelbooru": "npm run build && node lib/src/cron.js --run gelbooru",
+    "fetch:sankaku": "npm run build && node lib/src/cron.js --run sankaku",
     "fetch:all": "npm run build && node lib/src/cron.js --run all"
   },
   "engines": {

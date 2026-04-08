@@ -4,11 +4,13 @@ import {fetchDanbooruDailyRankings} from './danbooru';
 import {closeDb} from './db';
 import {fetchGelbooruDailyImages} from './gelbooru';
 import {fetchPixivDailyRankings} from './pixiv';
+import {fetchSankakuDailyImages} from './sankaku';
 
 const jobs = {
 	pixiv: fetchPixivDailyRankings,
 	danbooru: fetchDanbooruDailyRankings,
 	gelbooru: fetchGelbooruDailyImages,
+	sankaku: fetchSankakuDailyImages,
 } as const;
 
 type JobName = keyof typeof jobs;
@@ -35,7 +37,7 @@ const runIndex = args.indexOf('--run');
 if (runIndex === -1) {
 	// Schedule daily at 15:00 Asia/Tokyo
 	console.log('Starting scheduler (daily at 15:00 Asia/Tokyo)...');
-	console.log('Use --run [pixiv|danbooru|gelbooru|all] to run immediately');
+	console.log('Use --run [pixiv|danbooru|gelbooru|sankaku|all] to run immediately');
 
 	schedule('0 15 * * *', () => {
 		runAllJobs().catch((error) => {
