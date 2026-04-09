@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path, {basename} from 'path';
+import {imageSize} from 'image-size';
 import axios from './axios';
 import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';
@@ -105,6 +106,16 @@ const downloadPixivArtwork = async (
 		await fs.promises.writeFile(filePath, imageBuffer);
 		console.log(`[Pixiv] Saved ${filename} to ${filePath}`);
 
+		let width: number | undefined;
+		let height: number | undefined;
+		try {
+			const dimensions = imageSize(imageBuffer);
+			width = dimensions.width;
+			height = dimensions.height;
+		} catch (error) {
+			console.warn(`[Pixiv] Could not get dimensions for ${filename}:`, error);
+		}
+
 		await imagesCollection.updateOne(
 			{key},
 			{
@@ -121,6 +132,7 @@ const downloadPixivArtwork = async (
 					downloadedAt: new Date(),
 					inferences: {},
 					topTagProbs: {},
+					...(width !== undefined && height !== undefined ? {width, height} : {}),
 				},
 			},
 			{upsert: true},

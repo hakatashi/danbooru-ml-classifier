@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path, {extname} from 'path';
+import {imageSize} from 'image-size';
 import axios from './axios';
 import {IMAGE_CACHE_DIR} from './config';
 import dayjs from './dayjs';
@@ -186,6 +187,16 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 				await fs.promises.writeFile(filePath, imageBuffer);
 				console.log(`[Sankaku] Saved ${filename} to ${filePath}`);
 
+				let width: number | undefined;
+				let height: number | undefined;
+				try {
+					const dimensions = imageSize(imageBuffer);
+					width = dimensions.width;
+					height = dimensions.height;
+				} catch (error) {
+					console.warn(`[Sankaku] Could not get dimensions for ${filename}:`, error);
+				}
+
 				await imagesCollection.updateOne(
 					{key},
 					{
@@ -201,6 +212,7 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 							downloadedAt: new Date(),
 							inferences: {},
 							topTagProbs: {},
+							...(width !== undefined && height !== undefined ? {width, height} : {}),
 						},
 					},
 					{upsert: true},

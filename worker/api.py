@@ -327,7 +327,7 @@ def daily_counts(
     The ``date`` field in MongoDB is a ``YYYY-MM-DD`` string, so the query
     uses a prefix match (``^YYYY-MM``).  All statuses are counted.
     """
-    mongo_filter: dict = {"date": {"$regex": f"^{month}"}}
+    mongo_filter: dict = {"date": {"$regex": f"^{month}"}, "status": "inferred"}
     if image_type:
         mongo_filter["type"] = image_type
 
