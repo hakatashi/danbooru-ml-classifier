@@ -237,6 +237,44 @@ def get_image(image_id: str):
     return _doc_to_dict(doc)
 
 
+@app.get("/daily-counts")
+def daily_counts(
+    month: str = Query(
+        ...,
+        description="Month to aggregate (YYYY-MM)",
+        pattern=r"^\d{4}-\d{2}$",
+    ),
+    image_type: Optional[str] = Query(
+        None,
+        alias="type",
+        description="Filter by image source type (e.g. 'pixiv', 'danbooru', 'gelbooru')",
+        pattern="^[a-z]+$",
+    ),
+):
+    """
+    Return the number of images stored per day for the given month.
+
+    The ``date`` field in MongoDB is a ``YYYY-MM-DD`` string, so the query
+    uses a prefix match (``^YYYY-MM``).  All statuses are counted.
+    """
+    mongo_filter: dict = {"date": {"$regex": f"^{month}"}}
+    if image_type:
+        mongo_filter["type"] = image_type
+
+    db  = get_db()
+    col = db["images"]
+
+    pipeline = [
+        {"$match": mongo_filter},
+        {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+    ]
+    rows = list(col.aggregate(pipeline))
+
+    days = {row["_id"]: row["count"] for row in rows if row["_id"]}
+    return {"month": month, "days": days}
+
+
 @app.get("/inference-models")
 def list_inference_models():
     """
