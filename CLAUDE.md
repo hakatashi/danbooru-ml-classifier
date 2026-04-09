@@ -32,13 +32,20 @@ Split into two parts:
 
 ### Worker (Python - `worker/`)
 ML inference and image processing functions:
-- `onImageCreated` - Batches pending images (waits for 100+), downloads from Storage, runs inference
-- Uses DeepDanbooru ResNet50 model to extract 6000 tag probabilities from images
-- Runs three preference classifiers on tag probabilities:
-  - sklearn LinearSVC
-  - sklearn AdaBoost
-  - PyTorch shallow network (6000→512→128→128→3)
-- Updates Firestore documents with `topTagProbs` and `inferences`
+- `main.py` - Local batch job that processes pending images in MongoDB and saves ML scores:
+  - Queries MongoDB `images` collection for `status='pending'` documents with a `localPath` that exists on disk
+  - Extracts three feature types per image:
+    - DeepDanbooru ResNet50: 6000-dim tag probability vector
+    - EVA02-Large encoder: 1024-dim visual embedding
+    - PixAI Tagger v0.9: 13461-dim tag probability vector
+  - Runs all models from `pu-learning/data/models/`:
+    - Legacy sklearn multiclass models (`sklearn-multiclass-*.joblib`) → `{not_bookmarked, bookmarked_public, bookmarked_private}`
+    - Legacy PyTorch shallow network (`torch-multiclass-onehot-shallow-network-multilayer`) → same three-class scores
+    - PU Learning models (`{feature}_{label}_{method}.joblib`) → `{score: float}`
+  - Updates MongoDB documents with `inferences` (keyed by model filename) and `importantTagProbs`
+  - `importantTagProbs` stores the top-50 important tags from two feature importance CSVs:
+    - `deepdanbooru`: from `feature_importance_deepdanbooru_pixiv_private_elkan_noto_positive.csv`
+    - `pixai`: from `feature_importance_pixai_pixiv_private_nnpu_positive.csv`
 - `vlm_captioner.py` - VLM-based captioning, moderation, age estimation, and tagging:
   - Supports multiple models: MiniCPM, JoyCaption, PixAI Tagger
   - PixAI Tagger v0.9: Generates ~13.5k Danbooru-style tags with confidence levels
@@ -178,6 +185,18 @@ npx ts-node --project publisher/tsconfig.json publisher/scripts/import-firestore
 cd worker
 python -m venv venv
 venv/bin/pip install -r requirements.txt
+```
+
+**ML batch inference** (`main.py`): Scores pending images with all PU Learning and legacy models
+```bash
+cd worker
+# Run batch inference on all pending images with local files
+venv/bin/python main.py
+
+# Environment variables (can be set in worker/.env or shell):
+#   IMAGE_CACHE_DIR - Local image directory (default: /mnt/cache/danbooru-ml-classifier/images)
+#   MONGODB_URI     - MongoDB URI (default: mongodb://localhost:27017)
+#   MONGODB_DB      - Database name (default: danbooru-ml-classifier)
 ```
 
 **VLM Captioner**: Generates captions, moderation ratings, and age estimations
@@ -377,8 +396,8 @@ Main collection storing image metadata and ML results (mirrors Firestore `images
 - `tags.[provider]`: PixAI tagging results with tag_list (high/medium/low confidence × character/feature/ip), raw_scores, and metadata
 - `twitterSource`: Twitter metadata (tweetId, text, user, retweetedTweet) if image is from Twitter
 - `favorites`: User favorites data (isFavorited, categories array)
-- `topTagProbs`: ML tag probabilities
-- `inferences`: Preference classification results
+- `importantTagProbs`: Top-50 important tags per feature type — `{deepdanbooru: {tag: prob}, pixai: {tag: prob}}`
+- `inferences`: ML model scores keyed by model filename — PU models: `{score: float}`, legacy multiclass: `{not_bookmarked, bookmarked_public, bookmarked_private}`
 
 ### `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`
 Source ranking data from external APIs. Document `_id` = Firestore document ID (string).
