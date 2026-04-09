@@ -23,7 +23,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from PIL import Image, UnidentifiedImageError
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 from torchvision import models, transforms
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ MODELS_DIR = PU_DIR / "data" / "models"
 RESULTS_DIR = PU_DIR / "data" / "results"
 
 DEEPDANBOORU_IMPORTANCE_CSV = RESULTS_DIR / "feature_importance_deepdanbooru_pixiv_private_elkan_noto_positive.csv"
-PIXAI_IMPORTANCE_CSV        = RESULTS_DIR / "feature_importance_pixai_pixiv_private_nnpu_positive.csv"
+PIXAI_IMPORTANCE_CSV        = RESULTS_DIR / "feature_importance_pixai_pixiv_private_elkan_noto_positive.csv"
 
 IMAGE_CACHE_DIR = Path(os.environ.get("IMAGE_CACHE_DIR", "/mnt/cache/danbooru-ml-classifier/images"))
 MONGODB_URI     = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
@@ -171,11 +171,12 @@ class DeepDanbooruExtractor:
         ])
 
     @torch.inference_mode()
-    def extract(self, image: Image.Image) -> np.ndarray:
-        """Returns float32 array of shape (6000,)."""
-        t = self.transform(_to_rgb(image)).unsqueeze(0).to(self.device)
-        probs = torch.sigmoid(self.model(t))
-        return probs.cpu().numpy()[0]
+    def extract_batch(self, images: list[Image.Image]) -> np.ndarray:
+        """Returns float32 array of shape (B, 6000)."""
+        tensors = torch.stack([self.transform(_to_rgb(img)) for img in images])
+        tensors = tensors.to(self.device)
+        probs = torch.sigmoid(self.model(tensors))
+        return probs.cpu().numpy()
 
 
 # ── PixAI / EVA02 feature extractor ──────────────────────────────────────────
@@ -223,12 +224,15 @@ class PixAIExtractor:
         ])
 
     @torch.inference_mode()
-    def extract(self, image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
-        """Returns (eva02_emb: float32 (1024,), pixai_tags: float32 (13461,))."""
-        t = self.transform(_to_rgb(image)).unsqueeze(0).to(self.device)
-        emb  = self.encoder(t)     # (1, 1024)
-        tags = self.decoder(emb)   # (1, 13461)
-        return emb.cpu().numpy()[0], tags.cpu().numpy()[0]
+    def extract_batch(
+        self, images: list[Image.Image]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Returns (eva02_emb: float32 (B, 1024), pixai_tags: float32 (B, 13461))."""
+        tensors = torch.stack([self.transform(_to_rgb(img)) for img in images])
+        tensors = tensors.to(self.device)
+        emb  = self.encoder(tensors)   # (B, 1024)
+        tags = self.decoder(emb)       # (B, 13461)
+        return emb.cpu().numpy(), tags.cpu().numpy()
 
 
 # ── Legacy PyTorch shallow network ────────────────────────────────────────────
@@ -297,51 +301,69 @@ def load_all_models(device: str) -> dict:
     return loaded
 
 
-# ── Per-image inference ───────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def run_inference(
-    features: dict[str, np.ndarray],
+def _mongo_key(name: str) -> str:
+    """Replace characters invalid in MongoDB field names ('.' and '$')."""
+    return name.replace(".", "_").replace("$", "_")
+
+
+# ── Batched inference across all images ───────────────────────────────────────
+
+def run_inference_batched(
+    all_features: dict[str, np.ndarray],
     all_models: dict,
-) -> dict:
+    device: str,
+    torch_batch_size: int = 512,
+) -> list[dict]:
     """
-    Score a single image with all loaded models.
+    Score N images with all loaded models in vectorised passes.
 
-    features: {"deepdanbooru": arr(6000,), "eva02": arr(1024,), "pixai": arr(13461,)}
-    Returns inferences dict keyed by model filename.
+    all_features: {"deepdanbooru": (N, 6000), "eva02": (N, 1024), "pixai": (N, 13461)}
+    Returns list of N inference dicts, each keyed by model filename.
     """
-    inferences = {}
+    n = len(next(iter(all_features.values())))
+    inferences_list: list[dict] = [{} for _ in range(n)]
 
     for model_name, model_tuple in all_models.items():
         model_type = model_tuple[0]
+        key = _mongo_key(model_name)
 
         if model_type == "legacy_sklearn":
             clf = model_tuple[1]
-            x = features["deepdanbooru"].reshape(1, -1)
+            X = all_features["deepdanbooru"]   # (N, 6000)
             if hasattr(clf, "decision_function"):
-                scores = clf.decision_function(x)[0].tolist()
+                scores = clf.decision_function(X)   # (N, 3)
             else:
-                scores = clf.predict_proba(x)[0].tolist()
-            inferences[model_name] = dict(zip(CLASS_NAMES, scores))
+                scores = clf.predict_proba(X)       # (N, 3)
+            for i in range(n):
+                inferences_list[i][key] = dict(zip(CLASS_NAMES, scores[i].tolist()))
 
         elif model_type == "legacy_torch":
-            net    = model_tuple[1]
-            dev    = model_tuple[2]
-            x = torch.from_numpy(features["deepdanbooru"]).float().unsqueeze(0).to(dev)
+            net = model_tuple[1]
+            dev = model_tuple[2]
+            X   = all_features["deepdanbooru"]  # (N, 6000)
+            chunks = []
             with torch.no_grad():
-                logits = net(x)[0].cpu().tolist()
-            inferences[model_name] = dict(zip(CLASS_NAMES, logits))
+                for start in range(0, n, torch_batch_size):
+                    t = torch.from_numpy(X[start:start + torch_batch_size]).float().to(dev)
+                    chunks.append(net(t).cpu().numpy())
+            logits = np.concatenate(chunks, axis=0)   # (N, 3)
+            for i in range(n):
+                inferences_list[i][key] = dict(zip(CLASS_NAMES, logits[i].tolist()))
 
         elif model_type == "pu":
             clf          = model_tuple[1]
             feature_name = model_tuple[2]
-            x = features[feature_name].reshape(1, -1)
+            X = all_features[feature_name]   # (N, dim)
             if hasattr(clf, "predict_proba"):
-                score = float(clf.predict_proba(x)[0, 1])
+                scores = clf.predict_proba(X)[:, 1]   # (N,)
             else:
-                score = float(clf.decision_function(x)[0])
-            inferences[model_name] = {"score": score}
+                scores = clf.decision_function(X)      # (N,)
+            for i in range(n):
+                inferences_list[i][key] = {"score": float(scores[i])}
 
-    return inferences
+    return inferences_list
 
 
 # ── Important tag loading ─────────────────────────────────────────────────────
@@ -354,9 +376,20 @@ def load_important_tag_indices(csv_path: Path, n: int = 50) -> list[tuple[str, i
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+DEFAULT_GPU_BATCH_SIZE = 64
+
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--batch-size", type=int, default=DEFAULT_GPU_BATCH_SIZE,
+        help=f"Images per GPU forward pass (default: {DEFAULT_GPU_BATCH_SIZE})",
+    )
+    args = parser.parse_args()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    log.info("Device: %s", device)
+    log.info("Device: %s  |  GPU batch size: %d", device, args.batch_size)
 
     # MongoDB connection
     client = MongoClient(MONGODB_URI)
@@ -380,7 +413,7 @@ def main():
     log.info("Initialising PixAI extractor ...")
     pxai_extractor = PixAIExtractor(device)
 
-    # Find pending images that have a local file
+    # ── Step 1: collect processable images ────────────────────────────────────
     pending_docs = list(col.find({
         "status":    "pending",
         "localPath": {"$exists": True},
@@ -391,64 +424,97 @@ def main():
         doc for doc in pending_docs
         if doc.get("localPath") and Path(doc["localPath"]).exists()
     ]
-    skipped = len(pending_docs) - len(processable)
-    log.info("Files found on disk: %d  (skipped %d missing)", len(processable), skipped)
+    log.info(
+        "Files found on disk: %d  (skipped %d missing)",
+        len(processable), len(pending_docs) - len(processable),
+    )
+    if not processable:
+        log.info("Nothing to do.")
+        return
 
-    for i, doc in enumerate(processable):
-        doc_id     = doc["_id"]
-        local_path = doc["localPath"]
-        log.info("[%d/%d] %s", i + 1, len(processable), local_path)
+    # ── Step 2-5: per-batch: load → extract → infer → write ──────────────────
+    dd_tag_names   = [tag for tag, _ in dd_tags]
+    pxai_tag_names = [tag for tag, _ in pxai_tags]
+    dd_indices     = [idx for _, idx in dd_tags]
+    pxai_indices   = [idx for _, idx in pxai_tags]
 
-        # Load image
-        try:
-            image = Image.open(local_path)
-            image.load()
-        except (UnidentifiedImageError, OSError, Exception) as exc:
-            log.error("  Cannot open image: %s", exc)
-            col.update_one({"_id": doc_id}, {"$set": {"status": "error"}})
+    n_total    = len(processable)
+    n_done     = 0
+    n_error    = 0
+
+    for batch_start in range(0, n_total, args.batch_size):
+        batch_docs = processable[batch_start:batch_start + args.batch_size]
+        batch_end  = min(batch_start + args.batch_size, n_total)
+        log.info("Batch [%d-%d / %d] ...", batch_start + 1, batch_end, n_total)
+
+        # 1. Load images (skip unreadable ones)
+        batch_imgs:  list[Image.Image] = []
+        loaded_docs: list[dict]        = []
+        for doc in batch_docs:
+            try:
+                img = Image.open(doc["localPath"])
+                img.load()
+                batch_imgs.append(img)
+                loaded_docs.append(doc)
+            except (UnidentifiedImageError, OSError, Exception) as exc:
+                log.error("Cannot open %s: %s", doc["localPath"], exc)
+                col.update_one({"_id": doc["_id"]}, {"$set": {"status": "error"}})
+                n_error += 1
+
+        if not batch_imgs:
             continue
 
-        # Extract features
+        # 2. GPU feature extraction
         try:
-            dd_feats                 = dd_extractor.extract(image)       # (6000,)
-            eva02_feats, pxai_feats  = pxai_extractor.extract(image)     # (1024,), (13461,)
+            X_dd              = dd_extractor.extract_batch(batch_imgs)       # (B, 6000)
+            X_eva, X_pxai     = pxai_extractor.extract_batch(batch_imgs)     # (B, 1024/13461)
         except Exception as exc:
-            log.error("  Feature extraction failed: %s", exc)
-            col.update_one({"_id": doc_id}, {"$set": {"status": "error"}})
+            log.error("Feature extraction failed: %s", exc)
+            for doc in loaded_docs:
+                col.update_one({"_id": doc["_id"]}, {"$set": {"status": "error"}})
+            n_error += len(loaded_docs)
             continue
+        finally:
+            batch_imgs.clear()
 
-        features = {
-            "deepdanbooru": dd_feats,
-            "eva02":        eva02_feats,
-            "pixai":        pxai_feats,
-        }
-
-        # Run all models
+        # 3. Run all models (vectorised over the batch)
         try:
-            inferences = run_inference(features, all_models)
+            inferences_list = run_inference_batched(
+                {"deepdanbooru": X_dd, "eva02": X_eva, "pixai": X_pxai},
+                all_models,
+                device,
+            )
         except Exception as exc:
-            log.error("  Inference failed: %s", exc)
-            col.update_one({"_id": doc_id}, {"$set": {"status": "error"}})
+            log.error("Inference failed: %s", exc)
+            for doc in loaded_docs:
+                col.update_one({"_id": doc["_id"]}, {"$set": {"status": "error"}})
+            n_error += len(loaded_docs)
             continue
 
-        # Build importantTagProbs
-        important_tag_probs = {
-            "deepdanbooru": {tag: float(dd_feats[idx])   for tag, idx in dd_tags},
-            "pixai":        {tag: float(pxai_feats[idx]) for tag, idx in pxai_tags},
-        }
+        # 4. Build importantTagProbs and bulk-write to MongoDB
+        bulk_ops = []
+        for i, (doc, inferences) in enumerate(zip(loaded_docs, inferences_list)):
+            important_tag_probs = {
+                "deepdanbooru": dict(zip(dd_tag_names,   X_dd[i][dd_indices].tolist())),
+                "pixai":        dict(zip(pxai_tag_names, X_pxai[i][pxai_indices].tolist())),
+            }
+            bulk_ops.append(UpdateOne(
+                {"_id": doc["_id"]},
+                {"$set": {
+                    "status":            "inferred",
+                    "inferences":        inferences,
+                    "importantTagProbs": important_tag_probs,
+                }},
+            ))
 
-        # Save to MongoDB
-        col.update_one(
-            {"_id": doc_id},
-            {"$set": {
-                "status":            "inferred",
-                "inferences":        inferences,
-                "importantTagProbs": important_tag_probs,
-            }},
+        result = col.bulk_write(bulk_ops, ordered=False)
+        n_done += result.modified_count
+        log.info(
+            "  Saved %d  (total done=%d  error=%d)",
+            result.modified_count, n_done, n_error,
         )
-        log.info("  Saved → %s", doc_id)
 
-    log.info("Done. Processed %d images.", len(processable))
+    log.info("Done. processed=%d  error=%d", n_done, n_error)
 
 
 if __name__ == "__main__":
