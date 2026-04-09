@@ -107,7 +107,7 @@ def build_image_list() -> list[str]:
     # Sankaku extra window: 2026-04-09 10:00–12:00 JST (inclusive)
     JST = datetime.timezone(datetime.timedelta(hours=9))
     SANKAKU_START = datetime.datetime(2026, 4, 9, 10, 0, 0, tzinfo=JST)
-    SANKAKU_END   = datetime.datetime(2026, 4, 9, 12, 0, 0, tzinfo=JST)
+    SANKAKU_END   = datetime.datetime(2026, 4, 9, 19, 0, 0, tzinfo=JST)
     sankaku_start_ts = SANKAKU_START.timestamp()
     sankaku_end_ts   = SANKAKU_END.timestamp()
     SANKAKU_DIR = DMC_IMAGES_DIR / "sankaku"
@@ -189,7 +189,7 @@ def _fetch_post_source(provider: str, stem: str) -> str | None:
             req.add_header("Authorization", f"Basic {creds}")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
-        return data.get("source") or None
+        return _pixiv_image_url_to_artwork(data.get("source") or None)
 
     if provider == "gelbooru":
         post_id = stem  # stem is the numeric ID directly
@@ -206,9 +206,20 @@ def _fetch_post_source(provider: str, stem: str) -> str | None:
         posts = data.get("post", [])
         if not posts:
             return None
-        return posts[0].get("source") or None
+        return _pixiv_image_url_to_artwork(posts[0].get("source") or None)
 
     return None  # provider not supported (e.g. pixiv)
+
+
+def _pixiv_image_url_to_artwork(source: str | None) -> str | None:
+    """Convert a Pixiv image URL to its artwork page URL if applicable."""
+    if not source:
+        return source
+    import re
+    m = re.search(r"pximg\.net/.*/(\d+)_p\d+", source)
+    if m:
+        return f"https://www.pixiv.net/artworks/{m.group(1)}"
+    return source
 
 
 def load_labels() -> dict:
@@ -317,16 +328,21 @@ class LabelHandler(http.server.BaseHTTPRequestHandler):
           limit   (int, default 50)
           filter  "all" | "unlabeled" | "labeled" | "skipped"
           sort    "asc" (default) | "desc"
+          label   "all" | "pixiv_public" | "pixiv_private" | "not_bookmarked"
+                  (only applied when filter="labeled")
         """
         offset = int(params.get("offset", ["0"])[0])
         limit  = int(params.get("limit",  ["50"])[0])
         filt   = params.get("filter", ["all"])[0]
         sort   = params.get("sort",   ["asc"])[0]
+        label_filter = params.get("label", ["all"])[0]
 
         if filt == "unlabeled":
             items = [p for p in _images_to_label if p not in _labels]
         elif filt == "labeled":
             items = [p for p in _images_to_label if p in _labels and get_label(p) != "__skip__"]
+            if label_filter != "all" and label_filter in VALID_LABELS:
+                items = [p for p in items if get_label(p) == label_filter]
         elif filt == "skipped":
             items = [p for p in _images_to_label if get_label(p) == "__skip__"]
         else:

@@ -1,4 +1,4 @@
-import type { FilterType, ImageItem, StatusData } from './types';
+import type { FilterType, ImageItem, LabelSubFilter, StatusData } from './types';
 
 interface ImagesResponse {
   total: number;
@@ -39,12 +39,14 @@ export async function fetchImages(
   offset = 0,
   limit = 5000,
   sort: 'asc' | 'desc' = 'asc',
+  label: LabelSubFilter = 'all',
 ): Promise<ImagesResponse> {
   const q = new URLSearchParams({
     filter,
     offset: String(offset),
     limit: String(limit),
     sort,
+    label,
   });
   const r = await fetch(`/api/images?${q}`);
   return r.json() as Promise<ImagesResponse>;

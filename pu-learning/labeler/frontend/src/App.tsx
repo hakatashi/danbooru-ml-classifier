@@ -65,12 +65,8 @@ export default function App() {
   const loadItems = useCallback(
     async (resetPos: boolean, currentFilter: FilterType, currentSubFilter: LabelSubFilter) => {
       const sort = currentFilter === 'labeled' ? 'desc' : 'asc';
-      const d = await api.fetchImages(currentFilter, 0, 5000, sort);
-      let newItems = d.items;
-
-      if (currentFilter === 'labeled' && currentSubFilter !== 'all') {
-        newItems = newItems.filter((item) => item.label === currentSubFilter);
-      }
+      const d = await api.fetchImages(currentFilter, 0, 5000, sort, currentSubFilter);
+      const newItems = d.items;
 
       setItems(newItems);
       preloadCacheRef.current.clear();
