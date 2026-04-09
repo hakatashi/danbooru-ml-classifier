@@ -1,0 +1,18 @@
+[Unit]
+Description=Danbooru ML Classifier - API Server
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=REPO_DIR/worker
+EnvironmentFile=-REPO_DIR/worker/.env
+Environment=PATH=ASDF_SHIMS_DIR:ASDF_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=REPO_DIR/worker/venv/bin/uvicorn api:app --host 127.0.0.1 --port 8766
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

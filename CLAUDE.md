@@ -46,6 +46,21 @@ ML inference and image processing functions:
   - `importantTagProbs` stores the top-50 important tags from two feature importance CSVs:
     - `deepdanbooru`: from `feature_importance_deepdanbooru_pixiv_private_elkan_noto_positive.csv`
     - `pixai`: from `feature_importance_pixai_pixiv_private_nnpu_positive.csv`
+- `api.py` - Thin REST API server that exposes MongoDB image data to the public website:
+  - Serves images sorted by `importantTagProbs` or `inferences` values, filtered by date
+  - Deployed at: https://danbooru-api.matrix.hakatashi.com (persisted via systemd user service)
+  - Runs locally on port 8766, exposed via Nginx reverse proxy with Let's Encrypt TLS
+  - CORS allowed origins: `danbooru-ml-classifier.web.app`, `localhost:5173/4173`
+  - Endpoints:
+    - `GET /images` — paginated list sorted by ML score or tag probability
+    - `GET /images/{id}` — single image by MongoDB `_id`
+    - `GET /inference-models` — available model keys and their types
+    - `GET /important-tags` — available tag names per feature type
+    - `GET /health` — health check
+  - `sort_field` parameter validated against allowlist patterns:
+    - `inferences.<model_key>.(score|not_bookmarked|bookmarked_public|bookmarked_private)`
+    - `importantTagProbs.(deepdanbooru|pixai).<tag>`
+  - Systemd service and Nginx config templates in `worker/systemd/`; install via `bash worker/systemd/install-api.sh`
 - `vlm_captioner.py` - VLM-based captioning, moderation, age estimation, and tagging:
   - Supports multiple models: MiniCPM, JoyCaption, PixAI Tagger
   - PixAI Tagger v0.9: Generates ~13.5k Danbooru-style tags with confidence levels
@@ -197,6 +212,25 @@ venv/bin/python main.py
 #   IMAGE_CACHE_DIR - Local image directory (default: /mnt/cache/danbooru-ml-classifier/images)
 #   MONGODB_URI     - MongoDB URI (default: mongodb://localhost:27017)
 #   MONGODB_DB      - Database name (default: danbooru-ml-classifier)
+```
+
+**API server** (`api.py`): REST API exposing ML scores and tag probabilities to the public website
+```bash
+cd worker
+# Start API server (development)
+venv/bin/uvicorn api:app --host 127.0.0.1 --port 8766
+
+# Install as systemd service + configure Nginx (first time setup)
+bash systemd/install-api.sh
+
+# Manage systemd service
+systemctl --user status danbooru-ml-api.service
+systemctl --user restart danbooru-ml-api.service
+systemctl --user logs -f danbooru-ml-api.service
+
+# Environment variables (same as main.py):
+#   MONGODB_URI - MongoDB URI (default: mongodb://localhost:27017)
+#   MONGODB_DB  - Database name (default: danbooru-ml-classifier)
 ```
 
 **VLM Captioner**: Generates captions, moderation ratings, and age estimations
