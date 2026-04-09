@@ -62,7 +62,25 @@ PU Learning-based preference classifier for predicting image preference:
   - Methods: `elkan_noto` (EM-based), `biased_svm` (asymmetric weights), `nnpu` (non-negative PU risk, GPU)
   - Outputs: `data/models/{feature}_{label}_{method}.joblib` and `data/results/metrics.csv`
   - Supports `--workers N` for parallel training via ProcessPoolExecutor
-- `scripts/score_unlabeled.py` - Scores test-split unlabeled images using trained classifiers, computes AUC-ROC, saves top-K montage PNGs to `data/results/`
+  - Default: skips already-trained models; use `--overwrite` to force retraining
+- `scripts/score_unlabeled.py` - Scores test-split unlabeled images using trained classifiers, computes binary AUC-ROC, saves top-K montage PNGs to `data/results/`
+  - Supports `--features/--labels/--methods` flags to filter which PU models to evaluate
+- `scripts/feature_importance.py` - Extracts tag-level feature importance for trained PU models:
+  - Linear coefficients from `elkan_noto`/`biased_svm` models
+  - Mean signed input gradients from `nnpu` models
+  - Supports `deepdanbooru` and `pixai` features (eva02 excluded — no tag labels)
+  - Outputs per-model CSVs and a combined `feature_importance_all.csv`
+- `scripts/visualize_attribution.py` - Per-image attribution visualizations:
+  - `tag_contribution` mode: image + bar chart of top contributing tags (deepdanbooru/pixai)
+  - `gradcam` mode: GradCAM heatmap over EVA02 last ViT block for eva02 models
+  - Supports `--top-k`/`--bottom-k` for highest/lowest scored images; `--mode all` for both
+- `scripts/build_eval_dataset.py` - Builds evaluation set from `manual_labels.json`:
+  - SHA-256 deduplication (within eval and against training splits)
+  - Extracts deepdanbooru/eva02/pixai features into HDF5
+  - Saves manifest to `data/metadata/eval_manifest.parquet`
+- `scripts/eval_models.py` - Evaluates legacy multiclass and PU Learning models on the eval set:
+  - Metrics: weighted NDCG@K, AUC-ROC, and AP with graded relevance scoring
+- `reports/model_evaluation_report.md` - Summary of PU Learning model performance across feature types, methods, and labels
 - `scripts/config.py` - Shared configuration (paths, dimensions, constants)
 - `notebooks/` - Jupyter notebooks for sklearn and PyTorch classifier experiments
 
@@ -134,6 +152,8 @@ cd publisher/systemd
 - `DANBOORU_API_USER` / `DANBOORU_API_KEY` - Danbooru API credentials
 - `GELBOORU_API_USER` / `GELBOORU_API_KEY` - Gelbooru API credentials
 - `SANKAKU_USERNAME` / `SANKAKU_PASSWORD` - Sankaku Complex account credentials
+- `SANKAKU_CRAWL_DEFAULT_PAGES` - Number of pages to fetch from Sankaku popularity ranking (default: 20)
+- `SANKAKU_CRAWL_ADDITIONAL_TAGS` - Space-separated extra tags for additional 2-page crawls (e.g. specific artists)
 
 **Firestore → MongoDB migration**:
 ```bash
@@ -243,6 +263,9 @@ python scripts/train_pu.py --features eva02 --methods nnpu --epochs 100
 
 # Grid search
 python scripts/train_pu.py --grid-search --features deepdanbooru
+
+# Force retrain (default skips already-trained models)
+python scripts/train_pu.py --overwrite
 ```
 
 **Scoring**:
@@ -252,20 +275,49 @@ python scripts/score_unlabeled.py
 python scripts/score_unlabeled.py --top-k 20
 python scripts/score_unlabeled.py --split val
 python scripts/score_unlabeled.py --classes bookmarked_private bookmarked_public
+
+# Filter which PU models to score
+python scripts/score_unlabeled.py --features eva02 --labels pixiv_public --methods nnpu
+```
+
+**Feature importance**:
+```bash
+python scripts/feature_importance.py                          # All models
+python scripts/feature_importance.py --features deepdanbooru  # Specific feature type
+# Outputs: data/results/feature_importance_*.csv and feature_importance_all.csv
+```
+
+**Attribution visualization**:
+```bash
+python scripts/visualize_attribution.py --model deepdanbooru_pixiv_public_biased_svm
+python scripts/visualize_attribution.py --mode gradcam --model eva02_pixiv_public_nnpu
+python scripts/visualize_attribution.py --mode all --top-k 10 --bottom-k 5
+```
+
+**Model evaluation**:
+```bash
+# Build evaluation dataset from manual labels
+python scripts/build_eval_dataset.py
+
+# Evaluate models on eval set
+python scripts/eval_models.py
+# See reports/model_evaluation_report.md for results summary
 ```
 
 **Manual labeling tool** (`labeler/`):
 ```bash
 cd pu-learning
-# Start labeling web UI (uses existing venv)
+# Start labeling web UI (auto-builds frontend on first run)
 source venv/bin/activate
 python labeler/app.py              # → http://localhost:8765
 python labeler/app.py --port 9000  # Custom port
+python labeler/app.py --no-build   # Skip frontend build (faster for iteration)
 
 # Labels are saved to: data/labels/manual_labels.json
 # Images to label: DMC images NOT in splits.parquet (~8641 images)
 # Labels: pixiv_public | pixiv_private | not_bookmarked
 # Keyboard shortcuts: 1/Q=public, 2/W=private, 3/E=not_bm, S=skip, ←/→=navigate
+# Frontend: Vite + React + TypeScript + CSS Modules (source in labeler/frontend/)
 ```
 
 ### Public Website (Vue 3 + TypeScript)
