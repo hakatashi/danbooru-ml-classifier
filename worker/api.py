@@ -11,6 +11,7 @@ Usage:
 
 import os
 import re
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -64,6 +65,38 @@ def get_db():
     if _client is None:
         _client = MongoClient(MONGODB_URI)
     return _client[MONGODB_DB]
+
+
+# ── Rank cache ────────────────────────────────────────────────────────────────
+# Maps (date, sort_field) -> list of image_id strings sorted descending by score.
+# This lets O(1) rank lookup after the first request for a given date+field.
+
+_rank_cache: dict = {}       # (date, sort_field) -> [image_id, ...]
+_rank_cache_ts: dict = {}    # (date, sort_field) -> float (unix timestamp)
+RANK_CACHE_TTL = 3600        # seconds
+
+
+def _get_sorted_ids(date: str, sort_field: str) -> list:
+    """
+    Return all image IDs for the given date sorted descending by sort_field.
+    Results are cached for RANK_CACHE_TTL seconds.
+    """
+    key = (date, sort_field)
+    now = time.time()
+    if key in _rank_cache and now - _rank_cache_ts.get(key, 0) < RANK_CACHE_TTL:
+        return _rank_cache[key]
+
+    db = get_db()
+    col = db["images"]
+    cursor = col.find(
+        {"status": "inferred", "date": date, sort_field: {"$exists": True}},
+        {"_id": 1},
+    ).sort(sort_field, DESCENDING)
+
+    ids = [str(doc["_id"]) for doc in cursor]
+    _rank_cache[key] = ids
+    _rank_cache_ts[key] = now
+    return ids
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -175,6 +208,7 @@ def list_images(
     Return a paginated list of inferred images sorted by an ML score or tag probability.
 
     Only images with ``status='inferred'`` are returned.
+    Response includes ``total`` (full count) in addition to ``count`` (items on this page).
     """
     validated_field = _validate_sort_field(sort_field)
 
@@ -204,6 +238,8 @@ def list_images(
     # Only return documents that actually have the sort field populated
     mongo_filter[validated_field] = {"$exists": True}
 
+    total = col.count_documents(mongo_filter)
+
     cursor = (
         col.find(mongo_filter, _EXCLUDED_FIELDS)
         .sort(validated_field, direction)
@@ -218,12 +254,20 @@ def list_images(
         "page": page,
         "limit": limit,
         "count": len(images),
+        "total": total,
     }
 
 
 @app.get("/images/{image_id}")
 def get_image(image_id: str):
-    """Return a single image document by its MongoDB ``_id``."""
+    """
+    Return a single image document by its MongoDB ``_id``.
+
+    Also returns ``scoreRanks``: for each inference field that has a score and
+    the image has a ``date``, provides the 1-based rank among all images on that
+    date sorted descending by that field, plus the total count.
+    Ranks are derived from a cache (TTL = 1 hour) to avoid repeated DB scans.
+    """
     try:
         oid = ObjectId(image_id)
     except Exception:
@@ -234,7 +278,33 @@ def get_image(image_id: str):
     doc = col.find_one({"_id": oid}, _EXCLUDED_FIELDS)
     if doc is None:
         raise HTTPException(status_code=404, detail="Image not found")
-    return _doc_to_dict(doc)
+
+    result = _doc_to_dict(doc)
+
+    # Compute score ranks for all inference fields
+    date = doc.get("date")
+    score_ranks: dict = {}
+    if date and doc.get("inferences"):
+        image_id_str = str(doc["_id"])
+        for model_key, model_data in doc["inferences"].items():
+            if not isinstance(model_data, dict):
+                continue
+            for field_name, value in model_data.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                sort_field = f"inferences.{model_key}.{field_name}"
+                sorted_ids = _get_sorted_ids(date, sort_field)
+                try:
+                    rank = sorted_ids.index(image_id_str) + 1
+                except ValueError:
+                    rank = None
+                score_ranks[sort_field] = {
+                    "rank": rank,
+                    "total": len(sorted_ids),
+                }
+
+    result["scoreRanks"] = score_ranks
+    return result
 
 
 @app.get("/daily-counts")
@@ -280,14 +350,16 @@ def list_inference_models():
     """
     Return the list of inference model keys available in the database,
     along with the value type (PU score or multiclass probabilities).
+    Samples the document with the most recent ``date`` value.
     """
     db  = get_db()
     col = db["images"]
 
-    # Sample one fully-inferred document to discover available model keys
+    # Use the most recently dated inferred document
     sample = col.find_one(
         {"status": "inferred", "inferences": {"$exists": True}},
         {"inferences": 1},
+        sort=[("date", DESCENDING)],
     )
     if not sample or not sample.get("inferences"):
         return {"models": []}
@@ -314,6 +386,7 @@ def list_important_tags():
     """
     Return the list of important tag names available per feature type
     (deepdanbooru, pixai).
+    Samples the document with the most recent ``date`` value.
     """
     db  = get_db()
     col = db["images"]
@@ -325,6 +398,7 @@ def list_important_tags():
             "importantTagProbs.deepdanbooru": {"$exists": True, "$ne": {}},
         },
         {"importantTagProbs": 1},
+        sort=[("date", DESCENDING)],
     )
     if not sample or not sample.get("importantTagProbs"):
         return {"tags": {}}

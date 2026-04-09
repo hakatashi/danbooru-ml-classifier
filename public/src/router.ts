@@ -1,4 +1,6 @@
 import {createRouter, createWebHistory} from 'vue-router';
+import DailyImageDetailView from './views/DailyImageDetailView.vue';
+import DailyRecommendationView from './views/DailyRecommendationView.vue';
 import HomeView from './views/HomeView.vue';
 import ImageDetailView from './views/ImageDetailView.vue';
 import NovelsListView from './views/NovelsListView.vue';
@@ -9,6 +11,20 @@ const router = createRouter({
 	routes: [
 		{
 			path: '/',
+			redirect: '/daily',
+		},
+		{
+			path: '/daily',
+			name: 'daily',
+			component: DailyRecommendationView,
+		},
+		{
+			path: '/daily/image/:id',
+			name: 'daily-image-detail',
+			component: DailyImageDetailView,
+		},
+		{
+			path: '/gallery',
 			name: 'home',
 			component: HomeView,
 		},

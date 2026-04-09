@@ -31,7 +31,14 @@ function onAuthChange(newUser: User | null) {
 						</RouterLink>
 						<nav class="flex gap-4">
 							<RouterLink
-								to="/"
+								to="/daily"
+								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+								active-class="text-blue-600"
+							>
+								Daily Recommendation
+							</RouterLink>
+							<RouterLink
+								to="/gallery"
 								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
 								active-class="text-blue-600"
 							>
