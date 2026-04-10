@@ -3,36 +3,28 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Allow read access only to hakatasiloving@gmail.com
-    // Allow write access to favorites field only for authenticated user
     match /images/{imageId} {
       allow read: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
-      allow update: if request.auth != null
-        && request.auth.token.email == 'hakatasiloving@gmail.com'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['favorites'])
-        && isValidFavoritesUpdate();
-      allow create, delete: if false;
+      allow write: if false;
     }
 
-    // Helper function to validate favorites data structure
-    function isValidFavoritesUpdate() {
-      let newFavorites = request.resource.data.favorites;
+    // Dedicated favorites collection — one document per image, keyed by image ID
+    match /favorites/{imageId} {
+      allow read: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
+      allow create, update: if request.auth != null
+        && request.auth.token.email == 'hakatasiloving@gmail.com'
+        && isValidFavorites(request.resource.data);
+      allow delete: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
+    }
 
-      // favorites must be a map with exactly 2 fields: isFavorited and categories
-      return newFavorites is map
-        && newFavorites.keys().hasAll(['isFavorited', 'categories'])
-        && newFavorites.keys().hasOnly(['isFavorited', 'categories'])
-        // isFavorited must be a boolean
-        && newFavorites.isFavorited is bool
-        // categories must be a list
-        && newFavorites.categories is list
-        // categories must contain only strings
-        && newFavorites.categories.size() == 0
-          || (newFavorites.categories.size() > 0 && newFavorites.categories[0] is string)
-        // categories list must not exceed 50 items (reasonable limit)
-        && newFavorites.categories.size() <= 50
-        // isFavorited must be true if categories is not empty, false if empty
-        && (newFavorites.categories.size() > 0 && newFavorites.isFavorited == true
-          || newFavorites.categories.size() == 0 && newFavorites.isFavorited == false);
+    // Validate the favorites document structure
+    function isValidFavorites(data) {
+      return data.keys().hasAll(['isFavorited', 'categories'])
+        && data.isFavorited is bool
+        && data.categories is list
+        && data.categories.size() <= 50
+        && (data.categories.size() == 0 || data.categories[0] is string)
+        && (data.categories.size() > 0) == data.isFavorited;
     }
 
     // Allow read access to moderationStats for authenticated users

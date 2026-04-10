@@ -20,7 +20,8 @@ defineProps<{
 
 const route = useRoute();
 const router = useRouter();
-const {getImageById, toggleFavorite, isFavorite} = useImages();
+const {getImageById, toggleFavorite, isFavorite, loadFavoritesForImages} =
+	useImages();
 const isSavingFavorite = ref(false);
 
 function goBack() {
@@ -107,6 +108,7 @@ onMounted(async () => {
 			if (!image.value) {
 				error.value = 'Image not found';
 			} else {
+				await loadFavoritesForImages([documentId]);
 				// Fetch generated novels for this image
 				await fetchGeneratedNovels();
 			}
@@ -372,16 +374,16 @@ function viewNovel(novelId: string) {
 						:disabled="isSavingFavorite"
 						:class="[
 							'absolute top-4 left-4 p-3 rounded-lg shadow-lg transition-all',
-							isFavorite(image)
+							isFavorite(image.id)
 								? 'bg-red-500 text-white hover:bg-red-600'
 								: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
 							isSavingFavorite && 'opacity-50 cursor-not-allowed',
 						]"
-						:title="isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'"
+						:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
 					>
 						<Heart
 							:size="24"
-							:fill="isFavorite(image) ? 'currentColor' : 'none'"
+							:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
 						/>
 					</button>
 				</div>

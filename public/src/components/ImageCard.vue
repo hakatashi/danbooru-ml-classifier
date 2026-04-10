@@ -12,7 +12,7 @@ const props = defineProps<{
 }>();
 
 const {toggleFavorite, isFavorite} = useImages();
-const isFavorited = computed(() => isFavorite(props.image));
+const isFavorited = computed(() => isFavorite(props.image.id));
 const isSaving = ref(false);
 
 const IMAGE_BASE_URL =

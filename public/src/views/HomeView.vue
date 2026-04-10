@@ -265,9 +265,9 @@ onMounted(() => {
 								loading="lazy"
 								@load="(e) => onImageLoad(e, image.id)"
 							>
-							<!-- Top-left buttons (hover) -->
+							<!-- Top-left buttons -->
 							<div
-								class="absolute top-3 left-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+								class="absolute top-3 left-3 flex gap-2 z-10"
 							>
 								<!-- Favorite button -->
 								<button
@@ -275,18 +275,18 @@ onMounted(() => {
 									:disabled="savingFavorites.has(image.id)"
 									:class="[
 										'p-2 rounded-lg shadow-lg transition-all',
-										isFavorite(image)
+										isFavorite(image.id)
 											? 'bg-red-500 text-white hover:bg-red-600'
 											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
 										savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
 									]"
 									:title="
-										isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'
+										isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'
 									"
 								>
 									<Heart
 										:size="16"
-										:fill="isFavorite(image) ? 'currentColor' : 'none'"
+										:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
 									/>
 								</button>
 								<!-- Detail page button -->
@@ -341,9 +341,9 @@ onMounted(() => {
 							loading="lazy"
 							@load="(e) => onImageLoad(e, image.id)"
 						>
-						<!-- Top-left buttons (hover) -->
+						<!-- Top-left buttons -->
 						<div
-							class="absolute top-3 left-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+							class="absolute top-3 left-3 flex gap-2 z-10"
 						>
 							<!-- Favorite button -->
 							<button
@@ -351,18 +351,18 @@ onMounted(() => {
 								:disabled="savingFavorites.has(image.id)"
 								:class="[
 									'p-2 rounded-lg shadow-lg transition-all',
-									isFavorite(image)
+									isFavorite(image.id)
 										? 'bg-red-500 text-white hover:bg-red-600'
 										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
 									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
 								]"
 								:title="
-									isFavorite(image) ? 'Remove from favorites' : 'Add to favorites'
+									isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'
 								"
 							>
 								<Heart
 									:size="16"
-									:fill="isFavorite(image) ? 'currentColor' : 'none'"
+									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
 								/>
 							</button>
 							<!-- Detail page button -->

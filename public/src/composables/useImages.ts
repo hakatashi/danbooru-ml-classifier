@@ -2,14 +2,15 @@ import {
 	collection,
 	type DocumentData,
 	doc,
+	documentId,
 	getDoc,
 	getDocs,
 	limit,
 	orderBy,
 	type QueryDocumentSnapshot,
 	query,
+	setDoc,
 	startAfter,
-	updateDoc,
 	where,
 } from 'firebase/firestore';
 import {ref} from 'vue';
@@ -38,6 +39,11 @@ const pageCache = ref<
 const hasNextPage = ref(true);
 const hasPrevPage = ref(false);
 
+// Dedicated favorites cache — keyed by image ID, loaded from the `favorites` collection
+const favoritesCache = ref<
+	Map<string, {isFavorited: boolean; categories: string[]}>
+>(new Map());
+
 function filtersEqual(a: FiltersState | null, b: FiltersState | null): boolean {
 	if (a === null || b === null) return a === b;
 
@@ -56,6 +62,29 @@ function filtersEqual(a: FiltersState | null, b: FiltersState | null): boolean {
 }
 
 export function useImages() {
+	/**
+	 * Load favorites from the `favorites` collection for the given image IDs.
+	 * Uses chunked `in` queries (Firestore limit: 30 per query).
+	 */
+	async function loadFavoritesForImages(imageIds: string[]): Promise<void> {
+		if (imageIds.length === 0) return;
+
+		const favRef = collection(db, 'favorites');
+		const CHUNK = 30;
+
+		for (let i = 0; i < imageIds.length; i += CHUNK) {
+			const chunk = imageIds.slice(i, i + CHUNK);
+			const q = query(favRef, where(documentId(), 'in', chunk));
+			const snapshot = await getDocs(q);
+			snapshot.forEach((d) => {
+				favoritesCache.value.set(
+					d.id,
+					d.data() as {isFavorited: boolean; categories: string[]},
+				);
+			});
+		}
+	}
+
 	async function loadPage(
 		sort: SortOption,
 		page: number,
@@ -84,6 +113,8 @@ export function useImages() {
 			hasNextPage.value =
 				effectivePage === pageCache.value.size - 1 ? hasNextPage.value : true;
 			hasPrevPage.value = effectivePage > 0;
+			// Ensure favorites are loaded for cached images too
+			await loadFavoritesForImages(cached.images.map((img) => img.id));
 			return {images: cached.images, page: effectivePage};
 		}
 
@@ -158,12 +189,12 @@ export function useImages() {
 			}
 
 			const newImages: ImageDocument[] = [];
-			snapshot.forEach((doc) => {
-				const data = doc.data();
+			snapshot.forEach((d) => {
+				const data = d.data();
 				// Filter: only include images with captions
 				if (data.captions && Object.keys(data.captions).length > 0) {
 					newImages.push({
-						id: doc.id,
+						id: d.id,
 						...data,
 					} as ImageDocument);
 				}
@@ -178,6 +209,9 @@ export function useImages() {
 
 			hasNextPage.value = snapshot.docs.length === PAGE_SIZE;
 			hasPrevPage.value = effectivePage > 0;
+
+			// Load favorites for newly fetched images
+			await loadFavoritesForImages(newImages.map((img) => img.id));
 
 			return {images: newImages, page: effectivePage};
 		} catch (e) {
@@ -220,20 +254,17 @@ export function useImages() {
 		currentSort.value = null;
 	}
 
+	/**
+	 * Toggle the favorite status for an image. Writes to the dedicated
+	 * `favorites` collection (not the `images` collection).
+	 */
 	async function toggleFavorite(
 		imageId: string,
 		category = 'Uncategorized',
 	): Promise<boolean> {
 		try {
-			const imageRef = doc(db, 'images', imageId);
-			const imageSnap = await getDoc(imageRef);
-
-			if (!imageSnap.exists()) {
-				throw new Error('Image not found');
-			}
-
-			const imageData = imageSnap.data() as ImageDocument;
-			const currentCategories = imageData.favorites?.categories || [];
+			const current = favoritesCache.value.get(imageId);
+			const currentCategories = current?.categories ?? [];
 
 			let newCategories: string[];
 			if (currentCategories.includes(category)) {
@@ -246,20 +277,14 @@ export function useImages() {
 
 			const isFavorited = newCategories.length > 0;
 
-			await updateDoc(imageRef, {
-				favorites: {
-					isFavorited,
-					categories: newCategories,
-				},
-			});
+			const favRef = doc(db, 'favorites', imageId);
+			await setDoc(favRef, {isFavorited, categories: newCategories});
 
-			// Update cache if present
-			for (const pageData of pageCache.value.values()) {
-				const cachedImage = pageData.images.find((img) => img.id === imageId);
-				if (cachedImage) {
-					cachedImage.favorites = {isFavorited, categories: newCategories};
-				}
-			}
+			// Update reactive cache
+			favoritesCache.value.set(imageId, {
+				isFavorited,
+				categories: newCategories,
+			});
 
 			return newCategories.includes(category);
 		} catch (e) {
@@ -268,11 +293,10 @@ export function useImages() {
 		}
 	}
 
-	function isFavorite(
-		image: ImageDocument,
-		category = 'Uncategorized',
-	): boolean {
-		return image.favorites?.categories.includes(category) ?? false;
+	function isFavorite(imageId: string, category = 'Uncategorized'): boolean {
+		return (
+			favoritesCache.value.get(imageId)?.categories.includes(category) ?? false
+		);
 	}
 
 	return {
@@ -283,6 +307,7 @@ export function useImages() {
 		loadPage,
 		getImageById,
 		clearCache,
+		loadFavoritesForImages,
 		toggleFavorite,
 		isFavorite,
 	};
