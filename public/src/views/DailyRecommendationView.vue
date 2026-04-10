@@ -4,6 +4,8 @@ import {
 	Calendar,
 	ChevronLeft,
 	ChevronRight,
+	ExternalLink,
+	Heart,
 	Image as ImageIcon,
 	Lock,
 } from 'lucide-vue-next';
@@ -21,6 +23,7 @@ import {
 import DailyCalendar from '../components/DailyCalendar.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import {useGallery} from '../composables/useGallery';
+import {useImages} from '../composables/useImages';
 import type {ImageDocument} from '../types';
 
 const props = defineProps<{user: User | null}>();
@@ -66,9 +69,10 @@ function todayString(): string {
 	return new Date().toISOString().split('T')[0];
 }
 
-const selectedDate = ref(
-	typeof route.query.date === 'string' ? route.query.date : todayString(),
-);
+// date is empty string until resolved (either from URL or from API)
+const dateFromUrl =
+	typeof route.query.date === 'string' && route.query.date.length > 0;
+const selectedDate = ref(dateFromUrl ? (route.query.date as string) : '');
 const selectedSort = ref<string>(
 	typeof route.query.sort === 'string'
 		? route.query.sort
@@ -135,6 +139,10 @@ const {
 	resetGallery,
 } = useGallery();
 
+// Favorites — backed by the shared favorites collection via useImages
+const {toggleFavorite, isFavorite, loadFavoritesForImages} = useImages();
+const savingFavorites = ref<Set<string>>(new Set());
+
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref('');
 
@@ -148,6 +156,7 @@ const isNamedSort = computed(() => NAMED_FIELDS.has(selectedSort.value));
 
 async function loadImages() {
 	if (!selectedSort.value || !props.user) return;
+	if (!selectedDate.value) return; // wait until date is resolved
 	loading.value = true;
 	error.value = null;
 	try {
@@ -160,6 +169,22 @@ async function loadImages() {
 		images.value = result.images;
 		totalCount.value = result.total;
 		resetGallery();
+
+		// Load favorites for this page from the dedicated favorites collection
+		await loadFavoritesForImages(result.images.map((img) => img.id));
+
+		// Pre-calculate gallery layout from image dimensions if available
+		let allHaveDimensions = true;
+		for (const img of result.images) {
+			if (img.width && img.height && img.width > 0 && img.height > 0) {
+				imageAspectRatios.value.set(img.id, img.width / img.height);
+			} else {
+				allHaveDimensions = false;
+			}
+		}
+		if (allHaveDimensions && result.images.length > 0) {
+			calculateGalleryRows(result.images as unknown as ImageDocument[]);
+		}
 	} catch (e) {
 		error.value = (e as Error).message;
 	} finally {
@@ -176,6 +201,30 @@ async function loadDailyCounts(month: string) {
 	} catch {
 		// ignore
 	}
+}
+
+async function getLatestAvailableDate(): Promise<string> {
+	const today = new Date();
+	for (let monthOffset = 0; monthOffset <= 3; monthOffset++) {
+		const d = new Date(today.getFullYear(), today.getMonth() - monthOffset, 1);
+		const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+		try {
+			const result = await fetchDailyCounts(monthStr);
+			dailyCounts.value = {...dailyCounts.value, ...result.days};
+			loadedMonths.value.add(monthStr);
+			const datesWithImages = Object.entries(result.days)
+				.filter(([, count]) => count > 0)
+				.map(([date]) => date)
+				.sort()
+				.reverse();
+			if (datesWithImages.length > 0) {
+				return datesWithImages[0];
+			}
+		} catch {
+			// continue
+		}
+	}
+	return todayString();
 }
 
 async function loadMetadata() {
@@ -207,10 +256,11 @@ watch(
 	},
 );
 
+// Fallback: for images that don't have dimensions, handle on-load
 watch(
 	() => images.value,
 	(imgs) => {
-		if (imgs.length > 0) {
+		if (imgs.length > 0 && galleryRows.value.length === 0) {
 			setTimeout(() => {
 				const imgEls = document.querySelectorAll('.daily-gallery-image');
 				imgEls.forEach((img) => {
@@ -251,6 +301,14 @@ function onDateSelect(date: string) {
 	selectedDate.value = date;
 	currentPage.value = 0;
 	showCalendar.value = false;
+	pushUrlParams();
+}
+
+function adjustDate(offset: number) {
+	const [y, m, d] = selectedDate.value.split('-').map(Number);
+	const date = new Date(y, m - 1, d + offset);
+	selectedDate.value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+	currentPage.value = 0;
 	pushUrlParams();
 }
 
@@ -296,13 +354,31 @@ function handleClickOutside(e: MouseEvent) {
 	}
 }
 
+async function handleToggleFavorite(event: Event, image: ApiImageDocument) {
+	event.stopPropagation();
+	if (savingFavorites.value.has(image.id)) return;
+	savingFavorites.value.add(image.id);
+	try {
+		await toggleFavorite(image.id);
+	} catch (err) {
+		console.error('Failed to toggle favorite:', err);
+	} finally {
+		savingFavorites.value.delete(image.id);
+	}
+}
+
 onMounted(async () => {
 	document.addEventListener('mousedown', handleClickOutside);
-	// Initial URL params
-	pushUrlParams();
 	await loadMetadata();
-	const [y, m] = selectedDate.value.split('-');
-	await loadDailyCounts(`${y}-${m}`);
+
+	if (!dateFromUrl) {
+		const latestDate = await getLatestAvailableDate();
+		selectedDate.value = latestDate;
+		pushUrlParams();
+	} else {
+		const [y, m] = selectedDate.value.split('-');
+		await loadDailyCounts(`${y}-${m}`);
+	}
 });
 
 onUnmounted(() => {
@@ -346,6 +422,30 @@ function getScoreColorClass(score: number | null): string {
 	if (score >= 0.2) return 'bg-yellow-600';
 	return 'bg-gray-500';
 }
+
+function getSourceUrl(image: ApiImageDocument): string {
+	const key = image.key;
+	if (!key) return '';
+	const parts = key.split('/');
+	if (parts.length < 2) return '';
+	const provider = parts[0];
+	const filename = parts[parts.length - 1];
+	const stem = filename.replace(/\.[^.]+$/, '');
+
+	if (provider === 'danbooru')
+		return `https://danbooru.donmai.us/posts/${stem}`;
+	if (provider === 'gelbooru')
+		return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
+	if (provider === 'pixiv') {
+		const id = stem.replace(/_p\d+$/, '');
+		return `https://www.pixiv.net/artworks/${id}`;
+	}
+	if (provider === 'sankaku')
+		return `https://chan.sankakucomplex.com/ja/posts/${stem}`;
+	if (provider === 'twitter' && image.source?.tweetId)
+		return `https://twitter.com/i/web/status/${image.source.tweetId}`;
+	return '';
+}
 </script>
 
 <template>
@@ -375,26 +475,47 @@ function getScoreColorClass(score: number | null): string {
 				class="sticky top-[72px] z-30 bg-white shadow-sm border-b border-gray-200 px-4 py-3 mb-4"
 			>
 				<div class="flex flex-wrap items-center gap-3">
-					<!-- Date Picker -->
-					<div ref="calendarContainerRef" class="relative">
+					<!-- Date Picker with prev/next arrows -->
+					<div class="flex items-center gap-1">
 						<button
 							type="button"
-							@click="showCalendar = !showCalendar"
-							class="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 hover:border-blue-400 bg-white text-sm font-medium text-gray-700 transition-colors"
+							@click="adjustDate(-1)"
+							class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+							title="Previous day"
 						>
-							<Calendar :size="16" class="text-gray-500" />
-							{{ selectedDate }}
+							<ChevronLeft :size="16" />
 						</button>
-						<!-- Calendar Popup -->
-						<div v-if="showCalendar" class="absolute top-full left-0 mt-1 z-50">
-							<DailyCalendar
-								ref="calendarRef"
-								:model-value="selectedDate"
-								:counts="dailyCounts"
-								@update:model-value="onDateSelect"
-								@month-change="loadDailyCounts"
-							/>
+						<div ref="calendarContainerRef" class="relative">
+							<button
+								type="button"
+								@click="showCalendar = !showCalendar"
+								class="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 hover:border-blue-400 bg-white text-sm font-medium text-gray-700 transition-colors"
+							>
+								<Calendar :size="16" class="text-gray-500" />
+								{{ selectedDate || '…' }}
+							</button>
+							<!-- Calendar Popup -->
+							<div
+								v-if="showCalendar"
+								class="absolute top-full left-0 mt-1 z-50"
+							>
+								<DailyCalendar
+									ref="calendarRef"
+									:model-value="selectedDate"
+									:counts="dailyCounts"
+									@update:model-value="onDateSelect"
+									@month-change="loadDailyCounts"
+								/>
+							</div>
 						</div>
+						<button
+							type="button"
+							@click="adjustDate(1)"
+							class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+							title="Next day"
+						>
+							<ChevronRight :size="16" />
+						</button>
 					</div>
 
 					<!-- Divider -->
@@ -572,9 +693,27 @@ function getScoreColorClass(score: number | null): string {
 							<div
 								class="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"
 							/>
-							<div
-								class="absolute top-2 left-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-							>
+							<!-- Top-left buttons -->
+							<div class="absolute top-2 left-2 flex gap-1.5 z-10">
+								<!-- Favorite button -->
+								<button
+									type="button"
+									@click="(e) => handleToggleFavorite(e, image)"
+									:disabled="savingFavorites.has(image.id)"
+									:class="[
+										'p-1.5 rounded-lg shadow-lg transition-all',
+										isFavorite(image.id)
+											? 'bg-red-500 text-white hover:bg-red-600'
+											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+										savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
+									]"
+									:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
+								>
+									<Heart
+										:size="14"
+										:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
+									/>
+								</button>
 								<RouterLink
 									:to="`/daily/image/${image.id}`"
 									target="_blank"
@@ -583,6 +722,17 @@ function getScoreColorClass(score: number | null): string {
 								>
 									Details
 								</RouterLink>
+								<a
+									v-if="getSourceUrl(image)"
+									:href="getSourceUrl(image)"
+									target="_blank"
+									rel="noopener noreferrer"
+									class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1"
+									@click.stop
+								>
+									<ExternalLink :size="11" />
+									Source
+								</a>
 							</div>
 							<div class="absolute top-2 right-2">
 								<div
@@ -616,9 +766,27 @@ function getScoreColorClass(score: number | null): string {
 							loading="lazy"
 							@load="(e) => onImageLoad(e, image.id)"
 						>
-						<div
-							class="absolute top-2 left-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-						>
+						<!-- Top-left buttons -->
+						<div class="absolute top-2 left-2 flex gap-1.5 z-10">
+							<!-- Favorite button -->
+							<button
+								type="button"
+								@click="(e) => handleToggleFavorite(e, image)"
+								:disabled="savingFavorites.has(image.id)"
+								:class="[
+									'p-1.5 rounded-lg shadow-lg transition-all',
+									isFavorite(image.id)
+										? 'bg-red-500 text-white hover:bg-red-600'
+										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
+								]"
+								:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
+							>
+								<Heart
+									:size="14"
+									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
+								/>
+							</button>
 							<RouterLink
 								:to="`/daily/image/${image.id}`"
 								target="_blank"
@@ -627,6 +795,17 @@ function getScoreColorClass(score: number | null): string {
 							>
 								Details
 							</RouterLink>
+							<a
+								v-if="getSourceUrl(image)"
+								:href="getSourceUrl(image)"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1"
+								@click.stop
+							>
+								<ExternalLink :size="11" />
+								Source
+							</a>
 						</div>
 						<div class="absolute top-2 right-2">
 							<div

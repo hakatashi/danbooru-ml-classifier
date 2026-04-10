@@ -111,13 +111,13 @@ function getScoreColorClass(value: number): string {
 /** Bar width based on rank: rank 1 → 100%, rank=total → ~0% */
 function getRankBarWidth(rank: number | null, total: number): string {
 	if (rank === null || total === 0) return '0%';
-	return `${(((total - rank + 1) / total) * 100).toFixed(1)}%`;
+	return `${(((total - rank + 1) / total) ** 15 * 100).toFixed(1)}%`;
 }
 
 /** Color based on rank percentile (lower rank = better) */
 function getRankColorClass(rank: number | null, total: number): string {
 	if (rank === null || total === 0) return 'bg-gray-400';
-	const pct = rank / total; // 0 = best, 1 = worst
+	const pct = 1 - (1 - rank / total) ** 15;
 	if (pct <= 0.2) return 'bg-purple-500';
 	if (pct <= 0.4) return 'bg-blue-500';
 	if (pct <= 0.6) return 'bg-green-500';

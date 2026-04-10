@@ -23,6 +23,8 @@ export interface ApiImageDocument {
 	type: string;
 	postId?: string;
 	date?: string;
+	width?: number;
+	height?: number;
 	captions?: Record<string, CaptionData>;
 	moderations?: Record<string, ModerationData>;
 	ageEstimations?: Record<string, AgeEstimationData>;
