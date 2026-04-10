@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path, {basename} from 'path';
 import {imageSize} from 'image-size';
@@ -116,6 +117,9 @@ const downloadPixivArtwork = async (
 			console.warn(`[Pixiv] Could not get dimensions for ${filename}:`, error);
 		}
 
+		const fileSize = imageBuffer.byteLength;
+		const sha256 = crypto.createHash('sha256').update(imageBuffer).digest('hex');
+
 		await imagesCollection.updateOne(
 			{key},
 			{
@@ -132,6 +136,8 @@ const downloadPixivArtwork = async (
 					downloadedAt: new Date(),
 					inferences: {},
 					topTagProbs: {},
+					fileSize,
+					sha256,
 					...(width !== undefined && height !== undefined ? {width, height} : {}),
 				},
 			},

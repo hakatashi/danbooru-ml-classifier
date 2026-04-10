@@ -10,6 +10,7 @@
  */
 
 import 'dotenv/config';
+import crypto from 'crypto';
 import fs from 'fs';
 import {imageSize} from 'image-size';
 import {MongoClient} from 'mongodb';
@@ -25,7 +26,11 @@ const main = async (): Promise<void> => {
 
 	const cursor = imagesCollection.find({
 		localPath: {$exists: true},
-		width: {$exists: false},
+		$or: [
+			{width: {$exists: false}},
+			{fileSize: {$exists: false}},
+			{sha256: {$exists: false}},
+		],
 	});
 
 	let processed = 0;
@@ -44,21 +49,31 @@ const main = async (): Promise<void> => {
 
 		try {
 			const buffer = await fs.promises.readFile(localPath);
-			const dimensions = imageSize(buffer);
 
-			if (dimensions.width === undefined || dimensions.height === undefined) {
-				console.warn(`[${processed}] No dimensions for ${localPath}`);
-				errors++;
-				continue;
+			const $set: Record<string, unknown> = {};
+
+			if (!doc.width || !doc.height) {
+				const dimensions = imageSize(buffer);
+				if (dimensions.width !== undefined && dimensions.height !== undefined) {
+					$set.width = dimensions.width;
+					$set.height = dimensions.height;
+				}
 			}
 
-			await imagesCollection.updateOne(
-				{_id: doc._id},
-				{$set: {width: dimensions.width, height: dimensions.height}},
-			);
-			updated++;
+			if (!doc.fileSize) {
+				$set.fileSize = buffer.byteLength;
+			}
 
-			if (updated % 100 === 0) {
+			if (!doc.sha256) {
+				$set.sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+			}
+
+			if (Object.keys($set).length > 0) {
+				await imagesCollection.updateOne({_id: doc._id}, {$set});
+				updated++;
+			}
+
+			if (processed % 100 === 0) {
 				console.log(`Progress: ${updated} updated, ${skipped} skipped, ${errors} errors (${processed} total)`);
 			}
 		} catch (error) {

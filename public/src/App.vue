@@ -27,7 +27,7 @@ function onAuthChange(newUser: User | null) {
 							to="/"
 							class="text-2xl font-bold text-gray-900 hover:text-blue-600 transition-colors"
 						>
-							VLM Caption Viewer
+							DMC
 						</RouterLink>
 						<nav class="flex gap-4">
 							<RouterLink

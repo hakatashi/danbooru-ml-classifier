@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path, {extname} from 'path';
 import {imageSize} from 'image-size';
@@ -197,6 +198,9 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 					console.warn(`[Sankaku] Could not get dimensions for ${filename}:`, error);
 				}
 
+				const fileSize = imageBuffer.byteLength;
+				const sha256 = crypto.createHash('sha256').update(imageBuffer).digest('hex');
+
 				await imagesCollection.updateOne(
 					{key},
 					{
@@ -212,6 +216,8 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 							downloadedAt: new Date(),
 							inferences: {},
 							topTagProbs: {},
+							fileSize,
+							sha256,
 							...(width !== undefined && height !== undefined ? {width, height} : {}),
 						},
 					},
