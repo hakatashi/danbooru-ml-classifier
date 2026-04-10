@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import {X} from 'lucide-vue-next';
 import {onMounted, onUnmounted, ref} from 'vue';
 
 defineProps<{
@@ -48,6 +47,11 @@ function handleBackdropClick(event: MouseEvent) {
 	}
 }
 
+function handleImageClick(event: MouseEvent) {
+	event.stopPropagation();
+	handleClose();
+}
+
 function handleKeydown(event: KeyboardEvent) {
 	if (event.key === 'Escape') {
 		handleClose();
@@ -64,14 +68,12 @@ function handleKeydown(event: KeyboardEvent) {
 			tabindex="0"
 			ref="backdrop"
 		>
-			<button
-				type="button"
-				@click="handleClose"
-				class="absolute top-4 right-4 p-2 text-white/80 hover:text-white transition-colors z-10"
+			<img
+				:src="src"
+				:alt="alt"
+				class="w-screen h-screen object-contain cursor-pointer"
+				@click="handleImageClick"
 			>
-				<X :size="32" />
-			</button>
-			<img :src="src" :alt="alt" class="w-screen h-screen object-contain">
 		</div>
 	</Teleport>
 </template>
