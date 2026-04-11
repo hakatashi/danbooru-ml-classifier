@@ -107,12 +107,6 @@ export const fetchDanbooruDailyRankings = async (): Promise<void> => {
 				continue;
 			}
 
-			const dirPath = path.join(IMAGE_CACHE_DIR, 'danbooru');
-			await fs.promises.mkdir(dirPath, {recursive: true});
-			const filePath = path.join(dirPath, filename);
-			await fs.promises.writeFile(filePath, imageBuffer);
-			console.log(`[Danbooru] Saved ${filename} to ${filePath}`);
-
 			let width: number | undefined;
 			let height: number | undefined;
 			try {
@@ -126,18 +120,28 @@ export const fetchDanbooruDailyRankings = async (): Promise<void> => {
 			const fileSize = imageBuffer.byteLength;
 			const sha256 = crypto.createHash('sha256').update(imageBuffer).digest('hex');
 
+			const dirPath = path.join(IMAGE_CACHE_DIR, 'danbooru');
+			const filePath = path.join(dirPath, filename);
+
+			const duplicate = await imagesCollection.findOne({sha256, key: {$ne: key}});
+			if (duplicate === null) {
+				await fs.promises.mkdir(dirPath, {recursive: true});
+				await fs.promises.writeFile(filePath, imageBuffer);
+				console.log(`[Danbooru] Saved ${filename} to ${filePath}`);
+			}
+
 			await imagesCollection.updateOne(
 				{key},
 				{
 					$set: {
-						status: 'pending',
+						status: duplicate ? 'deduped' : 'pending',
 						type: 'danbooru',
 						postId,
 						date: dateString,
 						originalUrl: url,
 						contentType,
 						key,
-						localPath: filePath,
+						localPath: duplicate ? null : filePath,
 						downloadedAt: new Date(),
 						inferences: {},
 						topTagProbs: {},
