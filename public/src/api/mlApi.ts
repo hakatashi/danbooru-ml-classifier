@@ -124,6 +124,19 @@ export async function fetchImportantTags(): Promise<ImportantTagsResponse> {
 	return res.json();
 }
 
+export async function fetchPostSource(
+	provider: 'danbooru' | 'gelbooru',
+	postId: string,
+): Promise<string | null> {
+	const url = new URL(`${BASE_URL}/post-source`);
+	url.searchParams.set('provider', provider);
+	url.searchParams.set('id', postId);
+	const res = await fetch(url.toString());
+	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	const data: {source: string | null} = await res.json();
+	return data.source;
+}
+
 export function getImageUrl(image: ApiImageDocument): string {
 	const BASE =
 		'https://matrix-images.hakatashi.com/danbooru-ml-classifier/images/';

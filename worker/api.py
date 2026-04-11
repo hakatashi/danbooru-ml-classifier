@@ -9,12 +9,18 @@ Usage:
     venv/bin/uvicorn api:app --host 0.0.0.0 --port 8766
 """
 
+import base64
 import os
 import re
 import time
+import urllib.parse
 from datetime import datetime
 from typing import Optional
 
+import requests as http_requests
+from dotenv import load_dotenv
+
+load_dotenv()
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +41,11 @@ ALLOWED_ORIGINS = [
 
 PAGE_SIZE_DEFAULT = 50
 PAGE_SIZE_MAX     = 200
+
+DANBOORU_API_USER = os.environ.get("DANBOORU_API_USER", "")
+DANBOORU_API_KEY  = os.environ.get("DANBOORU_API_KEY", "")
+GELBOORU_API_USER = os.environ.get("GELBOORU_API_USER", "")
+GELBOORU_API_KEY  = os.environ.get("GELBOORU_API_KEY", "")
 
 # ── Validation patterns ───────────────────────────────────────────────────────
 
@@ -415,3 +426,59 @@ def list_important_tags():
 def health():
     """Simple health check."""
     return {"status": "ok"}
+
+
+def _pixiv_image_url_to_artwork(source: Optional[str]) -> Optional[str]:
+    """Convert a Pixiv image URL to its artwork page URL if applicable."""
+    if not source:
+        return source
+    m = re.search(r"pximg\.net/.*/(\d+)_p\d+", source)
+    if m:
+        return f"https://www.pixiv.net/artworks/{m.group(1)}"
+    return source
+
+
+@app.get("/post-source")
+def get_post_source(
+    provider: str = Query(..., description="Image provider: 'danbooru' or 'gelbooru'", pattern="^(danbooru|gelbooru)$"),
+    id: str = Query(..., description="Post ID (numeric string)", pattern=r"^\d+$"),
+):
+    """
+    Fetch the 'source' field from the Danbooru or Gelbooru API for the given post.
+
+    Returns the source URL (which may point to Pixiv artwork or another site),
+    or null if no source is available.
+    """
+    headers = {"User-Agent": "danbooru-ml-classifier/1.0"}
+
+    if provider == "danbooru":
+        url = f"https://danbooru.donmai.us/posts/{id}.json"
+        if DANBOORU_API_USER and DANBOORU_API_KEY:
+            creds = base64.b64encode(f"{DANBOORU_API_USER}:{DANBOORU_API_KEY}".encode()).decode()
+            headers["Authorization"] = f"Basic {creds}"
+        try:
+            resp = http_requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except http_requests.RequestException as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch from Danbooru: {e}")
+        source = data.get("source") or None
+        return {"source": _pixiv_image_url_to_artwork(source)}
+
+    if provider == "gelbooru":
+        params: dict = {"page": "dapi", "s": "post", "q": "index", "json": "1", "id": id}
+        if GELBOORU_API_USER and GELBOORU_API_KEY:
+            params["api_key"] = GELBOORU_API_KEY
+            params["user_id"] = GELBOORU_API_USER
+        url = "https://gelbooru.com/index.php?" + urllib.parse.urlencode(params)
+        try:
+            resp = http_requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except http_requests.RequestException as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch from Gelbooru: {e}")
+        posts = data.get("post", [])
+        if not posts:
+            return {"source": None}
+        source = posts[0].get("source") or None
+        return {"source": _pixiv_image_url_to_artwork(source)}

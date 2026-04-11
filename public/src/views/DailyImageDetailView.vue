@@ -2,7 +2,12 @@
 import {ChevronLeft, ExternalLink} from 'lucide-vue-next';
 import {computed, onMounted, ref} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
-import {type ApiImageDocument, fetchImageById, getImageUrl} from '../api/mlApi';
+import {
+	type ApiImageDocument,
+	fetchImageById,
+	fetchPostSource,
+	getImageUrl,
+} from '../api/mlApi';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import type {TagData, TagList} from '../types';
@@ -62,14 +67,19 @@ const sortedInferences = computed(() => {
 	if (!inf) return [];
 	return Object.entries(inf)
 		.flatMap(([modelKey, scores]) =>
-			Object.entries(scores).map(([field, value]) => ({
-				modelKey,
-				field,
-				value: value as number,
-				sortField: `inferences.${modelKey}.${field}`,
-			})),
+			Object.keys(scores).map((field) => {
+				const sortField = `inferences.${modelKey}.${field}`;
+				return {
+					modelKey,
+					field,
+					value:
+						image.value?.scoreRanks?.[sortField]?.rank ??
+						Number.POSITIVE_INFINITY,
+					sortField,
+				};
+			}),
 		)
-		.sort((a, b) => b.value - a.value);
+		.sort((a, b) => a.value - b.value);
 });
 
 // Important tag probs sorted by value descending
@@ -222,7 +232,7 @@ function getModelDisplayName(key: string): string {
 	return key;
 }
 
-// External source URL from image key (mirrors labeler/frontend/src/types.ts)
+// External source URL from image key — pixiv/sankaku/twitter only
 const sourceUrl = computed((): string | null => {
 	const key = image.value?.key;
 	if (!key) return null;
@@ -232,10 +242,6 @@ const sourceUrl = computed((): string | null => {
 	const filename = parts[parts.length - 1];
 	const stem = filename.replace(/\.[^.]+$/, '');
 
-	if (provider === 'danbooru')
-		return `https://danbooru.donmai.us/posts/${stem}`;
-	if (provider === 'gelbooru')
-		return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
 	if (provider === 'pixiv') {
 		const id = stem.replace(/_p\d+$/, '');
 		return `https://www.pixiv.net/artworks/${id}`;
@@ -246,6 +252,52 @@ const sourceUrl = computed((): string | null => {
 		return `https://twitter.com/i/web/status/${image.value.source.tweetId}`;
 	return null;
 });
+
+// For danbooru/gelbooru: fetch source URL from API, fall back to post page
+const imageProvider = computed(
+	(): string => image.value?.key?.split('/')[0] ?? '',
+);
+const imageStem = computed((): string => {
+	const parts = image.value?.key?.split('/') ?? [];
+	if (parts.length < 2) return '';
+	return parts[parts.length - 1].replace(/\.[^.]+$/, '');
+});
+
+function getPostPageUrl(
+	provider: 'danbooru' | 'gelbooru',
+	stem: string,
+): string {
+	if (provider === 'danbooru')
+		return `https://danbooru.donmai.us/posts/${stem}`;
+	return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
+}
+
+const sourceLoading = ref(false);
+
+async function openViewSource(): Promise<void> {
+	const provider = imageProvider.value;
+	const stem = imageStem.value;
+	if (provider !== 'danbooru' && provider !== 'gelbooru') return;
+
+	const fallback = getPostPageUrl(provider as 'danbooru' | 'gelbooru', stem);
+	sourceLoading.value = true;
+	try {
+		const source = await fetchPostSource(
+			provider as 'danbooru' | 'gelbooru',
+			stem,
+		);
+		const url =
+			source !== null &&
+			(source.startsWith('http://') || source.startsWith('https://'))
+				? source
+				: fallback;
+		window.open(url, '_blank', 'noopener,noreferrer');
+	} catch {
+		window.open(fallback, '_blank', 'noopener,noreferrer');
+	} finally {
+		sourceLoading.value = false;
+	}
+}
 
 // Link to daily list for a sort field + current date
 function dailyLink(sortField: string): string {
@@ -317,9 +369,23 @@ onMounted(async () => {
 						>
 					</div>
 					<!-- Source link below image -->
-					<div v-if="sourceUrl" class="mt-2 flex justify-end">
+					<div
+						v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru' || sourceUrl"
+						class="mt-2 flex justify-end"
+					>
+						<button
+							v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru'"
+							type="button"
+							:disabled="sourceLoading"
+							class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait"
+							@click="openViewSource"
+						>
+							<ExternalLink :size="13" />
+							View Source ({{ image.type }})
+						</button>
 						<a
-							:href="sourceUrl"
+							v-else
+							:href="sourceUrl ?? ''"
 							target="_blank"
 							rel="noopener noreferrer"
 							class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs rounded-lg transition-colors"

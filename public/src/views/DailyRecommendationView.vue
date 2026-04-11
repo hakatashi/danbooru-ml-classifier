@@ -17,6 +17,7 @@ import {
 	fetchImages,
 	fetchImportantTags,
 	fetchInferenceModels,
+	fetchPostSource,
 	getImageUrl,
 	type InferenceModel,
 } from '../api/mlApi';
@@ -432,10 +433,6 @@ function getSourceUrl(image: ApiImageDocument): string {
 	const filename = parts[parts.length - 1];
 	const stem = filename.replace(/\.[^.]+$/, '');
 
-	if (provider === 'danbooru')
-		return `https://danbooru.donmai.us/posts/${stem}`;
-	if (provider === 'gelbooru')
-		return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
 	if (provider === 'pixiv') {
 		const id = stem.replace(/_p\d+$/, '');
 		return `https://www.pixiv.net/artworks/${id}`;
@@ -445,6 +442,64 @@ function getSourceUrl(image: ApiImageDocument): string {
 	if (provider === 'twitter' && image.source?.tweetId)
 		return `https://twitter.com/i/web/status/${image.source.tweetId}`;
 	return '';
+}
+
+function getImageProvider(image: ApiImageDocument): string {
+	return image.key?.split('/')[0] ?? '';
+}
+
+function getImageStem(image: ApiImageDocument): string {
+	const parts = image.key?.split('/') ?? [];
+	if (parts.length < 2) return '';
+	return parts[parts.length - 1].replace(/\.[^.]+$/, '');
+}
+
+function getPostPageUrl(
+	provider: 'danbooru' | 'gelbooru',
+	stem: string,
+): string {
+	if (provider === 'danbooru')
+		return `https://danbooru.donmai.us/posts/${stem}`;
+	return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
+}
+
+function isValidUrl(url: string | null): boolean {
+	return (
+		url !== null && (url.startsWith('http://') || url.startsWith('https://'))
+	);
+}
+
+const sourceLoadingIds = ref<Set<string>>(new Set());
+
+async function openSource(
+	image: ApiImageDocument,
+	event: MouseEvent,
+): Promise<void> {
+	event.stopPropagation();
+	const provider = getImageProvider(image);
+	const stem = getImageStem(image);
+
+	if (provider !== 'danbooru' && provider !== 'gelbooru') return;
+
+	const fallback = getPostPageUrl(provider as 'danbooru' | 'gelbooru', stem);
+	sourceLoadingIds.value = new Set([...sourceLoadingIds.value, image.id]);
+	try {
+		const source = await fetchPostSource(
+			provider as 'danbooru' | 'gelbooru',
+			stem,
+		);
+		window.open(
+			isValidUrl(source) ? (source as string) : fallback,
+			'_blank',
+			'noopener,noreferrer',
+		);
+	} catch {
+		window.open(fallback, '_blank', 'noopener,noreferrer');
+	} finally {
+		const next = new Set(sourceLoadingIds.value);
+		next.delete(image.id);
+		sourceLoadingIds.value = next;
+	}
 }
 </script>
 
@@ -722,8 +777,18 @@ function getSourceUrl(image: ApiImageDocument): string {
 								>
 									Details
 								</RouterLink>
+								<button
+									v-if="getImageProvider(image) === 'danbooru' || getImageProvider(image) === 'gelbooru'"
+									type="button"
+									:disabled="sourceLoadingIds.has(image.id)"
+									class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait"
+									@click="(e) => openSource(image, e)"
+								>
+									<ExternalLink :size="11" />
+									Source
+								</button>
 								<a
-									v-if="getSourceUrl(image)"
+									v-else-if="getSourceUrl(image)"
 									:href="getSourceUrl(image)"
 									target="_blank"
 									rel="noopener noreferrer"
@@ -795,8 +860,18 @@ function getSourceUrl(image: ApiImageDocument): string {
 							>
 								Details
 							</RouterLink>
+							<button
+								v-if="getImageProvider(image) === 'danbooru' || getImageProvider(image) === 'gelbooru'"
+								type="button"
+								:disabled="sourceLoadingIds.has(image.id)"
+								class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait"
+								@click="(e) => openSource(image, e)"
+							>
+								<ExternalLink :size="11" />
+								Source
+							</button>
 							<a
-								v-if="getSourceUrl(image)"
+								v-else-if="getSourceUrl(image)"
 								:href="getSourceUrl(image)"
 								target="_blank"
 								rel="noopener noreferrer"
