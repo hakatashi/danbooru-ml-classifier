@@ -137,9 +137,12 @@ export async function fetchPostSource(
 	return data.source;
 }
 
-export function getImageUrl(image: ApiImageDocument): string {
-	const BASE =
-		'https://matrix-images.hakatashi.com/danbooru-ml-classifier/images/';
-	if (image.key) return `${BASE}${image.key}`;
-	return `${BASE}twitter/${image.id}`;
+export function getImageUrl(
+	image: ApiImageDocument,
+	thumbnail = false,
+): string {
+	const BASE = 'https://matrix-images.hakatashi.com/danbooru-ml-classifier/';
+	const path = thumbnail ? 'thumbnails/' : 'images/';
+	if (image.key) return `${BASE}${path}${image.key}`;
+	return `${BASE}${path}twitter/${image.id}`;
 }

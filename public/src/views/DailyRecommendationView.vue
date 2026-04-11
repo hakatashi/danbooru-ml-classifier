@@ -337,7 +337,7 @@ function onImageLoad(e: Event, imageId: string) {
 }
 
 function openLightbox(image: ApiImageDocument) {
-	lightboxImage.value = getImageUrl(image);
+	lightboxImage.value = getImageUrl(image, false);
 	lightboxAlt.value = image.id;
 }
 
@@ -738,7 +738,7 @@ async function openSource(
 							@click="openLightbox(image)"
 						>
 							<img
-								:src="getImageUrl(image)"
+								:src="getImageUrl(image, true)"
 								:alt="image.id"
 								class="daily-gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 								:style="getGalleryImageStyle(image.id, image.height)"
@@ -824,7 +824,7 @@ async function openSource(
 						@click="openLightbox(image)"
 					>
 						<img
-							:src="getImageUrl(image)"
+							:src="getImageUrl(image, true)"
 							:alt="image.id"
 							class="daily-gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 							:style="getGalleryImageStyle(image.id, 480)"
