@@ -124,6 +124,35 @@ export async function fetchImportantTags(): Promise<ImportantTagsResponse> {
 	return res.json();
 }
 
+export interface SimilarImage extends ApiImageDocument {
+	similarity: number;
+}
+
+export interface SimilarImagesResponse {
+	similar: SimilarImage[];
+	total: number;
+}
+
+export async function fetchSimilarImages(
+	id: string,
+	params?: {
+		limit?: number;
+		status?: string;
+		date?: string;
+		type?: string;
+	},
+): Promise<SimilarImagesResponse> {
+	const url = new URL(`${BASE_URL}/images/${id}/similar`);
+	if (params?.limit !== undefined)
+		url.searchParams.set('limit', String(params.limit));
+	if (params?.status) url.searchParams.set('status', params.status);
+	if (params?.date) url.searchParams.set('date', params.date);
+	if (params?.type) url.searchParams.set('type', params.type);
+	const res = await fetch(url.toString());
+	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	return res.json();
+}
+
 export async function fetchPostSource(
 	provider: 'danbooru' | 'gelbooru',
 	postId: string,

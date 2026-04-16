@@ -6,7 +6,9 @@ import {
 	type ApiImageDocument,
 	fetchImageById,
 	fetchPostSource,
+	fetchSimilarImages,
 	getImageUrl,
+	type SimilarImage,
 } from '../api/mlApi';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
@@ -243,7 +245,7 @@ const sourceUrl = computed((): string | null => {
 	const stem = filename.replace(/\.[^.]+$/, '');
 
 	if (provider === 'pixiv') {
-		const id = stem.replace(/_p\d+$/, '');
+		const id = stem.replace(/(-[0-9a-f]{32})?_p\d+$/, '');
 		return `https://www.pixiv.net/artworks/${id}`;
 	}
 	if (provider === 'sankaku')
@@ -313,6 +315,28 @@ function goBack() {
 	}
 }
 
+// ── Similar Images ────────────────────────────────────────────────────────────
+
+const similarImages = ref<SimilarImage[]>([]);
+const similarLoading = ref(false);
+const similarError = ref<string | null>(null);
+
+async function loadSimilarImages(id: string) {
+	similarLoading.value = true;
+	similarError.value = null;
+	try {
+		const result = await fetchSimilarImages(id, {
+			limit: 20,
+			status: 'inferred',
+		});
+		similarImages.value = result.similar;
+	} catch (e) {
+		similarError.value = (e as Error).message;
+	} finally {
+		similarLoading.value = false;
+	}
+}
+
 onMounted(async () => {
 	const id = route.params.id as string;
 	try {
@@ -322,6 +346,8 @@ onMounted(async () => {
 	} finally {
 		loading.value = false;
 	}
+	// Fetch similar images in parallel (non-blocking)
+	loadSimilarImages(id);
 });
 </script>
 
@@ -862,6 +888,62 @@ onMounted(async () => {
 							</div>
 						</div>
 					</div>
+				</div>
+			</div>
+
+			<!-- Similar Images -->
+			<div class="bg-white rounded-xl shadow-md p-4">
+				<h2 class="text-base font-semibold text-gray-900 mb-3">
+					Similar Images
+				</h2>
+
+				<!-- Loading -->
+				<div
+					v-if="similarLoading"
+					class="flex items-center gap-2 text-sm text-gray-500 py-4"
+				>
+					<div
+						class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
+					/>
+					Searching for similar images...
+				</div>
+
+				<!-- Error -->
+				<p v-else-if="similarError" class="text-sm text-red-500 py-2">
+					{{ similarError }}
+				</p>
+
+				<!-- No results -->
+				<p
+					v-else-if="similarImages.length === 0"
+					class="text-sm text-gray-400 py-2"
+				>
+					No similar images found. (Qdrant index may not include this image
+					yet.)
+				</p>
+
+				<!-- Thumbnail strip -->
+				<div v-else class="flex gap-2 overflow-x-auto pb-2">
+					<RouterLink
+						v-for="sim in similarImages"
+						:key="sim.id"
+						:to="`/daily/image/${sim.id}`"
+						class="flex-shrink-0 relative group"
+						:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
+					>
+						<img
+							:src="getImageUrl(sim, true)"
+							:alt="sim.id"
+							class="h-32 w-auto object-cover rounded-lg bg-gray-100"
+							loading="lazy"
+						>
+						<!-- Similarity badge -->
+						<span
+							class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
+						>
+							{{ (sim.similarity * 100).toFixed(1) }}%
+						</span>
+					</RouterLink>
 				</div>
 			</div>
 		</div>

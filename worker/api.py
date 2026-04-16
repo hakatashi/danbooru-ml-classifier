@@ -14,6 +14,7 @@ import os
 import re
 import time
 import urllib.parse
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -47,6 +48,10 @@ DANBOORU_API_KEY  = os.environ.get("DANBOORU_API_KEY", "")
 GELBOORU_API_USER = os.environ.get("GELBOORU_API_USER", "")
 GELBOORU_API_KEY  = os.environ.get("GELBOORU_API_KEY", "")
 
+QDRANT_HOST       = os.environ.get("QDRANT_HOST", "localhost")
+QDRANT_PORT       = int(os.environ.get("QDRANT_PORT", "6333"))
+QDRANT_COLLECTION = "image_embeddings"
+
 # ── Validation patterns ───────────────────────────────────────────────────────
 
 # Allowed sort field patterns:
@@ -76,6 +81,23 @@ def get_db():
     if _client is None:
         _client = MongoClient(MONGODB_URI)
     return _client[MONGODB_DB]
+
+
+# ── Qdrant client (lazy singleton) ───────────────────────────────────────────
+
+_qdrant_client = None
+
+def _get_qdrant_client():
+    global _qdrant_client
+    if _qdrant_client is None:
+        from qdrant_client import QdrantClient
+        _qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=10)
+    return _qdrant_client
+
+
+def _mongo_id_to_qdrant_uuid(mongo_id: str) -> str:
+    """Deterministically convert a MongoDB ObjectId hex string to a UUID string."""
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, mongo_id))
 
 
 # ── Rank cache ────────────────────────────────────────────────────────────────
@@ -420,6 +442,118 @@ def list_important_tags():
         if isinstance(tag_map, dict)
     }
     return {"tags": tags}
+
+
+@app.get("/images/{image_id}/similar")
+def get_similar_images(
+    image_id: str,
+    limit: int = Query(20, ge=1, le=100, description="Number of similar images to return"),
+    status: Optional[str] = Query(
+        "inferred",
+        description="Comma-separated list of status values to filter by (e.g. 'inferred' or 'inferred,pending')",
+    ),
+    date: Optional[str] = Query(None, description="Filter results to a specific date (YYYY-MM-DD)"),
+    image_type: Optional[str] = Query(
+        None,
+        alias="type",
+        description="Filter results by image source type (e.g. 'pixiv', 'danbooru')",
+        pattern="^[a-z]+$",
+    ),
+):
+    """
+    Return images visually similar to the given image, ranked by EVA02 cosine similarity.
+
+    Similarity is computed via Qdrant ANN search using the stored EVA02 (1024-dim) embedding.
+    The query image itself is excluded from results.
+    Returns an empty list if the image has no Qdrant entry yet.
+    """
+    try:
+        oid = ObjectId(image_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image id")
+
+    # Build Qdrant filter
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+
+        must_conditions = []
+
+        if status:
+            status_list = [s.strip() for s in status.split(",") if s.strip()]
+            if len(status_list) == 1:
+                must_conditions.append(
+                    FieldCondition(key="status", match=MatchValue(value=status_list[0]))
+                )
+            elif len(status_list) > 1:
+                must_conditions.append(
+                    FieldCondition(key="status", match=MatchAny(any=status_list))
+                )
+
+        if date:
+            _validate_date(date)
+            must_conditions.append(
+                FieldCondition(key="date", match=MatchValue(value=date))
+            )
+
+        if image_type:
+            must_conditions.append(
+                FieldCondition(key="type", match=MatchValue(value=image_type))
+            )
+
+        query_filter = Filter(must=must_conditions) if must_conditions else None
+
+        qdrant = _get_qdrant_client()
+        qdrant_uuid = _mongo_id_to_qdrant_uuid(image_id)
+
+        # Use recommend API: find points similar to the given point's stored vector.
+        # Fetch limit+1 in case the query image itself appears in results.
+        results = qdrant.recommend(
+            collection_name=QDRANT_COLLECTION,
+            positive=[qdrant_uuid],
+            negative=[],
+            query_filter=query_filter,
+            limit=limit + 1,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Qdrant unavailable: {exc}")
+
+    # Extract MongoDB IDs, excluding the query image itself
+    similar: list[dict] = []
+    for r in results:
+        payload   = r.payload or {}
+        result_id = payload.get("image_id", "")
+        if result_id == image_id:
+            continue
+        similar.append({"image_id": result_id, "similarity": r.score})
+        if len(similar) >= limit:
+            break
+
+    if not similar:
+        return {"similar": [], "total": 0}
+
+    # Fetch MongoDB documents for the similar images
+    db  = get_db()
+    col = db["images"]
+    similar_oids = [ObjectId(s["image_id"]) for s in similar if s["image_id"]]
+    docs_by_id = {
+        str(doc["_id"]): _doc_to_dict(doc)
+        for doc in col.find({"_id": {"$in": similar_oids}}, _EXCLUDED_FIELDS)
+    }
+
+    # Merge similarity score into each document, preserving rank order
+    result_docs = []
+    for s in similar:
+        doc = docs_by_id.get(s["image_id"])
+        if doc:
+            doc["similarity"] = round(s["similarity"], 6)
+            result_docs.append(doc)
+
+    return {"similar": result_docs, "total": len(result_docs)}
 
 
 @app.get("/health")

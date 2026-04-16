@@ -434,7 +434,7 @@ function getSourceUrl(image: ApiImageDocument): string {
 	const stem = filename.replace(/\.[^.]+$/, '');
 
 	if (provider === 'pixiv') {
-		const id = stem.replace(/_p\d+$/, '');
+		const id = stem.replace(/(-[0-9a-f]{32})?_p\d+$/, '');
 		return `https://www.pixiv.net/artworks/${id}`;
 	}
 	if (provider === 'sankaku')

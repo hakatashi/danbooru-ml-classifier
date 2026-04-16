@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 
 import joblib
@@ -39,6 +40,9 @@ PIXAI_IMPORTANCE_CSV        = RESULTS_DIR / "feature_importance_pixai_pixiv_priv
 IMAGE_CACHE_DIR = Path(os.environ.get("IMAGE_CACHE_DIR", "/mnt/cache/danbooru-ml-classifier/images"))
 MONGODB_URI     = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB      = os.environ.get("MONGODB_DB", "danbooru-ml-classifier")
+QDRANT_HOST     = os.environ.get("QDRANT_HOST", "localhost")
+QDRANT_PORT     = int(os.environ.get("QDRANT_PORT", "6333"))
+QDRANT_COLLECTION = "image_embeddings"
 
 PIXAI_MODEL_DIR   = Path.home() / ".cache" / "pixai-tagger"
 PIXAI_MODEL_REPO  = "pixai-labs/pixai-tagger-v0.9"
@@ -308,6 +312,80 @@ def _mongo_key(name: str) -> str:
     return name.replace(".", "_").replace("$", "_")
 
 
+def _mongo_id_to_qdrant_uuid(mongo_id: str) -> str:
+    """Deterministically convert a MongoDB ObjectId hex string to a UUID string."""
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, mongo_id))
+
+
+# ── Qdrant client (lazy singleton) ───────────────────────────────────────────
+
+_qdrant_client = None
+
+def _get_qdrant_client():
+    """Return a Qdrant client, initialising the collection if needed."""
+    global _qdrant_client
+    if _qdrant_client is not None:
+        return _qdrant_client
+
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams, PayloadSchemaType
+
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=10)
+
+    if not client.collection_exists(QDRANT_COLLECTION):
+        log.info("[Qdrant] Creating collection '%s' (dim=1024, Cosine) ...", QDRANT_COLLECTION)
+        client.create_collection(
+            collection_name=QDRANT_COLLECTION,
+            vectors_config=VectorParams(size=EVA02_DIM, distance=Distance.COSINE),
+        )
+        # Create payload indexes for efficient filtering
+        client.create_payload_index(QDRANT_COLLECTION, "date",   PayloadSchemaType.KEYWORD)
+        client.create_payload_index(QDRANT_COLLECTION, "type",   PayloadSchemaType.KEYWORD)
+        client.create_payload_index(QDRANT_COLLECTION, "status", PayloadSchemaType.KEYWORD)
+        log.info("[Qdrant] Collection ready.")
+
+    _qdrant_client = client
+    return client
+
+
+def upsert_eva02_to_qdrant(
+    docs: list[dict],
+    embeddings: np.ndarray,
+    status: str = "inferred",
+) -> None:
+    """
+    Upsert EVA02 embeddings to Qdrant.
+    Errors are logged but do not propagate — Qdrant unavailability must not
+    block the main inference pipeline.
+
+    Args:
+        docs:       MongoDB documents (must have _id, date, type fields).
+        embeddings: float32 array of shape (N, 1024).
+        status:     Value to store in the 'status' payload field.
+    """
+    try:
+        from qdrant_client.models import PointStruct
+
+        client = _get_qdrant_client()
+        points = []
+        for doc, emb in zip(docs, embeddings):
+            mongo_id = str(doc["_id"])
+            points.append(PointStruct(
+                id=_mongo_id_to_qdrant_uuid(mongo_id),
+                vector=emb.tolist(),
+                payload={
+                    "image_id": mongo_id,
+                    "date":     doc.get("date", ""),
+                    "type":     doc.get("type", ""),
+                    "status":   status,
+                },
+            ))
+        client.upsert(collection_name=QDRANT_COLLECTION, points=points)
+        log.info("[Qdrant] Upserted %d points.", len(points))
+    except Exception as exc:
+        log.warning("[Qdrant] Upsert failed (non-fatal): %s", exc)
+
+
 # ── Batched inference across all images ───────────────────────────────────────
 
 def run_inference_batched(
@@ -513,6 +591,9 @@ def main():
             "  Saved %d  (total done=%d  error=%d)",
             result.modified_count, n_done, n_error,
         )
+
+        # Upsert EVA02 embeddings to Qdrant (non-fatal if Qdrant is unavailable)
+        upsert_eva02_to_qdrant(loaded_docs, X_eva, status="inferred")
 
     log.info("Done. processed=%d  error=%d", n_done, n_error)
 
