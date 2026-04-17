@@ -1,0 +1,21 @@
+[Unit]
+Description=Qdrant Vector Database (Docker)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker stop qdrant-danbooru
+ExecStartPre=-/usr/bin/docker rm qdrant-danbooru
+ExecStart=/usr/bin/docker run --name qdrant-danbooru \
+    --network host \
+    -v /var/lib/qdrant-danbooru:/qdrant/storage \
+    qdrant/qdrant
+ExecStop=/usr/bin/docker stop qdrant-danbooru
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

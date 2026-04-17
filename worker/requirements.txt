@@ -17,3 +17,4 @@ accelerate>=1.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 timm>=1.0.0  # Required for PixAI Tagger (EVA02 encoder)
+qdrant-client>=1.9.0
