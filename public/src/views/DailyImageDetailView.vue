@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ChevronLeft, ExternalLink} from 'lucide-vue-next';
-import {computed, onMounted, ref} from 'vue';
+import {computed, onMounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import {
 	type ApiImageDocument,
@@ -337,8 +337,11 @@ async function loadSimilarImages(id: string) {
 	}
 }
 
-onMounted(async () => {
-	const id = route.params.id as string;
+async function loadImage(id: string) {
+	loading.value = true;
+	error.value = null;
+	image.value = null;
+	similarImages.value = [];
 	try {
 		image.value = await fetchImageById(id);
 	} catch (e) {
@@ -346,9 +349,25 @@ onMounted(async () => {
 	} finally {
 		loading.value = false;
 	}
-	// Fetch similar images in parallel (non-blocking)
 	loadSimilarImages(id);
+}
+
+// Re-fetch when navigating between similar images (component is reused)
+watch(
+	() => route.params.id as string,
+	(id) => {
+		if (id) loadImage(id);
+	},
+);
+
+onMounted(() => {
+	loadImage(route.params.id as string);
 });
+
+function onSimilarWheel(e: WheelEvent) {
+	const el = e.currentTarget as HTMLElement;
+	el.scrollLeft += e.deltaY;
+}
 </script>
 
 <template>
@@ -512,6 +531,66 @@ onMounted(async () => {
 								</dd>
 							</div>
 						</dl>
+					</div>
+
+					<!-- Similar Images -->
+					<div class="bg-white rounded-xl shadow-md p-4">
+						<h2 class="text-base font-semibold text-gray-900 mb-3">
+							Similar Images
+						</h2>
+
+						<!-- Loading -->
+						<div
+							v-if="similarLoading"
+							class="flex items-center gap-2 text-sm text-gray-500 py-4"
+						>
+							<div
+								class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
+							/>
+							Searching for similar images...
+						</div>
+
+						<!-- Error -->
+						<p v-else-if="similarError" class="text-sm text-red-500 py-2">
+							{{ similarError }}
+						</p>
+
+						<!-- No results -->
+						<p
+							v-else-if="similarImages.length === 0"
+							class="text-sm text-gray-400 py-2"
+						>
+							No similar images found. (Qdrant index may not include this image
+							yet.)
+						</p>
+
+						<!-- Thumbnail strip -->
+						<div
+							v-else
+							class="flex gap-2 overflow-x-auto pb-2"
+							@wheel.prevent="onSimilarWheel"
+						>
+							<RouterLink
+								v-for="sim in similarImages"
+								:key="sim.id"
+								:to="`/daily/image/${sim.id}`"
+								class="flex-shrink-0 relative group"
+								:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
+							>
+								<img
+									:src="getImageUrl(sim, true)"
+									:alt="sim.id"
+									class="h-64 w-auto object-cover rounded-lg bg-gray-100"
+									loading="lazy"
+								>
+								<!-- Similarity badge -->
+								<span
+									class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
+								>
+									{{ (sim.similarity * 100).toFixed(1) }}%
+								</span>
+							</RouterLink>
+						</div>
 					</div>
 
 					<!-- Twitter Source -->
@@ -888,62 +967,6 @@ onMounted(async () => {
 							</div>
 						</div>
 					</div>
-				</div>
-			</div>
-
-			<!-- Similar Images -->
-			<div class="bg-white rounded-xl shadow-md p-4">
-				<h2 class="text-base font-semibold text-gray-900 mb-3">
-					Similar Images
-				</h2>
-
-				<!-- Loading -->
-				<div
-					v-if="similarLoading"
-					class="flex items-center gap-2 text-sm text-gray-500 py-4"
-				>
-					<div
-						class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
-					/>
-					Searching for similar images...
-				</div>
-
-				<!-- Error -->
-				<p v-else-if="similarError" class="text-sm text-red-500 py-2">
-					{{ similarError }}
-				</p>
-
-				<!-- No results -->
-				<p
-					v-else-if="similarImages.length === 0"
-					class="text-sm text-gray-400 py-2"
-				>
-					No similar images found. (Qdrant index may not include this image
-					yet.)
-				</p>
-
-				<!-- Thumbnail strip -->
-				<div v-else class="flex gap-2 overflow-x-auto pb-2">
-					<RouterLink
-						v-for="sim in similarImages"
-						:key="sim.id"
-						:to="`/daily/image/${sim.id}`"
-						class="flex-shrink-0 relative group"
-						:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
-					>
-						<img
-							:src="getImageUrl(sim, true)"
-							:alt="sim.id"
-							class="h-32 w-auto object-cover rounded-lg bg-gray-100"
-							loading="lazy"
-						>
-						<!-- Similarity badge -->
-						<span
-							class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
-						>
-							{{ (sim.similarity * 100).toFixed(1) }}%
-						</span>
-					</RouterLink>
 				</div>
 			</div>
 		</div>

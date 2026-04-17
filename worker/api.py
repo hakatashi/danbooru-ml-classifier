@@ -40,6 +40,9 @@ ALLOWED_ORIGINS = [
     "http://localhost:4173",
 ]
 
+# Firebase Hosting preview deploy URLs (e.g. https://danbooru-ml-classifier--pr196-feature-qdrant-simil-bfwdlmhi.web.app)
+ALLOWED_ORIGIN_REGEX = r"https://danbooru-ml-classifier--[\w-]+\.web\.app"
+
 PAGE_SIZE_DEFAULT = 50
 PAGE_SIZE_MAX     = 200
 
@@ -188,6 +191,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=False,
     allow_methods=["GET"],
     allow_headers=["*"],
@@ -505,17 +509,18 @@ def get_similar_images(
         qdrant = _get_qdrant_client()
         qdrant_uuid = _mongo_id_to_qdrant_uuid(image_id)
 
-        # Use recommend API: find points similar to the given point's stored vector.
+        # query_points with a UUID as query uses the stored vector for ANN search
+        # (equivalent to the old recommend() API, compatible with qdrant-client ≥1.7).
         # Fetch limit+1 in case the query image itself appears in results.
-        results = qdrant.recommend(
+        response = qdrant.query_points(
             collection_name=QDRANT_COLLECTION,
-            positive=[qdrant_uuid],
-            negative=[],
+            query=qdrant_uuid,
             query_filter=query_filter,
             limit=limit + 1,
             with_payload=True,
             with_vectors=False,
         )
+        results = response.points
 
     except HTTPException:
         raise
