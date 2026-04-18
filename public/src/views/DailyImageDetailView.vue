@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {ChevronLeft, ExternalLink} from 'lucide-vue-next';
+import {ChevronLeft, ExternalLink, Heart} from 'lucide-vue-next';
 import {computed, onMounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import {
@@ -12,6 +12,7 @@ import {
 } from '../api/mlApi';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
+import {useImages} from '../composables/useImages';
 import type {TagData, TagList} from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
@@ -53,6 +54,22 @@ const NAMED_SORTS = [
 const route = useRoute();
 const router = useRouter();
 
+const {toggleFavorite, isFavorite, loadFavoritesForImages} = useImages();
+const savingFavorite = ref(false);
+
+async function handleToggleFavorite(event: Event) {
+	event.stopPropagation();
+	if (!image.value || savingFavorite.value) return;
+	savingFavorite.value = true;
+	try {
+		await toggleFavorite(image.value.id);
+	} catch (err) {
+		console.error('Failed to toggle favorite:', err);
+	} finally {
+		savingFavorite.value = false;
+	}
+}
+
 const image = ref<ApiImageDocument | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -69,19 +86,20 @@ const sortedInferences = computed(() => {
 	if (!inf) return [];
 	return Object.entries(inf)
 		.flatMap(([modelKey, scores]) =>
-			Object.keys(scores).map((field) => {
+			Object.entries(scores).map(([field, score]) => {
 				const sortField = `inferences.${modelKey}.${field}`;
 				return {
 					modelKey,
 					field,
-					value:
+					rank:
 						image.value?.scoreRanks?.[sortField]?.rank ??
 						Number.POSITIVE_INFINITY,
 					sortField,
+					score,
 				};
 			}),
 		)
-		.sort((a, b) => a.value - b.value);
+		.sort((a, b) => a.rank - b.rank);
 });
 
 // Important tag probs sorted by value descending
@@ -344,6 +362,7 @@ async function loadImage(id: string) {
 	similarImages.value = [];
 	try {
 		image.value = await fetchImageById(id);
+		await loadFavoritesForImages([id]);
 	} catch (e) {
 		error.value = (e as Error).message;
 	} finally {
@@ -413,7 +432,27 @@ function onSimilarWheel(e: WheelEvent) {
 							class="w-full h-auto max-h-[75vh] object-contain mx-auto"
 						>
 					</div>
-					<!-- Source link below image -->
+					<!-- Favorite + Source links below image -->
+					<div class="mt-2 flex items-center justify-between">
+						<!-- Favorite button -->
+						<button
+							type="button"
+							@click="handleToggleFavorite"
+							:disabled="savingFavorite"
+							:class="[
+								'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+								isFavorite(image.id)
+									? 'bg-red-500 hover:bg-red-600 text-white'
+									: 'bg-white border border-gray-300 hover:border-red-400 hover:text-red-500 text-gray-700',
+							]"
+						>
+							<Heart
+								:size="15"
+								:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
+							/>
+							{{ isFavorite(image.id) ? 'Favorited' : 'Favorite' }}
+						</button>
+					</div>
 					<div
 						v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru' || sourceUrl"
 						class="mt-2 flex justify-end"
@@ -664,16 +703,16 @@ function onSimilarWheel(e: WheelEvent) {
 								>
 							</span>
 							<div class="flex items-center gap-2 shrink-0">
+								<span class="font-mono font-medium tabular-nums text-gray-400">
+									{{ item.score.toFixed(4) }}
+								</span>
 								<!-- Rank -->
 								<span
 									v-if="image.scoreRanks?.[item.sortField]"
-									class="text-gray-400 tabular-nums"
+									class="text-gray-900 tabular-nums"
 								>
 									#{{ image.scoreRanks[item.sortField].rank }}
 									/ {{ image.scoreRanks[item.sortField].total }}
-								</span>
-								<span class="font-mono font-medium tabular-nums text-gray-900">
-									{{ item.value.toFixed(4) }}
 								</span>
 							</div>
 						</div>
@@ -686,7 +725,7 @@ function onSimilarWheel(e: WheelEvent) {
 												image.scoreRanks[item.sortField].rank,
 												image.scoreRanks[item.sortField].total,
 											)
-										: getScoreColorClass(item.value),
+										: getScoreColorClass(item.score),
 								]"
 								:style="{
 									width: image.scoreRanks?.[item.sortField]
@@ -694,7 +733,7 @@ function onSimilarWheel(e: WheelEvent) {
 												image.scoreRanks[item.sortField].rank,
 												image.scoreRanks[item.sortField].total,
 											)
-										: getScoreBarWidth(item.value),
+										: getScoreBarWidth(item.score),
 								}"
 							/>
 						</div>

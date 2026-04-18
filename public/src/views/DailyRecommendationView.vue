@@ -723,8 +723,70 @@ async function openSource(
 
 			<!-- Gallery -->
 			<div v-else>
-				<!-- Justified rows -->
-				<div v-if="galleryRows.length > 0" class="flex flex-col gap-2">
+				<!-- Mobile: 2-column square grid -->
+				<div class="grid grid-cols-2 gap-1 sm:hidden">
+					<div
+						v-for="image in images"
+						:key="image.id"
+						class="relative aspect-square overflow-hidden group cursor-pointer bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
+						@click="openLightbox(image)"
+					>
+						<img
+							:src="getImageUrl(image, true)"
+							:alt="image.id"
+							class="w-full h-full object-cover"
+							loading="lazy"
+						>
+						<div
+							class="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"
+						/>
+						<!-- Top-left buttons -->
+						<div class="absolute top-1.5 left-1.5 flex gap-1 z-10">
+							<button
+								type="button"
+								@click="(e) => handleToggleFavorite(e, image)"
+								:disabled="savingFavorites.has(image.id)"
+								:class="[
+									'p-1.5 rounded-md shadow-lg transition-all',
+									isFavorite(image.id)
+										? 'bg-red-500 text-white hover:bg-red-600'
+										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
+								]"
+								:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
+							>
+								<Heart
+									:size="14"
+									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
+								/>
+							</button>
+							<RouterLink
+								:to="`/daily/image/${image.id}`"
+								target="_blank"
+								class="px-1.5 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md"
+								@click.stop
+							>
+								Details
+							</RouterLink>
+						</div>
+						<div class="absolute top-1.5 right-1.5">
+							<div
+								:class="[
+									getScoreColorClass(getScoreForCurrentSort(image)),
+									'px-1 py-0.5 rounded text-white font-semibold text-xs shadow opacity-0 group-hover:opacity-100 transition-opacity',
+								]"
+							>
+								{{ formatScore(getScoreForCurrentSort(image)) }}
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Desktop: Justified rows -->
+				<div
+					v-if="galleryRows.length > 0"
+					class="hidden sm:flex flex-col gap-2"
+				>
 					<div
 						v-for="(row, rowIndex) in galleryRows"
 						:key="rowIndex"
@@ -749,14 +811,14 @@ async function openSource(
 								class="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"
 							/>
 							<!-- Top-left buttons -->
-							<div class="absolute top-2 left-2 flex gap-1.5 z-10">
+							<div class="absolute top-2 left-2 flex gap-3 z-10">
 								<!-- Favorite button -->
 								<button
 									type="button"
 									@click="(e) => handleToggleFavorite(e, image)"
 									:disabled="savingFavorites.has(image.id)"
 									:class="[
-										'p-1.5 rounded-lg shadow-lg transition-all',
+										'p-3 rounded-lg shadow-lg transition-all',
 										isFavorite(image.id)
 											? 'bg-red-500 text-white hover:bg-red-600'
 											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
@@ -765,14 +827,14 @@ async function openSource(
 									:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
 								>
 									<Heart
-										:size="14"
+										:size="28"
 										:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
 									/>
 								</button>
 								<RouterLink
 									:to="`/daily/image/${image.id}`"
 									target="_blank"
-									class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md"
+									class="px-4 py-2 bg-black/20 hover:bg-black/90 text-white text-sm rounded-md flex flex-row items-center align-middle"
 									@click.stop
 								>
 									Details
@@ -781,10 +843,10 @@ async function openSource(
 									v-if="getImageProvider(image) === 'danbooru' || getImageProvider(image) === 'gelbooru'"
 									type="button"
 									:disabled="sourceLoadingIds.has(image.id)"
-									class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait"
+									class="px-4 py-2 bg-black/20 hover:bg-black/90 text-white text-sm rounded-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
 									@click="(e) => openSource(image, e)"
 								>
-									<ExternalLink :size="11" />
+									<ExternalLink :size="22" />
 									Source
 								</button>
 								<a
@@ -792,10 +854,10 @@ async function openSource(
 									:href="getSourceUrl(image)"
 									target="_blank"
 									rel="noopener noreferrer"
-									class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1"
+									class="px-4 py-2 bg-black/20 hover:bg-black/90 text-white text-sm rounded-md flex items-center gap-2"
 									@click.stop
 								>
-									<ExternalLink :size="11" />
+									<ExternalLink :size="22" />
 									Source
 								</a>
 							</div>
@@ -815,7 +877,7 @@ async function openSource(
 				</div>
 
 				<!-- Pre-load: fixed height before aspect ratios known -->
-				<div v-else class="flex flex-wrap justify-center gap-2">
+				<div v-else class="hidden sm:flex flex-wrap justify-center gap-2">
 					<div
 						v-for="image in images"
 						:key="image.id"
