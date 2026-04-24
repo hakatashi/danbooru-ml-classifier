@@ -463,21 +463,22 @@ function onSimilarWheel(e: WheelEvent) {
 							<!-- Favorite button -->
 							<button
 								type="button"
-								@click="(e) => handleToggleFavorite(e, image.id)"
-								:disabled="savingFavoriteIds.has(image.id)"
+								@click="(e) => handleToggleFavorite(e, image!.id)"
+								:disabled="savingFavoriteIds.has(image!.id)"
 								:class="[
-								'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
-								isFavorite(image.id)
-									? 'bg-red-500 hover:bg-red-600 text-white'
-									: 'bg-white border border-gray-300 hover:border-red-400 hover:text-red-500 text-gray-700',
-							]"
+									'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+									isFavorite(image!.id)
+										? 'bg-red-500 hover:bg-red-600 text-white'
+										: 'bg-white border border-gray-300 hover:border-red-400 hover:text-red-500 text-gray-700',
+								]"
 							>
 								<Heart
 									:size="15"
-									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
+									:fill="isFavorite(image!.id) ? 'currentColor' : 'none'"
 								/>
-								{{ isFavorite(image.id) ? 'Favorited' : 'Favorite' }}
+								{{ isFavorite(image!.id) ? 'Favorited' : 'Favorite' }}
 							</button>
+
 						</div>
 						<div
 							v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru' || sourceUrl"
