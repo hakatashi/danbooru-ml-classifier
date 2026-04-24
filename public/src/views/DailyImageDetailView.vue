@@ -478,7 +478,6 @@ function onSimilarWheel(e: WheelEvent) {
 								/>
 								{{ isFavorite(image!.id) ? 'Favorited' : 'Favorite' }}
 							</button>
-
 						</div>
 						<div
 							v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru' || sourceUrl"
