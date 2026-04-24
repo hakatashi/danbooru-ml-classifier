@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import {ChevronLeft, ExternalLink, Heart} from 'lucide-vue-next';
+import type {User} from 'firebase/auth';
+import {ChevronLeft, ExternalLink, Heart, Lock} from 'lucide-vue-next';
 import {computed, onMounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import {
@@ -17,6 +18,8 @@ import type {TagData, TagList} from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
 type TagCategory = 'character' | 'feature' | 'ip';
+
+const props = defineProps<{user: User | null}>();
 
 const NAMED_SORTS = [
 	{
@@ -55,18 +58,19 @@ const route = useRoute();
 const router = useRouter();
 
 const {toggleFavorite, isFavorite, loadFavoritesForImages} = useImages();
-const savingFavorite = ref(false);
+const savingFavoriteIds = ref<Set<string>>(new Set());
 
-async function handleToggleFavorite(event: Event) {
+async function handleToggleFavorite(event: Event, imageId: string) {
 	event.stopPropagation();
-	if (!image.value || savingFavorite.value) return;
-	savingFavorite.value = true;
+	event.preventDefault();
+	if (savingFavoriteIds.value.has(imageId)) return;
+	savingFavoriteIds.value.add(imageId);
 	try {
-		await toggleFavorite(image.value.id);
+		await toggleFavorite(imageId);
 	} catch (err) {
 		console.error('Failed to toggle favorite:', err);
 	} finally {
-		savingFavorite.value = false;
+		savingFavoriteIds.value.delete(imageId);
 	}
 }
 
@@ -333,8 +337,6 @@ function goBack() {
 	}
 }
 
-// ── Similar Images ────────────────────────────────────────────────────────────
-
 const similarImages = ref<SimilarImage[]>([]);
 const similarLoading = ref(false);
 const similarError = ref<string | null>(null);
@@ -348,6 +350,9 @@ async function loadSimilarImages(id: string) {
 			status: 'inferred',
 		});
 		similarImages.value = result.similar;
+		if (result.similar.length > 0) {
+			await loadFavoritesForImages(result.similar.map((sim) => sim.id));
+		}
 	} catch (e) {
 		similarError.value = (e as Error).message;
 	} finally {
@@ -391,15 +396,36 @@ function onSimilarWheel(e: WheelEvent) {
 
 <template>
 	<div>
-		<!-- Back link -->
-		<button
-			type="button"
-			@click="goBack"
-			class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors"
+		<!-- Auth Required -->
+		<div
+			v-if="!user"
+			class="bg-white rounded-2xl shadow-lg p-12 text-center max-w-md mx-auto"
 		>
-			<ChevronLeft :size="20" />
-			Back to Daily Recommendation
-		</button>
+			<div
+				class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6"
+			>
+				<Lock :size="40" class="text-blue-500" />
+			</div>
+			<h2 class="text-2xl font-bold text-gray-900 mb-3">
+				Authentication Required
+			</h2>
+			<p class="text-gray-600">
+				Please login with your Google account to view Daily Recommendation
+				details.
+			</p>
+		</div>
+
+		<!-- Main Content -->
+		<template v-else>
+			<!-- Back link -->
+			<button
+				type="button"
+				@click="goBack"
+				class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors"
+			>
+				<ChevronLeft :size="20" />
+				Back to Daily Recommendation
+			</button>
 
 		<!-- Loading -->
 		<div v-if="loading" class="flex justify-center items-center py-20">
@@ -437,8 +463,8 @@ function onSimilarWheel(e: WheelEvent) {
 						<!-- Favorite button -->
 						<button
 							type="button"
-							@click="handleToggleFavorite"
-							:disabled="savingFavorite"
+							@click="(e) => handleToggleFavorite(e, image.id)"
+							:disabled="savingFavoriteIds.has(image.id)"
 							:class="[
 								'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
 								isFavorite(image.id)
@@ -622,6 +648,26 @@ function onSimilarWheel(e: WheelEvent) {
 									class="h-64 w-auto object-cover rounded-lg bg-gray-100"
 									loading="lazy"
 								>
+								<!-- Favorite button -->
+								<button
+									type="button"
+									@click="(e) => handleToggleFavorite(e, sim.id)"
+									:disabled="savingFavoriteIds.has(sim.id)"
+									:class="[
+										'absolute top-1.5 left-1.5 p-1.5 rounded-md shadow-lg transition-all z-10',
+										isFavorite(sim.id)
+											? 'bg-red-500 text-white hover:bg-red-600'
+											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+										savingFavoriteIds.has(sim.id) && 'opacity-50 cursor-not-allowed',
+										!isFavorite(sim.id) && 'opacity-0 group-hover:opacity-100',
+									]"
+									:title="isFavorite(sim.id) ? 'Remove from favorites' : 'Add to favorites'"
+								>
+									<Heart
+										:size="14"
+										:fill="isFavorite(sim.id) ? 'currentColor' : 'none'"
+									/>
+								</button>
 								<!-- Similarity badge -->
 								<span
 									class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1009,6 +1055,8 @@ function onSimilarWheel(e: WheelEvent) {
 				</div>
 			</div>
 		</div>
+
+		</template>
 
 		<!-- Lightbox -->
 		<ImageLightbox
