@@ -79,8 +79,13 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const showLightbox = ref(false);
 const tagConfidenceFilter = ref<ConfidenceLevel>('medium');
+const hoveredSimilar = ref<SimilarImage | null>(null);
 
-const imageUrl = computed(() => (image.value ? getImageUrl(image.value) : ''));
+const imageUrl = computed(() => {
+	if (hoveredSimilar.value) return getImageUrl(hoveredSimilar.value);
+	if (image.value) return getImageUrl(image.value);
+	return '';
+});
 
 const captionModels = computed(() => Object.keys(image.value?.captions ?? {}));
 
@@ -337,9 +342,62 @@ function goBack() {
 	}
 }
 
+const SIMILARITY_AXES = [
+	{
+		key: 'character',
+		label: 'Character Similarity',
+	},
+	{
+		key: 'situation',
+		label: 'Situation Similarity',
+	},
+	{
+		key: 'style',
+		label: 'Style Similarity',
+	},
+] as const;
+
+type SimilarityAxis = (typeof SIMILARITY_AXES)[number]['key'];
+
 const similarImages = ref<SimilarImage[]>([]);
 const similarLoading = ref(false);
 const similarError = ref<string | null>(null);
+
+const axesSimilarImages = ref<Record<SimilarityAxis, SimilarImage[]>>({
+	character: [],
+	situation: [],
+	style: [],
+});
+const axesSimilarLoading = ref<Record<SimilarityAxis, boolean>>({
+	character: false,
+	situation: false,
+	style: false,
+});
+const axesSimilarError = ref<Record<SimilarityAxis, string | null>>({
+	character: null,
+	situation: null,
+	style: null,
+});
+
+async function loadAxisSimilarImages(id: string, axis: SimilarityAxis) {
+	axesSimilarLoading.value[axis] = true;
+	axesSimilarError.value[axis] = null;
+	try {
+		const result = await fetchSimilarImages(id, {
+			limit: 20,
+			status: 'inferred',
+			axis,
+		});
+		axesSimilarImages.value[axis] = result.similar;
+		if (result.similar.length > 0) {
+			await loadFavoritesForImages(result.similar.map((sim) => sim.id));
+		}
+	} catch (e) {
+		axesSimilarError.value[axis] = (e as Error).message;
+	} finally {
+		axesSimilarLoading.value[axis] = false;
+	}
+}
 
 async function loadSimilarImages(id: string) {
 	similarLoading.value = true;
@@ -358,6 +416,9 @@ async function loadSimilarImages(id: string) {
 	} finally {
 		similarLoading.value = false;
 	}
+	await Promise.all(
+		SIMILARITY_AXES.map(({key}) => loadAxisSimilarImages(id, key)),
+	);
 }
 
 async function loadImage(id: string) {
@@ -365,6 +426,7 @@ async function loadImage(id: string) {
 	error.value = null;
 	image.value = null;
 	similarImages.value = [];
+	axesSimilarImages.value = {character: [], situation: [], style: []};
 	try {
 		image.value = await fetchImageById(id);
 		await loadFavoritesForImages([id]);
@@ -449,14 +511,21 @@ function onSimilarWheel(e: WheelEvent) {
 					<!-- Image -->
 					<div class="lg:col-span-2">
 						<div
-							class="bg-black rounded-xl overflow-hidden cursor-pointer"
+							class="bg-black rounded-xl overflow-hidden cursor-pointer relative"
 							@click="showLightbox = true"
 						>
 							<img
 								:src="imageUrl"
 								:alt="image.key"
-								class="w-full h-auto max-h-[75vh] object-contain mx-auto"
+								class="w-full h-auto max-h-[75vh] object-contain mx-auto transition-opacity duration-150"
 							>
+							<div
+								v-if="hoveredSimilar"
+								class="absolute bottom-2 left-2 px-2 py-1 bg-black/70 text-white text-xs rounded pointer-events-none"
+							>
+								Preview · {{ (hoveredSimilar.similarity * 100).toFixed(1) }}%
+								similar
+							</div>
 						</div>
 						<!-- Favorite + Source links below image -->
 						<div class="mt-2 flex items-center justify-between">
@@ -643,6 +712,8 @@ function onSimilarWheel(e: WheelEvent) {
 									:to="`/daily/image/${sim.id}`"
 									class="flex-shrink-0 relative group"
 									:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
+									@mouseenter="hoveredSimilar = sim"
+									@mouseleave="hoveredSimilar = null"
 								>
 									<img
 										:src="getImageUrl(sim, true)"
@@ -720,6 +791,96 @@ function onSimilarWheel(e: WheelEvent) {
 									View Tweet <ExternalLink :size="11" />
 								</a>
 							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Axis-based Similar Images -->
+				<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+					<div
+						v-for="axis in SIMILARITY_AXES"
+						:key="axis.key"
+						class="bg-white rounded-xl shadow-md p-4"
+					>
+						<h2 class="text-base font-semibold text-gray-900 mb-0.5">
+							{{ axis.label }}
+						</h2>
+
+						<!-- Loading -->
+						<div
+							v-if="axesSimilarLoading[axis.key]"
+							class="flex items-center gap-2 text-sm text-gray-500 py-4"
+						>
+							<div
+								class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
+							/>
+							Searching...
+						</div>
+
+						<!-- Error -->
+						<p
+							v-else-if="axesSimilarError[axis.key]"
+							class="text-sm text-red-500 py-2"
+						>
+							{{ axesSimilarError[axis.key] }}
+						</p>
+
+						<!-- No results -->
+						<p
+							v-else-if="axesSimilarImages[axis.key].length === 0"
+							class="text-sm text-gray-400 py-2"
+						>
+							No similar images found.
+						</p>
+
+						<!-- Thumbnail strip -->
+						<div
+							v-else
+							class="flex gap-2 overflow-x-auto pb-2"
+							@wheel.prevent="onSimilarWheel"
+						>
+							<RouterLink
+								v-for="sim in axesSimilarImages[axis.key]"
+								:key="sim.id"
+								:to="`/daily/image/${sim.id}`"
+								class="flex-shrink-0 relative group"
+								:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
+								@mouseenter="hoveredSimilar = sim"
+								@mouseleave="hoveredSimilar = null"
+							>
+								<img
+									:src="getImageUrl(sim, true)"
+									:alt="sim.id"
+									class="h-48 w-auto object-cover rounded-lg bg-gray-100"
+									loading="lazy"
+								>
+								<!-- Favorite button -->
+								<button
+									type="button"
+									@click="(e) => handleToggleFavorite(e, sim.id)"
+									:disabled="savingFavoriteIds.has(sim.id)"
+									:class="[
+									'absolute top-1.5 left-1.5 p-1.5 rounded-md shadow-lg transition-all z-10',
+									isFavorite(sim.id)
+										? 'bg-red-500 text-white hover:bg-red-600'
+										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
+									savingFavoriteIds.has(sim.id) && 'opacity-50 cursor-not-allowed',
+									!isFavorite(sim.id) && 'opacity-0 group-hover:opacity-100',
+								]"
+									:title="isFavorite(sim.id) ? 'Remove from favorites' : 'Add to favorites'"
+								>
+									<Heart
+										:size="14"
+										:fill="isFavorite(sim.id) ? 'currentColor' : 'none'"
+									/>
+								</button>
+								<!-- Similarity badge -->
+								<span
+									class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
+								>
+									{{ (sim.similarity * 100).toFixed(1) }}%
+								</span>
+							</RouterLink>
 						</div>
 					</div>
 				</div>

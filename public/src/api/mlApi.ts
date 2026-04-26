@@ -140,6 +140,7 @@ export async function fetchSimilarImages(
 		status?: string;
 		date?: string;
 		type?: string;
+		axis?: string;
 	},
 ): Promise<SimilarImagesResponse> {
 	const url = new URL(`${BASE_URL}/images/${id}/similar`);
@@ -148,6 +149,7 @@ export async function fetchSimilarImages(
 	if (params?.status) url.searchParams.set('status', params.status);
 	if (params?.date) url.searchParams.set('date', params.date);
 	if (params?.type) url.searchParams.set('type', params.type);
+	if (params?.axis) url.searchParams.set('axis', params.axis);
 	const res = await fetch(url.toString());
 	if (!res.ok) throw new Error(`API error: ${res.status}`);
 	return res.json();

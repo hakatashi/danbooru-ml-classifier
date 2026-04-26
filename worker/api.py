@@ -53,7 +53,9 @@ GELBOORU_API_KEY  = os.environ.get("GELBOORU_API_KEY", "")
 
 QDRANT_HOST       = os.environ.get("QDRANT_HOST", "localhost")
 QDRANT_PORT       = int(os.environ.get("QDRANT_PORT", "6333"))
-QDRANT_COLLECTION = "image_embeddings"
+QDRANT_COLLECTION           = "image_embeddings"
+QDRANT_COLLECTION_MULTIAXIS = "image_embeddings_multiaxis"
+VALID_AXES = {"eva02", "character", "situation", "style"}
 
 # ── Validation patterns ───────────────────────────────────────────────────────
 
@@ -463,18 +465,42 @@ def get_similar_images(
         description="Filter results by image source type (e.g. 'pixiv', 'danbooru')",
         pattern="^[a-z]+$",
     ),
+    axis: Optional[str] = Query(
+        None,
+        description=(
+            "Similarity axis: 'eva02' (default, general visual), "
+            "'character' (hair/body/clothing), "
+            "'situation' (pose/composition/scenario), "
+            "'style' (art style/medium/shading)"
+        ),
+        pattern="^[a-z0-9_]+$",
+    ),
 ):
     """
-    Return images visually similar to the given image, ranked by EVA02 cosine similarity.
+    Return images similar to the given image along a chosen similarity axis.
 
-    Similarity is computed via Qdrant ANN search using the stored EVA02 (1024-dim) embedding.
-    The query image itself is excluded from results.
-    Returns an empty list if the image has no Qdrant entry yet.
+    - (default / axis=eva02) General visual similarity via EVA02 1024-dim embedding.
+    - axis=character  Similar character appearance (hair, eyes, body, clothing).
+    - axis=situation  Similar pose, composition, or scenario.
+    - axis=style      Similar art style, medium, or shading.
+
+    character/situation/style axes use the multiaxis Qdrant collection populated by
+    backfill_multiaxis_qdrant.py; the query image must have been indexed there first.
     """
     try:
         oid = ObjectId(image_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image id")
+
+    # Validate axis
+    resolved_axis = axis or "eva02"
+    if resolved_axis not in VALID_AXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid axis '{resolved_axis}'. Valid values: {sorted(VALID_AXES)}",
+        )
+
+    use_multiaxis = resolved_axis != "eva02"
 
     # Build Qdrant filter
     try:
@@ -509,17 +535,19 @@ def get_similar_images(
         qdrant = _get_qdrant_client()
         qdrant_uuid = _mongo_id_to_qdrant_uuid(image_id)
 
-        # query_points with a UUID as query uses the stored vector for ANN search
-        # (equivalent to the old recommend() API, compatible with qdrant-client ≥1.7).
-        # Fetch limit+1 in case the query image itself appears in results.
-        response = qdrant.query_points(
-            collection_name=QDRANT_COLLECTION,
-            query=qdrant_uuid,
-            query_filter=query_filter,
-            limit=limit + 1,
-            with_payload=True,
-            with_vectors=False,
-        )
+        collection = QDRANT_COLLECTION_MULTIAXIS if use_multiaxis else QDRANT_COLLECTION
+        query_kwargs: dict = {
+            "collection_name": collection,
+            "query": qdrant_uuid,
+            "query_filter": query_filter,
+            "limit": limit + 1,
+            "with_payload": True,
+            "with_vectors": False,
+        }
+        if use_multiaxis:
+            query_kwargs["using"] = resolved_axis
+
+        response = qdrant.query_points(**query_kwargs)
         results = response.points
 
     except HTTPException:
