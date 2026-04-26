@@ -90,6 +90,13 @@ MODELS = {
         "language_file": "Qwen3-14B-Q6_K.gguf",
         "vision_file": None,  # Text-only model
     },
+    "qwen3-32b": {
+        "name": "Qwen3-32B (Q6_K)",
+        "backend": "llama.cpp",
+        "repository": "Qwen/Qwen3-32B-GGUF",
+        "language_file": "Qwen3-32B-Q6_K.gguf",
+        "vision_file": None,  # Text-only model
+    },
     "pixai": {
         "name": "PixAI Tagger v0.9",
         "backend": "pytorch",
@@ -395,7 +402,7 @@ def start_llama_server(language_model, vision_model, port=SERVER_PORT, host=SERV
         return None
 
 
-def wait_for_server(url, timeout=180):
+def wait_for_server(url, timeout=600):
     """Wait for server to be ready"""
     print("Waiting for server to start...")
     start_time = time.time()
