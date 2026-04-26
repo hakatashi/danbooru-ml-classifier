@@ -11,6 +11,7 @@ Saved fields:
   importantTagProbs → {deepdanbooru: {tag: prob, ...}, pixai: {tag: prob, ...}}
 """
 
+import json
 import logging
 import os
 import re
@@ -42,7 +43,10 @@ MONGODB_URI     = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB      = os.environ.get("MONGODB_DB", "danbooru-ml-classifier")
 QDRANT_HOST     = os.environ.get("QDRANT_HOST", "localhost")
 QDRANT_PORT     = int(os.environ.get("QDRANT_PORT", "6333"))
-QDRANT_COLLECTION = "image_embeddings"
+QDRANT_COLLECTION           = "image_embeddings"
+QDRANT_COLLECTION_MULTIAXIS = "image_embeddings_multiaxis"
+
+PIXAI_TAG_CATEGORIES_JSON = PU_DIR / "data" / "metadata" / "pixai_tag_categories.json"
 
 PIXAI_MODEL_DIR   = Path.home() / ".cache" / "pixai-tagger"
 PIXAI_MODEL_REPO  = "pixai-labs/pixai-tagger-v0.9"
@@ -348,6 +352,135 @@ def _get_qdrant_client():
     return client
 
 
+def _load_axis_indices() -> dict[str, np.ndarray] | None:
+    """
+    Load per-axis feature-tag index arrays from the tag category JSON.
+    Returns None (with a warning) if the file does not exist yet.
+    """
+    if not PIXAI_TAG_CATEGORIES_JSON.exists():
+        log.warning(
+            "[Multiaxis] %s not found — run classify_pixai_tags.py first. "
+            "Skipping multiaxis Qdrant upsert.",
+            PIXAI_TAG_CATEGORIES_JSON,
+        )
+        return None
+
+    with open(PIXAI_TAG_CATEGORIES_JSON) as f:
+        tag_categories: dict[str, str] = json.load(f)
+
+    tags_json = PIXAI_MODEL_DIR / "tags_v0.9_13k.json"
+    with open(tags_json) as f:
+        tag_data = json.load(f)
+    tag_map: dict[str, int] = tag_data["tag_map"]
+    gen_tag_count: int = tag_data["tag_split"]["gen_tag_count"]
+
+    axes: dict[str, list[int]] = {"character": [], "situation": [], "style": []}
+    for tag, global_idx in tag_map.items():
+        if global_idx >= gen_tag_count:
+            # Character name tags (indices gen_tag_count..end) all go to character axis
+            axes["character"].append(global_idx)
+            continue
+        cat = tag_categories.get(tag)
+        if cat in axes:
+            axes[cat].append(global_idx)
+
+    return {k: np.array(sorted(v), dtype=np.int32) for k, v in axes.items()}
+
+
+# Lazily loaded axis indices and Qdrant multiaxis client
+_axis_indices: dict[str, np.ndarray] | None = None
+_axis_indices_loaded = False
+_qdrant_multiaxis_client = None
+
+
+def _get_axis_indices() -> dict[str, np.ndarray] | None:
+    global _axis_indices, _axis_indices_loaded
+    if not _axis_indices_loaded:
+        _axis_indices = _load_axis_indices()
+        _axis_indices_loaded = True
+    return _axis_indices
+
+
+def _get_qdrant_multiaxis_client(axis_dims: dict[str, int]):
+    global _qdrant_multiaxis_client
+    if _qdrant_multiaxis_client is not None:
+        return _qdrant_multiaxis_client
+
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams, PayloadSchemaType
+
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=10)
+
+    if not client.collection_exists(QDRANT_COLLECTION_MULTIAXIS):
+        log.info("[Qdrant] Creating multiaxis collection '%s' ...", QDRANT_COLLECTION_MULTIAXIS)
+        vectors_config = {
+            "eva02": VectorParams(size=EVA02_DIM, distance=Distance.COSINE),
+            **{
+                axis: VectorParams(size=dim, distance=Distance.COSINE)
+                for axis, dim in axis_dims.items()
+            },
+        }
+        client.create_collection(
+            collection_name=QDRANT_COLLECTION_MULTIAXIS,
+            vectors_config=vectors_config,
+        )
+        for field in ("date", "type", "status"):
+            client.create_payload_index(
+                QDRANT_COLLECTION_MULTIAXIS, field, PayloadSchemaType.KEYWORD
+            )
+        log.info("[Qdrant] Multiaxis collection ready.")
+
+    _qdrant_multiaxis_client = client
+    return client
+
+
+def upsert_multiaxis_to_qdrant(
+    docs: list[dict],
+    eva02_embeddings: np.ndarray,
+    pixai_probs: np.ndarray,
+    status: str = "inferred",
+) -> None:
+    """
+    Upsert EVA02 + per-axis PixAI sub-vectors to the multiaxis Qdrant collection.
+    Errors are logged but do not propagate.
+    """
+    try:
+        axis_indices = _get_axis_indices()
+        if axis_indices is None:
+            return
+
+        axis_dims = {k: len(v) for k, v in axis_indices.items()}
+        client = _get_qdrant_multiaxis_client(axis_dims)
+
+        from qdrant_client.models import PointStruct
+
+        points = []
+        for doc, eva_emb, pxai in zip(docs, eva02_embeddings, pixai_probs):
+            mongo_id = str(doc["_id"])
+            named_vectors = {
+                "eva02": eva_emb.tolist(),
+                **{
+                    axis: pxai[indices].tolist()
+                    for axis, indices in axis_indices.items()
+                },
+            }
+            points.append(PointStruct(
+                id=_mongo_id_to_qdrant_uuid(mongo_id),
+                vector=named_vectors,
+                payload={
+                    "image_id": mongo_id,
+                    "date":     doc.get("date", ""),
+                    "type":     doc.get("type", ""),
+                    "status":   status,
+                },
+            ))
+
+        client.upsert(collection_name=QDRANT_COLLECTION_MULTIAXIS, points=points)
+        log.info("[Qdrant/multiaxis] Upserted %d points.", len(points))
+    except Exception as exc:
+        log.warning("[Qdrant/multiaxis] Upsert failed (non-fatal): %s", exc)
+
+
 def upsert_eva02_to_qdrant(
     docs: list[dict],
     embeddings: np.ndarray,
@@ -493,7 +626,7 @@ def main():
 
     # ── Step 1: collect processable images ────────────────────────────────────
     pending_docs = list(col.find({
-        "status":    "pending",
+        "status":    {"$in": ["pending", "error"]},
         "localPath": {"$exists": True},
     }))
     log.info("Pending documents with localPath: %d", len(pending_docs))
@@ -594,6 +727,7 @@ def main():
 
         # Upsert EVA02 embeddings to Qdrant (non-fatal if Qdrant is unavailable)
         upsert_eva02_to_qdrant(loaded_docs, X_eva, status="inferred")
+        upsert_multiaxis_to_qdrant(loaded_docs, X_eva, X_pxai, status="inferred")
 
     log.info("Done. processed=%d  error=%d", n_done, n_error)
 
