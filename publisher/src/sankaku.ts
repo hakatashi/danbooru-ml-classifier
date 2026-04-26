@@ -78,9 +78,10 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 
 	console.log('[Sankaku] Fetching images...');
 
+	const sankakuBackfillDays = Number(process.env.SANKAKU_BACKFILL_DAYS ?? 0);
 	const targetDate = dayjs().tz('Asia/Tokyo')
 		.subtract(5, 'hour')
-		.subtract(3, 'day')
+		.subtract(3 + sankakuBackfillDays, 'day')
 		.format('YYYY-MM-DD');
 	console.log(`[Sankaku] Target date: ${targetDate}`);
 
