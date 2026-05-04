@@ -24,7 +24,7 @@
   "dependencies": {
     "@google-cloud/functions": "^4.2.1",
     "@types/ejs": "^3.1.5",
-    "axios": "^1.15.2",
+    "axios": "^1.16.0",
     "axios-retry": "^4.5.0",
     "dayjs": "^1.11.20",
     "dotenv": "^17.4.2",
