@@ -967,7 +967,7 @@ function onSimilarWheel(e: WheelEvent) {
 						</h2>
 						<div class="space-y-1 max-h-64 overflow-y-auto pr-1">
 							<RouterLink
-								v-for="[tag, prob] in deepdanbooruTags"
+								v-for="[ tag, prob ] in deepdanbooruTags"
 								:key="tag"
 								:to="dailyLink(`importantTagProbs.deepdanbooru.${tag}`)"
 								class="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-indigo-50 transition-colors group"
@@ -1002,7 +1002,7 @@ function onSimilarWheel(e: WheelEvent) {
 						</h2>
 						<div class="space-y-1 max-h-64 overflow-y-auto pr-1">
 							<RouterLink
-								v-for="[tag, prob] in pixaiTags"
+								v-for="[ tag, prob ] in pixaiTags"
 								:key="tag"
 								:to="dailyLink(`importantTagProbs.pixai.${tag}`)"
 								class="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-pink-50 transition-colors group"
