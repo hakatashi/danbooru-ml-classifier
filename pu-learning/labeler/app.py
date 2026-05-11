@@ -2,7 +2,7 @@
 """
 Manual labeling tool for evaluation dataset construction.
 
-Finds images in /mnt/cache/danbooru-ml-classifier/images/ that are NOT in
+Finds images in /mnt/cache2/danbooru-ml-classifier/images/ that are NOT in
 the training/val/test splits (splits.parquet), and serves a web UI to label
 each image as: pixiv_public | pixiv_private | not_bookmarked
 
@@ -34,7 +34,7 @@ REPO_DIR    = PROJECT_DIR.parent
 SPLITS_PARQUET  = PROJECT_DIR / "data" / "metadata" / "splits.parquet"
 LABELS_DIR      = PROJECT_DIR / "data" / "labels"
 LABELS_FILE     = LABELS_DIR / "manual_labels.json"
-DMC_IMAGES_DIR  = Path("/mnt/cache/danbooru-ml-classifier/images")
+DMC_IMAGES_DIR  = Path("/mnt/cache2/danbooru-ml-classifier/images")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 FRONTEND_DIR   = SCRIPT_DIR / "frontend"
