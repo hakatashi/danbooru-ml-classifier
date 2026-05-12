@@ -22,6 +22,8 @@ const downloadPixivArtwork = async (
 	artwork: Record<string, unknown>,
 	rankingDate: string,
 	pixivSessionId: string,
+	rankingMode: string,
+	rankingPage: number,
 ): Promise<void> => {
 	const db = await getDb();
 	const imagesCollection = db.collection('images');
@@ -143,6 +145,10 @@ const downloadPixivArtwork = async (
 					fileSize,
 					sha256,
 					...(width !== undefined && height !== undefined ? {width, height} : {}),
+					metadata: {
+						pixiv: artwork,
+						pixivRanking: {mode: rankingMode, page: rankingPage, date},
+					},
 				},
 			},
 			{upsert: true},
@@ -211,7 +217,7 @@ export const fetchPixivDailyRankings = async (): Promise<void> => {
 					{upsert: true},
 				);
 
-				await downloadPixivArtwork(artwork, data.date, pixivSessionId);
+				await downloadPixivArtwork(artwork, data.date, pixivSessionId, mode, page);
 			}
 		}
 	}
