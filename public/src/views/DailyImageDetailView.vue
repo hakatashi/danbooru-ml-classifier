@@ -11,9 +11,14 @@ import {
 	getImageUrl,
 	type SimilarImage,
 } from '../api/mlApi';
+import AgeEstimationsPanel from '../components/AgeEstimationsPanel.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
+import ModerationRatingsPanel from '../components/ModerationRatingsPanel.vue';
+import SimilarImageStrip from '../components/SimilarImageStrip.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
+import TwitterSourcePanel from '../components/TwitterSourcePanel.vue';
 import {useImages} from '../composables/useImages';
+import {useScoreDisplay} from '../composables/useScoreDisplay';
 import type {TagData, TagList} from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
@@ -58,6 +63,14 @@ const route = useRoute();
 const router = useRouter();
 
 const {toggleFavorite, isFavorite, loadFavoritesForImages} = useImages();
+const {
+	getScoreBarWidth,
+	getScoreColorClass,
+	getRankBarWidth,
+	getRankColorClass,
+	getRatingColorClass,
+} = useScoreDisplay();
+
 const savingFavoriteIds = ref<Set<string>>(new Set());
 
 async function handleToggleFavorite(event: Event, imageId: string) {
@@ -89,7 +102,6 @@ const imageUrl = computed(() => {
 
 const captionModels = computed(() => Object.keys(image.value?.captions ?? {}));
 
-// Sort all inference scores descending
 const sortedInferences = computed(() => {
 	const inf = image.value?.inferences;
 	if (!inf) return [];
@@ -111,7 +123,6 @@ const sortedInferences = computed(() => {
 		.sort((a, b) => a.rank - b.rank);
 });
 
-// Important tag probs sorted by value descending
 const deepdanbooruTags = computed(() => {
 	const probs = image.value?.importantTagProbs?.deepdanbooru;
 	if (!probs) return [];
@@ -135,33 +146,10 @@ function getNamedRank(
 	return image.value?.scoreRanks?.[sortField] ?? null;
 }
 
-function getScoreBarWidth(value: number): string {
-	return `${Math.max(0, Math.min(100, value * 100)).toFixed(1)}%`;
-}
-
-function getScoreColorClass(value: number): string {
-	if (value >= 0.8) return 'bg-purple-500';
-	if (value >= 0.6) return 'bg-blue-500';
-	if (value >= 0.4) return 'bg-green-500';
-	if (value >= 0.2) return 'bg-yellow-500';
-	return 'bg-gray-400';
-}
-
-/** Bar width based on rank: rank 1 → 100%, rank=total → ~0% */
-function getRankBarWidth(rank: number | null, total: number): string {
-	if (rank === null || total === 0) return '0%';
-	return `${(((total - rank + 1) / total) ** 15 * 100).toFixed(1)}%`;
-}
-
-/** Color based on rank percentile (lower rank = better) */
-function getRankColorClass(rank: number | null, total: number): string {
-	if (rank === null || total === 0) return 'bg-gray-400';
-	const pct = 1 - (1 - rank / total) ** 15;
-	if (pct <= 0.2) return 'bg-purple-500';
-	if (pct <= 0.4) return 'bg-blue-500';
-	if (pct <= 0.6) return 'bg-green-500';
-	if (pct <= 0.8) return 'bg-yellow-500';
-	return 'bg-gray-400';
+function getModelDisplayName(key: string): string {
+	const named = NAMED_SORTS.find((s) => s.modelKey === key);
+	if (named) return `${named.symbol} ${named.name}`;
+	return key;
 }
 
 function getTagOpacity(confidence: ConfidenceLevel): string {
@@ -237,30 +225,6 @@ function getFilteredTags(tagData: TagData) {
 	return tags;
 }
 
-function getRatingColorClass(rating: number | null): string {
-	if (rating === null) return 'bg-gray-500';
-	if (rating <= 2) return 'bg-green-500';
-	if (rating <= 4) return 'bg-lime-500';
-	if (rating <= 6) return 'bg-orange-500';
-	if (rating <= 8) return 'bg-red-500';
-	return 'bg-purple-500';
-}
-
-function getRatingLabel(rating: number | null): string {
-	if (rating === null) return 'Unknown';
-	if (rating <= 2) return 'Safe';
-	if (rating <= 4) return 'Slightly Suggestive';
-	if (rating <= 6) return 'Sensitive';
-	if (rating <= 8) return 'Adult';
-	return 'Explicit';
-}
-
-function getModelDisplayName(key: string): string {
-	const named = NAMED_SORTS.find((s) => s.modelKey === key);
-	if (named) return `${named.symbol} ${named.name}`;
-	return key;
-}
-
 // External source URL from image key — pixiv/sankaku/twitter only
 const sourceUrl = computed((): string | null => {
 	const key = image.value?.key;
@@ -282,7 +246,6 @@ const sourceUrl = computed((): string | null => {
 	return null;
 });
 
-// For danbooru/gelbooru: fetch source URL from API, fall back to post page
 const imageProvider = computed(
 	(): string => image.value?.key?.split('/')[0] ?? '',
 );
@@ -328,7 +291,6 @@ async function openViewSource(): Promise<void> {
 	}
 }
 
-// Link to daily list for a sort field + current date
 function dailyLink(sortField: string): string {
 	const date = image.value?.date ?? '';
 	return `/daily?date=${date}&sort=${encodeURIComponent(sortField)}`;
@@ -343,18 +305,9 @@ function goBack() {
 }
 
 const SIMILARITY_AXES = [
-	{
-		key: 'character',
-		label: 'Character Similarity',
-	},
-	{
-		key: 'situation',
-		label: 'Situation Similarity',
-	},
-	{
-		key: 'style',
-		label: 'Style Similarity',
-	},
+	{key: 'character', label: 'Character Similarity'},
+	{key: 'situation', label: 'Situation Similarity'},
+	{key: 'style', label: 'Style Similarity'},
 ] as const;
 
 type SimilarityAxis = (typeof SIMILARITY_AXES)[number]['key'];
@@ -438,7 +391,6 @@ async function loadImage(id: string) {
 	loadSimilarImages(id);
 }
 
-// Re-fetch when navigating between similar images (component is reused)
 watch(
 	() => route.params.id as string,
 	(id) => {
@@ -449,11 +401,6 @@ watch(
 onMounted(() => {
 	loadImage(route.params.id as string);
 });
-
-function onSimilarWheel(e: WheelEvent) {
-	const el = e.currentTarget as HTMLElement;
-	el.scrollLeft += e.deltaY;
-}
 </script>
 
 <template>
@@ -517,7 +464,7 @@ function onSimilarWheel(e: WheelEvent) {
 							<img
 								:src="imageUrl"
 								:alt="image.key"
-								class="w-full h-auto max-h-[75vh] object-contain mx-auto transition-opacity duration-150"
+								class="w-full h-[70vh] object-contain mx-auto transition-opacity duration-150"
 							>
 							<div
 								v-if="hoveredSimilar"
@@ -529,7 +476,6 @@ function onSimilarWheel(e: WheelEvent) {
 						</div>
 						<!-- Favorite + Source links below image -->
 						<div class="mt-2 flex items-center justify-between">
-							<!-- Favorite button -->
 							<button
 								type="button"
 								@click="(e) => handleToggleFavorite(e, image!.id)"
@@ -575,7 +521,7 @@ function onSimilarWheel(e: WheelEvent) {
 						</div>
 					</div>
 
-					<!-- Right: Named Scores + Metadata -->
+					<!-- Right: Named Scores + Metadata + Similar Images -->
 					<div class="space-y-4">
 						<!-- Named sort scores -->
 						<div class="bg-white rounded-xl shadow-md p-4">
@@ -597,7 +543,6 @@ function onSimilarWheel(e: WheelEvent) {
 											{{ preset.symbol }} {{ preset.name }}
 										</span>
 										<div class="flex items-center gap-2">
-											<!-- Rank badge -->
 											<template v-if="getNamedRank(preset.modelKey)">
 												<span class="text-xs text-gray-500 tabular-nums">
 													#{{ getNamedRank(preset.modelKey)?.rank }}
@@ -613,18 +558,18 @@ function onSimilarWheel(e: WheelEvent) {
 										<template v-if="getNamedRank(preset.modelKey)">
 											<div
 												:class="[
-												'h-2 rounded-full transition-all',
-												getRankColorClass(
-													getNamedRank(preset.modelKey)?.rank ?? null,
-													getNamedRank(preset.modelKey)?.total ?? 0,
-												),
-											]"
+													'h-2 rounded-full transition-all',
+													getRankColorClass(
+														getNamedRank(preset.modelKey)?.rank ?? null,
+														getNamedRank(preset.modelKey)?.total ?? 0,
+													),
+												]"
 												:style="{
-												width: getRankBarWidth(
-													getNamedRank(preset.modelKey)?.rank ?? null,
-													getNamedRank(preset.modelKey)?.total ?? 0,
-												),
-											}"
+													width: getRankBarWidth(
+														getNamedRank(preset.modelKey)?.rank ?? null,
+														getNamedRank(preset.modelKey)?.total ?? 0,
+													),
+												}"
 											/>
 										</template>
 									</div>
@@ -674,124 +619,18 @@ function onSimilarWheel(e: WheelEvent) {
 							<h2 class="text-base font-semibold text-gray-900 mb-3">
 								Similar Images
 							</h2>
-
-							<!-- Loading -->
-							<div
-								v-if="similarLoading"
-								class="flex items-center gap-2 text-sm text-gray-500 py-4"
-							>
-								<div
-									class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
-								/>
-								Searching for similar images...
-							</div>
-
-							<!-- Error -->
-							<p v-else-if="similarError" class="text-sm text-red-500 py-2">
-								{{ similarError }}
-							</p>
-
-							<!-- No results -->
-							<p
-								v-else-if="similarImages.length === 0"
-								class="text-sm text-gray-400 py-2"
-							>
-								No similar images found. (Qdrant index may not include this
-								image yet.)
-							</p>
-
-							<!-- Thumbnail strip -->
-							<div
-								v-else
-								class="flex gap-2 overflow-x-auto pb-2"
-								@wheel.prevent="onSimilarWheel"
-							>
-								<RouterLink
-									v-for="sim in similarImages"
-									:key="sim.id"
-									:to="`/daily/image/${sim.id}`"
-									class="flex-shrink-0 relative group"
-									:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
-									@mouseenter="hoveredSimilar = sim"
-									@mouseleave="hoveredSimilar = null"
-								>
-									<img
-										:src="getImageUrl(sim, true)"
-										:alt="sim.id"
-										class="h-64 w-auto object-cover rounded-lg bg-gray-100"
-										loading="lazy"
-									>
-									<!-- Favorite button -->
-									<button
-										type="button"
-										@click="(e) => handleToggleFavorite(e, sim.id)"
-										:disabled="savingFavoriteIds.has(sim.id)"
-										:class="[
-										'absolute top-1.5 left-1.5 p-1.5 rounded-md shadow-lg transition-all z-10',
-										isFavorite(sim.id)
-											? 'bg-red-500 text-white hover:bg-red-600'
-											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-										savingFavoriteIds.has(sim.id) && 'opacity-50 cursor-not-allowed',
-										!isFavorite(sim.id) && 'opacity-0 group-hover:opacity-100',
-									]"
-										:title="isFavorite(sim.id) ? 'Remove from favorites' : 'Add to favorites'"
-									>
-										<Heart
-											:size="14"
-											:fill="isFavorite(sim.id) ? 'currentColor' : 'none'"
-										/>
-									</button>
-									<!-- Similarity badge -->
-									<span
-										class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
-									>
-										{{ (sim.similarity * 100).toFixed(1) }}%
-									</span>
-								</RouterLink>
-							</div>
+							<SimilarImageStrip
+								:images="similarImages"
+								:loading="similarLoading"
+								:error="similarError"
+								empty-message="No similar images found. (Qdrant index may not include this image yet.)"
+								@hover-enter="hoveredSimilar = $event"
+								@hover-leave="hoveredSimilar = null"
+							/>
 						</div>
 
 						<!-- Twitter Source -->
-						<div v-if="image.source" class="bg-white rounded-xl shadow-md p-4">
-							<h2 class="text-base font-semibold text-gray-900 mb-3">
-								Twitter Source
-							</h2>
-							<div class="space-y-2 text-sm">
-								<div
-									v-if="image.source.user"
-									class="flex flex-wrap items-center gap-2"
-								>
-									<a
-										v-if="image.source.user.screen_name"
-										:href="`https://twitter.com/${image.source.user.screen_name}`"
-										target="_blank"
-										rel="noopener noreferrer"
-										class="text-blue-600 hover:underline font-medium flex items-center gap-1"
-									>
-										@{{ image.source.user.screen_name }}
-										<ExternalLink :size="12" />
-									</a>
-									<span v-if="image.source.user.name" class="text-gray-600"
-										>{{ image.source.user.name }}</span
-									>
-								</div>
-								<div
-									v-if="image.source.text"
-									class="text-gray-700 bg-gray-50 rounded-lg p-2 whitespace-pre-wrap break-words text-xs"
-								>
-									{{ image.source.text }}
-								</div>
-								<a
-									v-if="image.source.tweetId"
-									:href="`https://twitter.com/i/web/status/${image.source.tweetId}`"
-									target="_blank"
-									rel="noopener noreferrer"
-									class="text-blue-600 hover:underline text-xs flex items-center gap-1"
-								>
-									View Tweet <ExternalLink :size="11" />
-								</a>
-							</div>
-						</div>
+						<TwitterSourcePanel v-if="image.source" :source="image.source" />
 					</div>
 				</div>
 
@@ -805,83 +644,15 @@ function onSimilarWheel(e: WheelEvent) {
 						<h2 class="text-base font-semibold text-gray-900 mb-0.5">
 							{{ axis.label }}
 						</h2>
-
-						<!-- Loading -->
-						<div
-							v-if="axesSimilarLoading[axis.key]"
-							class="flex items-center gap-2 text-sm text-gray-500 py-4"
-						>
-							<div
-								class="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent"
-							/>
-							Searching...
-						</div>
-
-						<!-- Error -->
-						<p
-							v-else-if="axesSimilarError[axis.key]"
-							class="text-sm text-red-500 py-2"
-						>
-							{{ axesSimilarError[axis.key] }}
-						</p>
-
-						<!-- No results -->
-						<p
-							v-else-if="axesSimilarImages[axis.key].length === 0"
-							class="text-sm text-gray-400 py-2"
-						>
-							No similar images found.
-						</p>
-
-						<!-- Thumbnail strip -->
-						<div
-							v-else
-							class="flex gap-2 overflow-x-auto pb-2"
-							@wheel.prevent="onSimilarWheel"
-						>
-							<RouterLink
-								v-for="sim in axesSimilarImages[axis.key]"
-								:key="sim.id"
-								:to="`/daily/image/${sim.id}`"
-								class="flex-shrink-0 relative group"
-								:title="`Similarity: ${(sim.similarity * 100).toFixed(1)}%`"
-								@mouseenter="hoveredSimilar = sim"
-								@mouseleave="hoveredSimilar = null"
-							>
-								<img
-									:src="getImageUrl(sim, true)"
-									:alt="sim.id"
-									class="h-48 w-auto object-cover rounded-lg bg-gray-100"
-									loading="lazy"
-								>
-								<!-- Favorite button -->
-								<button
-									type="button"
-									@click="(e) => handleToggleFavorite(e, sim.id)"
-									:disabled="savingFavoriteIds.has(sim.id)"
-									:class="[
-									'absolute top-1.5 left-1.5 p-1.5 rounded-md shadow-lg transition-all z-10',
-									isFavorite(sim.id)
-										? 'bg-red-500 text-white hover:bg-red-600'
-										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-									savingFavoriteIds.has(sim.id) && 'opacity-50 cursor-not-allowed',
-									!isFavorite(sim.id) && 'opacity-0 group-hover:opacity-100',
-								]"
-									:title="isFavorite(sim.id) ? 'Remove from favorites' : 'Add to favorites'"
-								>
-									<Heart
-										:size="14"
-										:fill="isFavorite(sim.id) ? 'currentColor' : 'none'"
-									/>
-								</button>
-								<!-- Similarity badge -->
-								<span
-									class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-white text-xs rounded font-mono opacity-0 group-hover:opacity-100 transition-opacity"
-								>
-									{{ (sim.similarity * 100).toFixed(1) }}%
-								</span>
-							</RouterLink>
-						</div>
+						<SimilarImageStrip
+							:images="axesSimilarImages[axis.key]"
+							:loading="axesSimilarLoading[axis.key]"
+							:error="axesSimilarError[axis.key]"
+							image-height="h-48"
+							loading-message="Searching..."
+							@hover-enter="hoveredSimilar = $event"
+							@hover-leave="hoveredSimilar = null"
+						/>
 					</div>
 				</div>
 
@@ -917,7 +688,6 @@ function onSimilarWheel(e: WheelEvent) {
 									>
 										{{ item.score.toFixed(4) }}
 									</span>
-									<!-- Rank -->
 									<span
 										v-if="image.scoreRanks?.[item.sortField]"
 										class="text-gray-900 tabular-nums"
@@ -930,22 +700,22 @@ function onSimilarWheel(e: WheelEvent) {
 							<div class="w-full bg-gray-100 rounded-full h-1.5">
 								<div
 									:class="[
-									'h-1.5 rounded-full',
-									image.scoreRanks?.[item.sortField]
-										? getRankColorClass(
-												image.scoreRanks[item.sortField].rank,
-												image.scoreRanks[item.sortField].total,
-											)
-										: getScoreColorClass(item.score),
-								]"
+										'h-1.5 rounded-full',
+										image.scoreRanks?.[item.sortField]
+											? getRankColorClass(
+													image.scoreRanks[item.sortField].rank,
+													image.scoreRanks[item.sortField].total,
+												)
+											: getScoreColorClass(item.score),
+									]"
 									:style="{
-									width: image.scoreRanks?.[item.sortField]
-										? getRankBarWidth(
-												image.scoreRanks[item.sortField].rank,
-												image.scoreRanks[item.sortField].total,
-											)
-										: getScoreBarWidth(item.score),
-								}"
+										width: image.scoreRanks?.[item.sortField]
+											? getRankBarWidth(
+													image.scoreRanks[item.sortField].rank,
+													image.scoreRanks[item.sortField].total,
+												)
+											: getScoreBarWidth(item.score),
+									}"
 								/>
 							</div>
 						</RouterLink>
@@ -1029,109 +799,23 @@ function onSimilarWheel(e: WheelEvent) {
 				</div>
 
 				<!-- Moderation Ratings -->
-				<div
-					v-if="
-					image.moderations && Object.keys(image.moderations).length > 0
-				"
-					class="bg-white rounded-xl shadow-md p-4"
-				>
-					<h2 class="text-base font-semibold text-gray-900 mb-3">
-						Moderation Ratings
-					</h2>
-					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-						<div
-							v-for="(modData, model) in image.moderations"
-							:key="model"
-							class="border border-gray-100 rounded-lg p-3"
-						>
-							<div class="flex items-center justify-between mb-2">
-								<span class="font-medium text-gray-700 capitalize text-sm"
-									>{{ model }}</span
-								>
-								<span
-									:class="[
-									getRatingColorClass(modData.result),
-									'px-2 py-0.5 rounded-full text-white text-xs font-semibold',
-								]"
-								>
-									{{ modData.result ?? 'N/A' }}
-									— {{ getRatingLabel(modData.result) }}
-								</span>
-							</div>
-							<p
-								v-if="modData.explanation"
-								class="text-xs text-gray-600 leading-relaxed"
-							>
-								{{ modData.explanation }}
-							</p>
-						</div>
-					</div>
-				</div>
+				<ModerationRatingsPanel
+					v-if="image.moderations && Object.keys(image.moderations).length > 0"
+					:moderations="image.moderations"
+				/>
 
 				<!-- Age Estimations -->
-				<div
-					v-if="
-					image.ageEstimations &&
-					Object.keys(image.ageEstimations).length > 0
-				"
-					class="bg-white rounded-xl shadow-md p-4"
-				>
-					<h2 class="text-base font-semibold text-gray-900 mb-3">
-						Age Estimations
-					</h2>
-					<div class="space-y-4">
-						<div
-							v-for="(ageData, model) in image.ageEstimations"
-							:key="model"
-							class="border border-gray-100 rounded-lg p-3"
-						>
-							<div class="flex items-center justify-between mb-2">
-								<span class="font-medium text-gray-700 capitalize text-sm"
-									>{{ model }}</span
-								>
-								<span class="text-xs text-gray-500">
-									{{ ageData.result.characters_detected }}
-									character(s)
-								</span>
-							</div>
-							<div
-								v-if="ageData.result.characters.length > 0"
-								class="grid grid-cols-1 sm:grid-cols-2 gap-2"
-							>
-								<div
-									v-for="char in ageData.result.characters"
-									:key="char.id"
-									class="bg-gray-50 rounded-lg p-2"
-								>
-									<div class="flex items-center justify-between mb-1">
-										<span class="text-xs font-medium text-gray-700">
-											Character {{ char.id }} ({{ char.gender_guess }})
-										</span>
-										<span class="text-sm font-bold text-blue-600">
-											{{ char.most_likely_age ?? '?' }}
-										</span>
-									</div>
-									<p class="text-xs text-gray-500">
-										{{ char.estimated_age_range }}
-									</p>
-									<div class="mt-1 w-full bg-gray-200 rounded-full h-1">
-										<div
-											class="h-1 rounded-full bg-blue-400"
-											:style="{width: `${char.confidence * 100}%`}"
-										/>
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-				</div>
+				<AgeEstimationsPanel
+					v-if="image.ageEstimations && Object.keys(image.ageEstimations).length > 0"
+					:age-estimations="image.ageEstimations"
+				/>
 
 				<!-- Captions + Tags -->
 				<div
 					v-if="
-					captionModels.length > 0 ||
-					(image.tags && Object.keys(image.tags).length > 0)
-				"
+						captionModels.length > 0 ||
+						(image.tags && Object.keys(image.tags).length > 0)
+					"
 					class="grid grid-cols-1 lg:grid-cols-2 gap-4"
 				>
 					<!-- PixAI Tags -->
@@ -1163,14 +847,14 @@ function onSimilarWheel(e: WheelEvent) {
 									v-for="tag in getFilteredTags(tagData)"
 									:key="`${tag.category}-${tag.name}`"
 									:class="[
-									'inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-xs font-medium',
-									getTagOpacity(tag.confidence),
-									tag.category === 'character'
-										? 'bg-blue-100 text-blue-800'
-										: tag.category === 'ip'
-											? 'bg-purple-100 text-purple-800'
-											: 'bg-green-100 text-green-800',
-								]"
+										'inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-xs font-medium',
+										getTagOpacity(tag.confidence),
+										tag.category === 'character'
+											? 'bg-blue-100 text-blue-800'
+											: tag.category === 'ip'
+												? 'bg-purple-100 text-purple-800'
+												: 'bg-green-100 text-green-800',
+									]"
 									:title="tag.score ? `Score: ${tag.score.toFixed(3)}` : undefined"
 								>
 									<span v-if="tag.category === 'character'" class="text-[9px]"
@@ -1201,9 +885,9 @@ function onSimilarWheel(e: WheelEvent) {
 								<span
 									v-if="image.moderations?.[model]?.result !== undefined"
 									:class="[
-									getRatingColorClass(image.moderations[model].result),
-									'px-2 py-0.5 rounded text-white text-xs font-medium',
-								]"
+										getRatingColorClass(image.moderations[model].result),
+										'px-2 py-0.5 rounded text-white text-xs font-medium',
+									]"
 								>
 									{{ image.moderations[model].result }}
 								</span>
