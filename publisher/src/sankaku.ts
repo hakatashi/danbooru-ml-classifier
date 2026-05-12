@@ -95,6 +95,8 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 			console.log(`[Sankaku] Fetching page ${page + 1}/${crawlPages}... ${next ? `(next = ${next})` : ''}`);
 			await sleep(5000);
 
+			const tagsQuery = `${tag ? `${tag} ` : ''}order:popularity threshold:0 file_type:image date:${targetDate}T15:00`;
+
 			let posts: SankakuPost[] = [];
 			try {
 				const params: Record<string, string | number> = {
@@ -102,7 +104,7 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 					default_threshold: 0,
 					limit: 100,
 					page: page + 1,
-					tags: `${tag ? `${tag} ` : ''}order:popularity threshold:0 file_type:image date:${targetDate}T15:00`,
+					tags: tagsQuery,
 				};
 				if (next !== null) {
 					params.next = next;
@@ -224,6 +226,10 @@ export const fetchSankakuDailyImages = async (): Promise<void> => {
 							fileSize,
 							sha256,
 							...(width !== undefined && height !== undefined ? {width, height} : {}),
+							metadata: {
+						sankaku: post,
+						sankakuQuery: {tags: tagsQuery, additionalTag: tag, targetDate, page, index},
+					},
 						},
 					},
 					{upsert: true},

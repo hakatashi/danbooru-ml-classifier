@@ -163,6 +163,10 @@ export const fetchGelbooruDailyImages = async (): Promise<void> => {
 						fileSize,
 						sha256,
 						...(width !== undefined && height !== undefined ? {width, height} : {}),
+						metadata: {
+						gelbooru: post,
+						gelbooruQuery: {tags: 'score:>1', page, index},
+					},
 					},
 				},
 				{upsert: true},

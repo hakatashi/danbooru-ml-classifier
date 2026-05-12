@@ -148,6 +148,10 @@ export const fetchDanbooruDailyRankings = async (): Promise<void> => {
 						fileSize,
 						sha256,
 						...(width !== undefined && height !== undefined ? {width, height} : {}),
+						metadata: {
+						danbooru: post,
+						danbooruRanking: {mode, date: dateString, page, index, scale: 'day'},
+					},
 					},
 				},
 				{upsert: true},
