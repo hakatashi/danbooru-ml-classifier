@@ -5,10 +5,18 @@ import {computed, onMounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import {
 	type ApiImageDocument,
+	type DanbooruPostMetadata,
+	type DanbooruRankingContext,
 	fetchImageById,
 	fetchPostSource,
 	fetchSimilarImages,
+	type GelbooruPostMetadata,
+	type GelbooruQueryContext,
 	getImageUrl,
+	type PixivArtworkMetadata,
+	type PixivRankingContext,
+	type SankakuPostMetadata,
+	type SankakuQueryContext,
 	type SimilarImage,
 } from '../api/mlApi';
 import AgeEstimationsPanel from '../components/AgeEstimationsPanel.vue';
@@ -312,6 +320,115 @@ const SIMILARITY_AXES = [
 
 type SimilarityAxis = (typeof SIMILARITY_AXES)[number]['key'];
 
+type SimilarTab = 'overall' | SimilarityAxis;
+const activeSimilarTab = ref<SimilarTab>('overall');
+
+const SIMILAR_TABS: {key: SimilarTab; label: string}[] = [
+	{key: 'overall', label: 'Overall'},
+	...SIMILARITY_AXES.map(({key, label}) => ({
+		key: key as SimilarTab,
+		label: label.replace(' Similarity', ''),
+	})),
+];
+
+const currentSimilarImages = computed(() => {
+	if (activeSimilarTab.value === 'overall') return similarImages.value;
+	return axesSimilarImages.value[activeSimilarTab.value];
+});
+
+const currentSimilarLoading = computed(() => {
+	if (activeSimilarTab.value === 'overall') return similarLoading.value;
+	return axesSimilarLoading.value[activeSimilarTab.value];
+});
+
+const currentSimilarError = computed(() => {
+	if (activeSimilarTab.value === 'overall') return similarError.value;
+	return axesSimilarError.value[activeSimilarTab.value];
+});
+
+// Source metadata (per-provider API data stored alongside the image)
+const pixivMeta = computed(() => {
+	const meta = image.value?.metadata;
+	if (!meta || !('pixiv' in meta)) return null;
+	return meta as {
+		pixiv: PixivArtworkMetadata;
+		pixivRanking: PixivRankingContext;
+	};
+});
+
+const danbooruMeta = computed(() => {
+	const meta = image.value?.metadata;
+	if (!meta || !('danbooru' in meta)) return null;
+	return meta as {
+		danbooru: DanbooruPostMetadata;
+		danbooruRanking: DanbooruRankingContext;
+	};
+});
+
+const gelbooruMeta = computed(() => {
+	const meta = image.value?.metadata;
+	if (!meta || !('gelbooru' in meta)) return null;
+	return meta as {
+		gelbooru: GelbooruPostMetadata;
+		gelbooruQuery: GelbooruQueryContext;
+	};
+});
+
+const sankakuMeta = computed(() => {
+	const meta = image.value?.metadata;
+	if (!meta || !('sankaku' in meta)) return null;
+	return meta as {
+		sankaku: SankakuPostMetadata;
+		sankakuQuery: SankakuQueryContext;
+	};
+});
+
+const pixivContentFlags = computed(() => {
+	const ct = pixivMeta.value?.pixiv.illust_content_type;
+	if (!ct) return [];
+	const flags: string[] = [];
+	if (Number(ct.sexual) === 1) flags.push('sexual');
+	if (Number(ct.sexual) >= 2) flags.push('explicit');
+	if (ct.lo) flags.push('lo');
+	if (ct.grotesque) flags.push('grotesque');
+	if (ct.violent) flags.push('violent');
+	if (ct.homosexual) flags.push('homosexual');
+	if (ct.drug) flags.push('drug');
+	if (ct.bl) flags.push('bl');
+	if (ct.yuri) flags.push('yuri');
+	return flags;
+});
+
+const danbooruRatingLabels: Record<string, string> = {
+	g: 'General',
+	s: 'Sensitive',
+	q: 'Questionable',
+	e: 'Explicit',
+};
+
+const gelbooruRatingLabels: Record<string, string> = {
+	general: 'General',
+	sensitive: 'Sensitive',
+	questionable: 'Questionable',
+	explicit: 'Explicit',
+};
+
+const sankakuRatingLabels: Record<string, string> = {
+	s: 'Safe',
+	q: 'Questionable',
+	e: 'Explicit',
+};
+
+const sankakuTagsByType = computed(() => {
+	const tags = sankakuMeta.value?.sankaku.tags ?? [];
+	return {
+		artist: tags.filter((t) => t.type === 1),
+		copyright: tags.filter((t) => t.type === 3),
+		character: tags.filter((t) => t.type === 4),
+		general: tags.filter((t) => t.type === 5),
+	};
+});
+
 const similarImages = ref<SimilarImage[]>([]);
 const similarLoading = ref(false);
 const similarError = ref<string | null>(null);
@@ -380,6 +497,7 @@ async function loadImage(id: string) {
 	image.value = null;
 	similarImages.value = [];
 	axesSimilarImages.value = {character: [], situation: [], style: []};
+	activeSimilarTab.value = 'overall';
 	try {
 		image.value = await fetchImageById(id);
 		await loadFavoritesForImages([id]);
@@ -614,16 +732,374 @@ onMounted(() => {
 							</dl>
 						</div>
 
-						<!-- Similar Images -->
-						<div class="bg-white rounded-xl shadow-md p-4">
+						<!-- Source Metadata (Pixiv) -->
+						<div v-if="pixivMeta" class="bg-white rounded-xl shadow-md p-4">
 							<h2 class="text-base font-semibold text-gray-900 mb-3">
+								Source Metadata
+								<span class="ml-2 text-xs font-normal text-blue-500"
+									>Pixiv</span
+								>
+							</h2>
+							<dl class="space-y-2 text-sm">
+								<div>
+									<dt class="text-gray-500 text-xs">Title</dt>
+									<dd class="font-medium text-gray-900 break-words">
+										<a
+											:href="`https://www.pixiv.net/artworks/${pixivMeta.pixiv.illust_id}`"
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-blue-600 hover:underline"
+											>{{ pixivMeta.pixiv.title }}</a
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Artist</dt>
+									<dd>
+										<a
+											:href="`https://www.pixiv.net/users/${pixivMeta.pixiv.user_id}`"
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-blue-600 hover:underline text-sm"
+											>{{ pixivMeta.pixiv.user_name }}</a
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Posted</dt>
+									<dd class="font-medium text-gray-900">
+										{{ pixivMeta.pixiv.date }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Rank</dt>
+									<dd class="font-medium text-gray-900">
+										#{{ pixivMeta.pixiv.rank }}
+										<span class="text-gray-400 text-xs"
+											>(prev #{{ pixivMeta.pixiv.yes_rank }})</span
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Views</dt>
+									<dd class="font-medium text-gray-900">
+										{{ pixivMeta.pixiv.view_count.toLocaleString() }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Bookmarks</dt>
+									<dd class="font-medium text-gray-900">
+										{{ pixivMeta.pixiv.rating_count.toLocaleString() }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Ranking</dt>
+									<dd class="text-gray-900 text-xs">
+										{{ pixivMeta.pixivRanking.mode }}
+										· {{ pixivMeta.pixivRanking.date }}
+									</dd>
+								</div>
+								<div v-if="pixivContentFlags.length > 0">
+									<dt class="text-gray-500 text-xs mb-1">Content Flags</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="flag in pixivContentFlags"
+											:key="flag"
+											class="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs"
+											>{{ flag }}</span
+										>
+									</dd>
+								</div>
+								<div v-if="pixivMeta.pixiv.tags.length > 0">
+									<dt class="text-gray-500 text-xs mb-1">Tags</dt>
+									<dd class="flex flex-wrap gap-1 max-h-28 overflow-y-auto">
+										<span
+											v-for="tag in pixivMeta.pixiv.tags"
+											:key="tag"
+											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
+											>{{ tag }}</span
+										>
+									</dd>
+								</div>
+							</dl>
+						</div>
+
+						<!-- Source Metadata (Danbooru) -->
+						<div
+							v-else-if="danbooruMeta"
+							class="bg-white rounded-xl shadow-md p-4"
+						>
+							<h2 class="text-base font-semibold text-gray-900 mb-3">
+								Source Metadata
+								<span class="ml-2 text-xs font-normal text-orange-500"
+									>Danbooru</span
+								>
+							</h2>
+							<dl class="space-y-2 text-sm">
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Rating</dt>
+									<dd class="font-medium text-gray-900">
+										{{ danbooruRatingLabels[danbooruMeta.danbooru.rating] ?? danbooruMeta.danbooru.rating }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Score</dt>
+									<dd class="font-medium text-gray-900">
+										{{ danbooruMeta.danbooru.score }}
+										<span class="text-gray-400 text-xs"
+											>(+{{ danbooruMeta.danbooru.up_score }}
+											/ {{ danbooruMeta.danbooru.down_score }})</span
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Favorites</dt>
+									<dd class="font-medium text-gray-900">
+										{{ danbooruMeta.danbooru.fav_count.toLocaleString() }}
+									</dd>
+								</div>
+								<div v-if="danbooruMeta.danbooru.tag_string_artist">
+									<dt class="text-gray-500 text-xs mb-1">Artist</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="tag in danbooruMeta.danbooru.tag_string_artist.split(' ').filter(Boolean)"
+											:key="tag"
+											class="px-1.5 py-0.5 bg-orange-50 text-orange-700 rounded text-xs"
+											>{{ tag }}</span
+										>
+									</dd>
+								</div>
+								<div v-if="danbooruMeta.danbooru.tag_string_character">
+									<dt class="text-gray-500 text-xs mb-1">Character</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="tag in danbooruMeta.danbooru.tag_string_character.split(' ').filter(Boolean)"
+											:key="tag"
+											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
+											>{{ tag }}</span
+										>
+									</dd>
+								</div>
+								<div v-if="danbooruMeta.danbooru.tag_string_copyright">
+									<dt class="text-gray-500 text-xs mb-1">Copyright</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="tag in danbooruMeta.danbooru.tag_string_copyright.split(' ').filter(Boolean)"
+											:key="tag"
+											class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
+											>{{ tag }}</span
+										>
+									</dd>
+								</div>
+								<div
+									v-if="danbooruMeta.danbooru.pixiv_id"
+									class="flex justify-between"
+								>
+									<dt class="text-gray-500">Pixiv</dt>
+									<dd>
+										<a
+											:href="`https://www.pixiv.net/artworks/${danbooruMeta.danbooru.pixiv_id}`"
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-blue-600 hover:underline text-xs"
+											>#{{ danbooruMeta.danbooru.pixiv_id }}</a
+										>
+									</dd>
+								</div>
+								<div v-if="danbooruMeta.danbooru.source">
+									<dt class="text-gray-500 text-xs mb-0.5">Source</dt>
+									<dd class="break-all">
+										<a
+											v-if="danbooruMeta.danbooru.source.startsWith('http')"
+											:href="danbooruMeta.danbooru.source"
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-blue-600 hover:underline text-xs block truncate"
+											>{{ danbooruMeta.danbooru.source }}</a
+										>
+										<span v-else class="text-xs text-gray-700"
+											>{{ danbooruMeta.danbooru.source }}</span
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between pt-1 border-t border-gray-100">
+									<dt class="text-gray-500">Context</dt>
+									<dd class="text-gray-900 text-xs">
+										{{ danbooruMeta.danbooruRanking.mode }}
+										· {{ danbooruMeta.danbooruRanking.date }}
+									</dd>
+								</div>
+							</dl>
+						</div>
+
+						<!-- Source Metadata (Gelbooru) -->
+						<div
+							v-else-if="gelbooruMeta"
+							class="bg-white rounded-xl shadow-md p-4"
+						>
+							<h2 class="text-base font-semibold text-gray-900 mb-3">
+								Source Metadata
+								<span class="ml-2 text-xs font-normal text-teal-500"
+									>Gelbooru</span
+								>
+							</h2>
+							<dl class="space-y-2 text-sm">
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Rating</dt>
+									<dd class="font-medium text-gray-900">
+										{{ gelbooruRatingLabels[gelbooruMeta.gelbooru.rating] ?? gelbooruMeta.gelbooru.rating }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Score</dt>
+									<dd class="font-medium text-gray-900">
+										{{ gelbooruMeta.gelbooru.score }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Posted</dt>
+									<dd class="font-medium text-gray-900 text-xs">
+										{{ gelbooruMeta.gelbooru.created_at }}
+									</dd>
+								</div>
+								<div v-if="gelbooruMeta.gelbooru.source">
+									<dt class="text-gray-500 text-xs mb-0.5">Source</dt>
+									<dd class="break-all">
+										<a
+											v-if="gelbooruMeta.gelbooru.source.startsWith('http')"
+											:href="gelbooruMeta.gelbooru.source"
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-blue-600 hover:underline text-xs block truncate"
+											>{{ gelbooruMeta.gelbooru.source }}</a
+										>
+										<span v-else class="text-xs text-gray-700"
+											>{{ gelbooruMeta.gelbooru.source }}</span
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between pt-1 border-t border-gray-100">
+									<dt class="text-gray-500">Query</dt>
+									<dd class="text-gray-900 text-xs">
+										{{ gelbooruMeta.gelbooruQuery.tags }}
+									</dd>
+								</div>
+							</dl>
+						</div>
+
+						<!-- Source Metadata (Sankaku) -->
+						<div
+							v-else-if="sankakuMeta"
+							class="bg-white rounded-xl shadow-md p-4"
+						>
+							<h2 class="text-base font-semibold text-gray-900 mb-3">
+								Source Metadata
+								<span class="ml-2 text-xs font-normal text-pink-500"
+									>Sankaku</span
+								>
+							</h2>
+							<dl class="space-y-2 text-sm">
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Author</dt>
+									<dd class="font-medium text-gray-900">
+										{{ sankakuMeta.sankaku.author.name }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Rating</dt>
+									<dd class="font-medium text-gray-900">
+										{{ sankakuRatingLabels[sankakuMeta.sankaku.rating] ?? sankakuMeta.sankaku.rating }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Score</dt>
+									<dd class="font-medium text-gray-900">
+										{{ sankakuMeta.sankaku.total_score }}
+									</dd>
+								</div>
+								<div class="flex justify-between">
+									<dt class="text-gray-500">Favorites</dt>
+									<dd class="font-medium text-gray-900">
+										{{ sankakuMeta.sankaku.fav_count.toLocaleString() }}
+									</dd>
+								</div>
+								<div v-if="sankakuTagsByType.artist.length > 0">
+									<dt class="text-gray-500 text-xs mb-1">Artist</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="tag in sankakuTagsByType.artist"
+											:key="tag.id"
+											class="px-1.5 py-0.5 bg-orange-50 text-orange-700 rounded text-xs"
+											>{{ tag.tagName }}</span
+										>
+									</dd>
+								</div>
+								<div v-if="sankakuTagsByType.character.length > 0">
+									<dt class="text-gray-500 text-xs mb-1">Character</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="tag in sankakuTagsByType.character"
+											:key="tag.id"
+											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
+											>{{ tag.tagName }}</span
+										>
+									</dd>
+								</div>
+								<div v-if="sankakuTagsByType.copyright.length > 0">
+									<dt class="text-gray-500 text-xs mb-1">Copyright</dt>
+									<dd class="flex flex-wrap gap-1">
+										<span
+											v-for="tag in sankakuTagsByType.copyright"
+											:key="tag.id"
+											class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
+											>{{ tag.tagName }}</span
+										>
+									</dd>
+								</div>
+								<div class="flex justify-between pt-1 border-t border-gray-100">
+									<dt class="text-gray-500">Target Date</dt>
+									<dd class="text-gray-900 text-xs">
+										{{ sankakuMeta.sankakuQuery.targetDate }}
+									</dd>
+								</div>
+								<div
+									v-if="sankakuMeta.sankakuQuery.additionalTag"
+									class="flex justify-between"
+								>
+									<dt class="text-gray-500">Additional Tag</dt>
+									<dd class="text-gray-900 text-xs">
+										{{ sankakuMeta.sankakuQuery.additionalTag }}
+									</dd>
+								</div>
+							</dl>
+						</div>
+
+						<!-- Similar Images (tabbed) -->
+						<div class="bg-white rounded-xl shadow-md p-4">
+							<h2 class="text-base font-semibold text-gray-900 mb-2">
 								Similar Images
 							</h2>
+							<div class="flex flex-wrap gap-1 mb-3">
+								<button
+									v-for="tab in SIMILAR_TABS"
+									:key="tab.key"
+									type="button"
+									@click="activeSimilarTab = tab.key"
+									:class="[
+										'px-2.5 py-0.5 rounded text-xs font-medium transition-colors',
+										activeSimilarTab === tab.key
+											? 'bg-blue-500 text-white'
+											: 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+									]"
+								>
+									{{ tab.label }}
+								</button>
+							</div>
 							<SimilarImageStrip
-								:images="similarImages"
-								:loading="similarLoading"
-								:error="similarError"
-								empty-message="No similar images found. (Qdrant index may not include this image yet.)"
+								:images="currentSimilarImages"
+								:loading="currentSimilarLoading"
+								:error="currentSimilarError"
+								:empty-message="activeSimilarTab === 'overall' ? 'No similar images found. (Qdrant index may not include this image yet.)' : 'No similar images found for this axis.'"
 								@hover-enter="hoveredSimilar = $event"
 								@hover-leave="hoveredSimilar = null"
 							/>
@@ -631,28 +1107,6 @@ onMounted(() => {
 
 						<!-- Twitter Source -->
 						<TwitterSourcePanel v-if="image.source" :source="image.source" />
-					</div>
-				</div>
-
-				<!-- Axis-based Similar Images -->
-				<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-					<div
-						v-for="axis in SIMILARITY_AXES"
-						:key="axis.key"
-						class="bg-white rounded-xl shadow-md p-4"
-					>
-						<h2 class="text-base font-semibold text-gray-900 mb-0.5">
-							{{ axis.label }}
-						</h2>
-						<SimilarImageStrip
-							:images="axesSimilarImages[axis.key]"
-							:loading="axesSimilarLoading[axis.key]"
-							:error="axesSimilarError[axis.key]"
-							image-height="h-48"
-							loading-message="Searching..."
-							@hover-enter="hoveredSimilar = $event"
-							@hover-leave="hoveredSimilar = null"
-						/>
 					</div>
 				</div>
 
