@@ -41,7 +41,7 @@ export function isRatable(label: LabelType): boolean {
   return label === 'pixiv_public' || label === 'pixiv_private';
 }
 
-const IMAGE_CACHE_PREFIX = '/mnt/cache/danbooru-ml-classifier/images/';
+const IMAGE_CACHE_PREFIX = '/mnt/cache2/danbooru-ml-classifier/images/';
 
 /** Extract the source URL for a given image path, or null if unrecognised. */
 export function sourceUrl(path: string): string | null {

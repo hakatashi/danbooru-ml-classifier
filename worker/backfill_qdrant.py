@@ -37,7 +37,7 @@ from torchvision import models, transforms
 WORKER_DIR = Path(__file__).parent
 REPO_ROOT  = WORKER_DIR.parent
 
-IMAGE_CACHE_DIR   = Path(os.environ.get("IMAGE_CACHE_DIR", "/mnt/cache/danbooru-ml-classifier/images"))
+IMAGE_CACHE_DIR   = Path(os.environ.get("IMAGE_CACHE_DIR", "/mnt/cache2/danbooru-ml-classifier/images"))
 MONGODB_URI       = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB        = os.environ.get("MONGODB_DB", "danbooru-ml-classifier")
 QDRANT_HOST       = os.environ.get("QDRANT_HOST", "localhost")

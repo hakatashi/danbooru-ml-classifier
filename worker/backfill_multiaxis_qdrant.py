@@ -50,7 +50,7 @@ PU_DIR     = REPO_ROOT / "pu-learning"
 
 PIXAI_TAG_CATEGORIES_JSON = PU_DIR / "data" / "metadata" / "pixai_tag_categories.json"
 
-IMAGE_CACHE_DIR = Path(os.environ.get("IMAGE_CACHE_DIR", "/mnt/cache/danbooru-ml-classifier/images"))
+IMAGE_CACHE_DIR = Path(os.environ.get("IMAGE_CACHE_DIR", "/mnt/cache2/danbooru-ml-classifier/images"))
 MONGODB_URI     = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB      = os.environ.get("MONGODB_DB", "danbooru-ml-classifier")
 QDRANT_HOST     = os.environ.get("QDRANT_HOST", "localhost")

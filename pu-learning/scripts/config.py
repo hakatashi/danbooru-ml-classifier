@@ -17,7 +17,7 @@ MODELS_DIR   = DATA_DIR / "models"
 # ── Source image directories ──────────────────────────────────────────────────
 HAKATAARCHIVE_PIXIV_DIR    = Path("/mnt/cache/hakataarchive/pixiv")
 HAKATAARCHIVE_TWITTER_DIR  = Path("/mnt/cache/hakataarchive/twitter")
-DMC_IMAGES_DIR             = Path("/mnt/cache/danbooru-ml-classifier/images")
+DMC_IMAGES_DIR             = Path("/mnt/cache2/danbooru-ml-classifier/images")
 
 # ── External data ─────────────────────────────────────────────────────────────
 PIXIV_INDEX_S3_URI = "s3://hakataarchive/index/pixiv.json"

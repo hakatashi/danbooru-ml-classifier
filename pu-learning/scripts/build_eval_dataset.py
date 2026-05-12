@@ -69,7 +69,7 @@ SPLITS_FILE    = METADATA_DIR / "splits.parquet"
 EVAL_MANIFEST  = METADATA_DIR / "eval_manifest.parquet"
 VALID_LABELS   = {"pixiv_public", "pixiv_private", "not_bookmarked"}
 
-DMC_IMAGES_DIR = Path("/mnt/cache/danbooru-ml-classifier/images")
+DMC_IMAGES_DIR = Path("/mnt/cache2/danbooru-ml-classifier/images")
 
 HASH_CACHE_FILE = DATA_DIR / "metadata" / "file_hashes.json"  # shared with train set
 
@@ -136,7 +136,7 @@ def save_hash_cache(cache: dict[str, str]) -> None:
 
 def path_to_image_id(file_path: str) -> str:
     """
-    /mnt/cache/danbooru-ml-classifier/images/<source>/<stem><ext>
+    /mnt/cache2/danbooru-ml-classifier/images/<source>/<stem><ext>
     → dmc_<source>/<stem>
     """
     p = Path(file_path)
