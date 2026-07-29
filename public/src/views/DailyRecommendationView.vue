@@ -5,7 +5,6 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	ExternalLink,
-	Heart,
 	Image as ImageIcon,
 	Lock,
 } from 'lucide-vue-next';
@@ -22,44 +21,17 @@ import {
 	type InferenceModel,
 } from '../api/mlApi';
 import DailyCalendar from '../components/DailyCalendar.vue';
+import FavoriteButton from '../components/FavoriteButton.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
+import {useFavorites} from '../composables/useFavorites';
 import {useGallery} from '../composables/useGallery';
-import {useImages} from '../composables/useImages';
+import {
+	NAMED_SORT_FIELDS as NAMED_FIELDS,
+	NAMED_SORTS,
+} from '../config/namedSorts';
 import type {ImageDocument} from '../types';
 
 const props = defineProps<{user: User | null}>();
-
-// ── Named sort presets ──────────────────────────────────────────────────────
-
-const NAMED_SORTS = [
-	{
-		name: 'Aries',
-		symbol: '♈',
-		field: 'inferences.eva02_twitter_elkan_noto_joblib.score',
-	},
-	{
-		name: 'Taurus',
-		symbol: '♉',
-		field: 'inferences.deepdanbooru_twitter_biased_svm_joblib.score',
-	},
-	{
-		name: 'Gemini',
-		symbol: '♊',
-		field: 'inferences.eva02_pixiv_private_nnpu_joblib.score',
-	},
-	{
-		name: 'Cancer',
-		symbol: '♋',
-		field: 'inferences.pixai_pixiv_private_elkan_noto_joblib.score',
-	},
-	{
-		name: 'Leo',
-		symbol: '♌',
-		field: 'inferences.deepdanbooru_pixiv_private_elkan_noto_joblib.score',
-	},
-] as const;
-
-const NAMED_FIELDS: Set<string> = new Set(NAMED_SORTS.map((s) => s.field));
 
 // ── Route / URL param sync ───────────────────────────────────────────────────
 
@@ -140,9 +112,8 @@ const {
 	resetGallery,
 } = useGallery();
 
-// Favorites — backed by the shared favorites collection via useImages
-const {toggleFavorite, isFavorite, loadFavoritesForImages} = useImages();
-const savingFavorites = ref<Set<string>>(new Set());
+// Favorites — embedded in every ApiImageDocument, no network round trip needed
+const {hydrateFromImages} = useFavorites();
 
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref('');
@@ -171,8 +142,8 @@ async function loadImages() {
 		totalCount.value = result.total;
 		resetGallery();
 
-		// Load favorites for this page from the dedicated favorites collection
-		await loadFavoritesForImages(result.images.map((img) => img.id));
+		// Favorites are already embedded in each ApiImageDocument
+		hydrateFromImages(result.images);
 
 		// Pre-calculate gallery layout from image dimensions if available
 		let allHaveDimensions = true;
@@ -352,19 +323,6 @@ function handleClickOutside(e: MouseEvent) {
 		!calendarContainerRef.value.contains(e.target as Node)
 	) {
 		showCalendar.value = false;
-	}
-}
-
-async function handleToggleFavorite(event: Event, image: ApiImageDocument) {
-	event.stopPropagation();
-	if (savingFavorites.value.has(image.id)) return;
-	savingFavorites.value.add(image.id);
-	try {
-		await toggleFavorite(image.id);
-	} catch (err) {
-		console.error('Failed to toggle favorite:', err);
-	} finally {
-		savingFavorites.value.delete(image.id);
 	}
 }
 
@@ -742,24 +700,11 @@ async function openSource(
 						/>
 						<!-- Top-left buttons -->
 						<div class="absolute top-1.5 left-1.5 flex gap-1 z-10">
-							<button
-								type="button"
-								@click="(e) => handleToggleFavorite(e, image)"
-								:disabled="savingFavorites.has(image.id)"
-								:class="[
-									'p-1.5 rounded-md shadow-lg transition-all',
-									isFavorite(image.id)
-										? 'bg-red-500 text-white hover:bg-red-600'
-										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
-								]"
-								:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
-							>
-								<Heart
-									:size="14"
-									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
-								/>
-							</button>
+							<FavoriteButton
+								:image-id="image.id"
+								:size="14"
+								variant="overlay"
+							/>
 							<RouterLink
 								:to="`/daily/image/${image.id}`"
 								target="_blank"
@@ -813,24 +758,11 @@ async function openSource(
 							<!-- Top-left buttons -->
 							<div class="absolute top-2 left-2 flex gap-3 z-10">
 								<!-- Favorite button -->
-								<button
-									type="button"
-									@click="(e) => handleToggleFavorite(e, image)"
-									:disabled="savingFavorites.has(image.id)"
-									:class="[
-										'p-3 rounded-lg shadow-lg transition-all',
-										isFavorite(image.id)
-											? 'bg-red-500 text-white hover:bg-red-600'
-											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-										savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
-									]"
-									:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
-								>
-									<Heart
-										:size="28"
-										:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
-									/>
-								</button>
+								<FavoriteButton
+									:image-id="image.id"
+									:size="28"
+									variant="overlay"
+								/>
 								<RouterLink
 									:to="`/daily/image/${image.id}`"
 									target="_blank"
@@ -896,24 +828,11 @@ async function openSource(
 						<!-- Top-left buttons -->
 						<div class="absolute top-2 left-2 flex gap-1.5 z-10">
 							<!-- Favorite button -->
-							<button
-								type="button"
-								@click="(e) => handleToggleFavorite(e, image)"
-								:disabled="savingFavorites.has(image.id)"
-								:class="[
-									'p-1.5 rounded-lg shadow-lg transition-all',
-									isFavorite(image.id)
-										? 'bg-red-500 text-white hover:bg-red-600'
-										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
-								]"
-								:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
-							>
-								<Heart
-									:size="14"
-									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
-								/>
-							</button>
+							<FavoriteButton
+								:image-id="image.id"
+								:size="14"
+								variant="overlay"
+							/>
 							<RouterLink
 								:to="`/daily/image/${image.id}`"
 								target="_blank"

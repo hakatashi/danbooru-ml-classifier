@@ -1,19 +1,14 @@
 <script setup lang="ts">
-import {Heart} from 'lucide-vue-next';
 import {computed, ref} from 'vue';
 import {RouterLink} from 'vue-router';
-import {useImages} from '../composables/useImages';
 import type {ImageDocument} from '../types';
+import FavoriteButton from './FavoriteButton.vue';
 import ImageLightbox from './ImageLightbox.vue';
 import ThinkBlock from './ThinkBlock.vue';
 
 const props = defineProps<{
 	image: ImageDocument;
 }>();
-
-const {toggleFavorite, isFavorite} = useImages();
-const isFavorited = computed(() => isFavorite(props.image.id));
-const isSaving = ref(false);
 
 const IMAGE_BASE_URL =
 	'https://matrix-images.hakatashi.com/hakataarchive/twitter/';
@@ -63,22 +58,6 @@ function selectModel(model: string) {
 function openLightbox() {
 	showLightbox.value = true;
 }
-
-async function handleToggleFavorite(event: Event) {
-	event.preventDefault();
-	event.stopPropagation();
-
-	if (isSaving.value) return;
-
-	isSaving.value = true;
-	try {
-		await toggleFavorite(props.image.id);
-	} catch (error) {
-		console.error('Failed to toggle favorite:', error);
-	} finally {
-		isSaving.value = false;
-	}
-}
 </script>
 
 <template>
@@ -98,21 +77,12 @@ async function handleToggleFavorite(event: Event) {
 				@error="($event.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 fill=%22%23999%22>Image not found</text></svg>'"
 			>
 			<!-- Favorite button (top-left) -->
-			<button
-				type="button"
-				@click="handleToggleFavorite"
-				:disabled="isSaving"
-				:class="[
-					'absolute top-3 left-3 p-2 rounded-lg shadow-lg transition-all',
-					isFavorited
-						? 'bg-red-500 text-white hover:bg-red-600'
-						: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-					isSaving && 'opacity-50 cursor-not-allowed',
-				]"
-				:title="isFavorited ? 'Remove from favorites' : 'Add to favorites'"
-			>
-				<Heart :size="20" :fill="isFavorited ? 'currentColor' : 'none'" />
-			</button>
+			<FavoriteButton
+				:image-id="image.id"
+				:size="20"
+				variant="overlay"
+				class="absolute top-3 left-3"
+			/>
 			<!-- Stacked ratings -->
 			<div class="absolute top-3 right-3 flex flex-col gap-1.5">
 				<div

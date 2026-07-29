@@ -1,7 +1,9 @@
 import {createRouter, createWebHistory} from 'vue-router';
+import ArchivesView from './views/ArchivesView.vue';
 import DailyImageDetailView from './views/DailyImageDetailView.vue';
 import DailyRecommendationView from './views/DailyRecommendationView.vue';
-import HomeView from './views/HomeView.vue';
+import FavoritesView from './views/FavoritesView.vue';
+import GalleryView from './views/GalleryView.vue';
 import ImageDetailView from './views/ImageDetailView.vue';
 import NovelsListView from './views/NovelsListView.vue';
 import NovelView from './views/NovelView.vue';
@@ -24,9 +26,23 @@ const router = createRouter({
 			component: DailyImageDetailView,
 		},
 		{
+			path: '/favorites',
+			name: 'favorites',
+			component: FavoritesView,
+		},
+		{
+			// Random-viewer gallery over favorited images. This path used to be
+			// the grid/justified Archives view (route name 'home') -- that view
+			// moved to /archives below, and this URL was repurposed rather than
+			// redirected, per an explicit product decision.
 			path: '/gallery',
-			name: 'home',
-			component: HomeView,
+			name: 'gallery',
+			component: GalleryView,
+		},
+		{
+			path: '/archives',
+			name: 'archives',
+			component: ArchivesView,
 		},
 		{
 			path: '/image/:id(.*)',

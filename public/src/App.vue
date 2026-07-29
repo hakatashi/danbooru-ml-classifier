@@ -3,15 +3,18 @@ import type {User} from 'firebase/auth';
 import {ref} from 'vue';
 import {RouterLink, RouterView} from 'vue-router';
 import AuthButton from './components/AuthButton.vue';
+import {useFavorites} from './composables/useFavorites';
 import {useImages} from './composables/useImages';
 
 const user = ref<User | null>(null);
 const {clearCache} = useImages();
+const {clearFavoritesCache} = useFavorites();
 
 function onAuthChange(newUser: User | null) {
 	user.value = newUser;
 	if (!newUser) {
 		clearCache();
+		clearFavoritesCache();
 	}
 }
 </script>
@@ -38,11 +41,25 @@ function onAuthChange(newUser: User | null) {
 								Daily Recommendation
 							</RouterLink>
 							<RouterLink
+								to="/favorites"
+								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+								active-class="text-blue-600"
+							>
+								Favorites
+							</RouterLink>
+							<RouterLink
 								to="/gallery"
 								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
 								active-class="text-blue-600"
 							>
 								Gallery
+							</RouterLink>
+							<RouterLink
+								to="/archives"
+								class="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+								active-class="text-blue-600"
+							>
+								Archives
 							</RouterLink>
 							<RouterLink
 								to="/novels"

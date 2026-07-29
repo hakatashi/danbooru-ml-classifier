@@ -8,23 +8,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Dedicated favorites collection — one document per image, keyed by image ID
+    // Legacy favorites collection — read-only. Favorites now live in MongoDB
+    // (images.favorites, written via worker/api.py's authenticated
+    // /favorites/* endpoints). This collection is kept read-only, not
+    // deleted, so the MongoDB migration in publisher/scripts/
+    // migrate-favorites-to-mongo.ts remains reversible.
     match /favorites/{imageId} {
       allow read: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
-      allow create, update: if request.auth != null
-        && request.auth.token.email == 'hakatasiloving@gmail.com'
-        && isValidFavorites(request.resource.data);
-      allow delete: if request.auth != null && request.auth.token.email == 'hakatasiloving@gmail.com';
-    }
-
-    // Validate the favorites document structure
-    function isValidFavorites(data) {
-      return data.keys().hasAll(['isFavorited', 'categories'])
-        && data.isFavorited is bool
-        && data.categories is list
-        && data.categories.size() <= 50
-        && (data.categories.size() == 0 || data.categories[0] is string)
-        && (data.categories.size() > 0) == data.isFavorited;
+      allow create, update, delete: if false;
     }
 
     // Allow read access to moderationStats for authenticated users

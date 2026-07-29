@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a hybrid ML image classification system that:
 1. Fetches daily rankings from Pixiv, Danbooru, and Gelbooru (local cron job)
-2. Downloads images to local disk (`/mnt/cache/danbooru-ml-classifier/images`)
+2. Downloads images to local disk (`/mnt/cache2/danbooru-ml-classifier/images`)
 3. Stores image metadata in local MongoDB
 4. Runs ML inference to predict user preference (not_bookmarked, bookmarked_public, bookmarked_private)
 5. Trains PU Learning-based preference classifiers using extracted image features
@@ -23,7 +23,7 @@ Split into two parts:
 - `fetchPixivDailyRankings` - Fetches Pixiv rankings and downloads images
 - `fetchDanbooruDailyRankings` - Fetches Danbooru popular posts and downloads images
 - `fetchGelbooruDailyImages` - Fetches Gelbooru images and downloads images
-- Images saved to `IMAGE_CACHE_DIR` (default: `/mnt/cache/danbooru-ml-classifier/images`)
+- Images saved to `IMAGE_CACHE_DIR` (default: `/mnt/cache2/danbooru-ml-classifier/images`)
 - Metadata stored in local MongoDB collections: `images`, `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`, `pixivPages`
 
 **Firebase Functions** (`src/index.ts`) — still deployed to Firebase:
@@ -53,13 +53,19 @@ ML inference and image processing functions:
   - CORS allowed origins: `danbooru-ml-classifier.web.app`, `localhost:5173/4173`
   - Endpoints:
     - `GET /images` — paginated list sorted by ML score or tag probability
-    - `GET /images/{id}` — single image by MongoDB `_id`
+    - `GET /images/{id}` — single image by MongoDB `_id` (accepts both ObjectId and legacy string ids)
+    - `GET /images/{id}/similar` — similar images via Qdrant embeddings
     - `GET /inference-models` — available model keys and their types
     - `GET /important-tags` — available tag names per feature type
+    - `GET /daily-counts`, `GET /post-source` — daily image counts, source URL resolution
     - `GET /health` — health check
+    - `GET /favorites`, `GET /favorites/categories`, `GET /favorites/pool`, `GET /favorites/random`, `POST /favorites/lookup`, `POST /favorites/update` — favorites CRUD (see below); require a Firebase ID token
   - `sort_field` parameter validated against allowlist patterns:
     - `inferences.<model_key>.(score|not_bookmarked|bookmarked_public|bookmarked_private)`
     - `importantTagProbs.(deepdanbooru|pixai).<tag>`
+    - `/favorites` additionally accepts `favorites.favoritedAt`, `favorites.updatedAt`, `date`
+  - **Auth**: `/images*` and other read endpoints are public/unauthenticated. `/favorites/*` (reads included) require `Authorization: Bearer <Firebase ID token>` restricted to `hakatasiloving@gmail.com` (`require_admin` dependency, `ALLOWED_EMAIL` / `FIREBASE_CRED_PATH` env vars). A startup check (`_assert_favorites_routes_protected`) fails fast if any `/favorites` route is missing this dependency.
+  - CORS `allow_methods` includes `POST` (only used by `/favorites/update` and `/favorites/lookup`)
   - Systemd service and Nginx config templates in `worker/systemd/`; install via `bash worker/systemd/install-api.sh`
 - `vlm_captioner.py` - VLM-based captioning, moderation, age estimation, and tagging:
   - Supports multiple models: MiniCPM, JoyCaption, PixAI Tagger
@@ -110,20 +116,30 @@ PU Learning-based preference classifier for predicting image preference:
 Web application for browsing VLM-captioned images:
 - Built with Vue 3, TypeScript, Vite, and Tailwind CSS
 - Firebase Authentication (Google Sign-In required)
-- Features:
+- Two parallel data paths: `/daily`, `/daily/image/:id`, `/favorites`, and `/gallery` read from the MongoDB-backed worker REST API (`src/api/mlApi.ts`); `/archives` and `/image/:id` read directly from Firestore `images/` (`src/composables/useImages.ts`)
+- Routes (`src/router.ts`):
+  - `/daily` — Daily Recommendation: MongoDB-backed gallery with named sort presets, calendar date picker, per-model/tag score sorting
+  - `/daily/image/:id` — Daily Recommendation image detail, with similar-image strips
+  - `/favorites` — manage favorited images: sort by favorited/updated date or any ML score, filter by source/date-range/category, group by category, single and bulk category editing, lightbox with prev/next
+  - `/gallery` — random full-screen viewer over favorited images (original, not thumbnail, URLs); no-repeat shuffle per session (`sessionStorage`), prefetches upcoming originals, keyboard (←/→/Space/F/D/Esc) and touch-swipe navigation
+  - `/archives` — Firestore-backed gallery/grid view with rating/age/PixAI-tag filters (formerly at `/gallery`, renamed when `/gallery` was repurposed for the random viewer — there is intentionally no redirect between the two)
+  - `/image/:id(.*)` — Firestore-backed image detail
+  - `/novels`, `/novels/:novelId` — generated novel list/detail
+- Favorites (`src/composables/useFavorites.ts`, `src/components/FavoriteButton.vue`): backed by MongoDB `images.favorites` via the worker API's authenticated `/favorites/*` endpoints (Firebase ID token). `hydrateFromImages()` reads `favorites` embedded in API responses for free; `loadFavoritesForImages()` calls `POST /favorites/lookup` for the Firestore-backed views where it isn't embedded. Categories default to `Uncategorized`.
+- Shared gallery layout: `src/components/JustifiedGallery.vue` (justified-row + mobile grid, used by `/favorites`; `/daily` and `/archives` still have their own inline copies) and `src/composables/useGallery.ts`
+- Image URLs (`src/api/mlApi.ts` `getImageUrl`): `https://matrix-images.hakatashi.com/danbooru-ml-classifier/{images,thumbnails}/{key}` for current-scheme images; legacy Firestore-era Twitter imports (`type: 'twitter'` with a non-ObjectId `_id`) resolve to `https://matrix-images.hakatashi.com/hakataarchive/twitter/{basename}` instead (no thumbnail variant exists for those)
+- Other features:
   - Browse images with VLM captions (JoyCaption and MiniCPM)
   - Sort by moderation rating, age estimation, or creation date (JoyCaption/MiniCPM/Qwen3 × High/Low)
   - Filter by rating range (provider + min/max) and age range (provider + min/max)
-  - Page-based navigation (50 images per page with total page count from `moderationStats` collection)
+  - Page-based navigation (50 images per page on `/archives`, with total page count from `moderationStats` collection)
   - Responsive sticky filter bar with integrated pagination
     - Mobile: Compact view with menu button + pagination, filters in modal overlay
     - Desktop: Full inline filter controls
-  - Gallery mode with justified row layout and lightbox viewer
-  - Favorites functionality with heart button (uncategorized by default)
   - Mobile-optimized layout (vertical stack on mobile, horizontal on desktop)
   - Click images to view detailed captions, age estimation, and metadata
   - Twitter source metadata display (tweet text, user, retweet info)
-- Default sort: MiniCPM Created (Newest First)
+- Default sort: MiniCPM Created (Newest First) on `/archives`
 - Deployed at: https://danbooru-ml-classifier.web.app
 
 ## Commands
@@ -140,7 +156,7 @@ npm run serve        # Build + start emulators (Firebase Functions only)
 
 **Runtime**: Node.js 20
 
-**Local cron job** (fetch rankings + download images to `/mnt/cache`):
+**Local cron job** (fetch rankings + download images to `/mnt/cache2`):
 ```bash
 cd publisher
 
@@ -167,7 +183,7 @@ cd publisher/systemd
 ```
 
 **Environment variables** for local cron (can be set in `publisher/.env`):
-- `IMAGE_CACHE_DIR` - Directory to save downloaded images (default: `/mnt/cache/danbooru-ml-classifier/images`)
+- `IMAGE_CACHE_DIR` - Directory to save downloaded images (default: `/mnt/cache2/danbooru-ml-classifier/images`)
 - `MONGODB_URI` - MongoDB connection URI (default: `mongodb://localhost:27017`)
 - `MONGODB_DB` - MongoDB database name (default: `danbooru-ml-classifier`)
 - `PIXIV_SESSION_ID` - Pixiv session cookie
@@ -195,6 +211,24 @@ npx ts-node --project publisher/tsconfig.json publisher/scripts/import-firestore
 #   COLLECTIONS      - Comma-separated list (default: images,pixivRanking,danbooruRanking,gelbooruImage)
 ```
 
+**MongoDB index management**:
+```bash
+cd publisher
+npx ts-node --project tsconfig.json scripts/ensure-indexes.ts [--dry-run]
+```
+
+**Favorites migration** (one-shot, Firestore `favorites/` → MongoDB `images.favorites`):
+```bash
+cd publisher
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
+npx ts-node --project tsconfig.json scripts/migrate-favorites-to-mongo.ts [--dry-run] [--prune] [--force]
+
+# --dry-run  Print the report without writing anything
+# --prune    Remove MongoDB favorites subdocs with no Firestore counterpart
+# --force    Skip the safety guard that aborts if MongoDB's favorites are
+#            already newer than Firestore's (i.e. the app has cut over)
+```
+
 ### Worker (Python)
 ```bash
 cd worker
@@ -209,7 +243,7 @@ cd worker
 venv/bin/python main.py
 
 # Environment variables (can be set in worker/.env or shell):
-#   IMAGE_CACHE_DIR - Local image directory (default: /mnt/cache/danbooru-ml-classifier/images)
+#   IMAGE_CACHE_DIR - Local image directory (default: /mnt/cache2/danbooru-ml-classifier/images)
 #   MONGODB_URI     - MongoDB URI (default: mongodb://localhost:27017)
 #   MONGODB_DB      - Database name (default: danbooru-ml-classifier)
 ```
@@ -416,7 +450,7 @@ firebase emulators:start
    - Loads Twitter source metadata from cache (if available)
    - Updates `images` documents (MongoDB) with all results
 5. `updateModerationStats` Firebase Function automatically maintains aggregated statistics (count, sum) per provider in `moderationStats/` Firestore collection
-6. Public website queries Firestore `images/` collection with pagination (50 images per page) and displays total page count from `moderationStats/` collection
+6. Public website's `/daily`, `/favorites`, and `/gallery` query the MongoDB-backed worker REST API (`worker/api.py`) directly; `/archives` and `/image/:id` still query Firestore `images/` with pagination (50 images per page) and display total page count from `moderationStats/` collection
 
 ## MongoDB Collections (local)
 
@@ -429,7 +463,7 @@ Main collection storing image metadata and ML results (mirrors Firestore `images
 - `ageEstimations.[provider]`: Age estimation results with main_character_age (pre-calculated for queries), estimated_age_range, confidence_level, gender, reasoning, and metadata
 - `tags.[provider]`: PixAI tagging results with tag_list (high/medium/low confidence × character/feature/ip), raw_scores, and metadata
 - `twitterSource`: Twitter metadata (tweetId, text, user, retweetedTweet) if image is from Twitter
-- `favorites`: User favorites data (isFavorited, categories array)
+- `favorites`: `{isFavorited: bool, categories: string[], favoritedAt: Date | null, updatedAt: Date}` — canonical source of truth for favorites (migrated from the Firestore `favorites/` collection; see `publisher/scripts/migrate-favorites-to-mongo.ts`). `favoritedAt` is set once on the 0→1 transition and preserved across later category edits, so "newest favorited" sorts correctly. `isFavorited === (categories.length > 0)`. Written only via `worker/api.py`'s authenticated `POST /favorites/update`.
 - `importantTagProbs`: Top-50 important tags per feature type — `{deepdanbooru: {tag: prob}, pixai: {tag: prob}}`
 - `inferences`: ML model scores keyed by model filename — PU models: `{score: float}`, legacy multiclass: `{not_bookmarked, bookmarked_public, bookmarked_private}`
 
@@ -439,10 +473,18 @@ Source ranking data from external APIs. Document `_id` = Firestore document ID (
 ### `pixivPages`
 Pixiv per-artwork page URL data. Document `_id` = Pixiv artwork ID.
 
+## MongoDB Indexes
+
+- `images`: `favorites_favoritedAt_desc` — `{"favorites.favoritedAt": -1}`, partial index on `{"favorites.isFavorited": true}`. Makes every `/favorites*` query an IXSCAN over the (small) favorited set instead of a full collection scan; deliberately the *only* extra index — sorting by an arbitrary `inferences.*`/`importantTagProbs.*` field is done in-process in `worker/api.py` over the pre-filtered favorited set rather than indexed, since there are 100+ possible sort fields.
+- Managed by `publisher/scripts/ensure-indexes.ts` (idempotent; run manually or called from the favorites migration script). There is no automatic index creation at API startup.
+
 ## Firestore Collections (Firebase — used by public website and Firebase Functions)
 
 ### `images/`
-Mirror of MongoDB `images` collection, updated by worker and VLM captioner.
+Mirror of MongoDB `images` collection, updated by worker and VLM captioner. Still read directly by the `/archives` and `/image/:id` views.
+
+### `favorites/`
+Legacy, read-only. Favorites now live in MongoDB `images.favorites` (see above); this collection is preserved un-migrated as a rollback reference and is no longer written to by the app.
 
 ### `moderationStats/`
 Aggregated statistics per VLM provider (joycaption, minicpm):
@@ -453,12 +495,8 @@ Aggregated statistics per VLM provider (joycaption, minicpm):
 
 ## Firestore Security Rules
 
-- `images/`:
-  - Read access for authenticated user (hakatasiloving@gmail.com)
-  - Write access to `favorites` field only for authenticated user with validation:
-    - `isFavorited` must be boolean
-    - `categories` must be array with max 50 items, each item max 100 chars
-    - Data consistency: `isFavorited` must match `categories.size() > 0`
+- `images/`: Read access for authenticated user (hakatasiloving@gmail.com); all writes disallowed (`allow write: if false`)
+- `favorites/`: Read-only for authenticated user (hakatasiloving@gmail.com); all writes disallowed — kept for historical reference, superseded by MongoDB `images.favorites`
 - `moderationStats/`: Read access for authenticated user (hakatasiloving@gmail.com)
 - All other write operations: Firebase Functions only
 
@@ -475,5 +513,5 @@ The project uses 20+ composite indexes for efficient querying:
 - Firebase project: `danbooru-ml-classifier`
 - Storage buckets: `danbooru-ml-classifier` (models), `danbooru-ml-classifier-images` (images, legacy)
 - Local MongoDB: `danbooru-ml-classifier` database (default: `mongodb://localhost:27017`)
-- Local image cache: `/mnt/cache/danbooru-ml-classifier/images` (configurable via `IMAGE_CACHE_DIR`)
+- Local image cache: `/mnt/cache2/danbooru-ml-classifier/images` (configurable via `IMAGE_CACHE_DIR`)
 - Required secrets (publisher cron): `PIXIV_SESSION_ID`, `DANBOORU_API_USER`, `DANBOORU_API_KEY`, `GELBOORU_API_USER`, `GELBOORU_API_KEY`

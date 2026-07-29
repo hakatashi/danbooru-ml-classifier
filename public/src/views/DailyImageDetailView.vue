@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
-import {ChevronLeft, ExternalLink, Heart, Lock} from 'lucide-vue-next';
+import {ChevronLeft, ExternalLink, Lock} from 'lucide-vue-next';
 import {computed, onMounted, ref, watch} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
 import {
@@ -20,13 +20,15 @@ import {
 	type SimilarImage,
 } from '../api/mlApi';
 import AgeEstimationsPanel from '../components/AgeEstimationsPanel.vue';
+import FavoriteButton from '../components/FavoriteButton.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ModerationRatingsPanel from '../components/ModerationRatingsPanel.vue';
 import SimilarImageStrip from '../components/SimilarImageStrip.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import TwitterSourcePanel from '../components/TwitterSourcePanel.vue';
-import {useImages} from '../composables/useImages';
+import {useFavorites} from '../composables/useFavorites';
 import {useScoreDisplay} from '../composables/useScoreDisplay';
+import {NAMED_SORTS} from '../config/namedSorts';
 import type {TagData, TagList} from '../types';
 
 type ConfidenceLevel = 'high' | 'medium' | 'low';
@@ -34,43 +36,10 @@ type TagCategory = 'character' | 'feature' | 'ip';
 
 const props = defineProps<{user: User | null}>();
 
-const NAMED_SORTS = [
-	{
-		name: 'Aries',
-		symbol: '♈',
-		field: 'inferences.eva02_twitter_elkan_noto_joblib.score',
-		modelKey: 'eva02_twitter_elkan_noto_joblib',
-	},
-	{
-		name: 'Taurus',
-		symbol: '♉',
-		field: 'inferences.deepdanbooru_twitter_biased_svm_joblib.score',
-		modelKey: 'deepdanbooru_twitter_biased_svm_joblib',
-	},
-	{
-		name: 'Gemini',
-		symbol: '♊',
-		field: 'inferences.eva02_pixiv_private_nnpu_joblib.score',
-		modelKey: 'eva02_pixiv_private_nnpu_joblib',
-	},
-	{
-		name: 'Cancer',
-		symbol: '♋',
-		field: 'inferences.pixai_pixiv_private_elkan_noto_joblib.score',
-		modelKey: 'pixai_pixiv_private_elkan_noto_joblib',
-	},
-	{
-		name: 'Leo',
-		symbol: '♌',
-		field: 'inferences.deepdanbooru_pixiv_private_elkan_noto_joblib.score',
-		modelKey: 'deepdanbooru_pixiv_private_elkan_noto_joblib',
-	},
-] as const;
-
 const route = useRoute();
 const router = useRouter();
 
-const {toggleFavorite, isFavorite, loadFavoritesForImages} = useImages();
+const {hydrateFromImages} = useFavorites();
 const {
 	getScoreBarWidth,
 	getScoreColorClass,
@@ -78,22 +47,6 @@ const {
 	getRankColorClass,
 	getRatingColorClass,
 } = useScoreDisplay();
-
-const savingFavoriteIds = ref<Set<string>>(new Set());
-
-async function handleToggleFavorite(event: Event, imageId: string) {
-	event.stopPropagation();
-	event.preventDefault();
-	if (savingFavoriteIds.value.has(imageId)) return;
-	savingFavoriteIds.value.add(imageId);
-	try {
-		await toggleFavorite(imageId);
-	} catch (err) {
-		console.error('Failed to toggle favorite:', err);
-	} finally {
-		savingFavoriteIds.value.delete(imageId);
-	}
-}
 
 const image = ref<ApiImageDocument | null>(null);
 const loading = ref(true);
@@ -459,9 +412,7 @@ async function loadAxisSimilarImages(id: string, axis: SimilarityAxis) {
 			axis,
 		});
 		axesSimilarImages.value[axis] = result.similar;
-		if (result.similar.length > 0) {
-			await loadFavoritesForImages(result.similar.map((sim) => sim.id));
-		}
+		hydrateFromImages(result.similar);
 	} catch (e) {
 		axesSimilarError.value[axis] = (e as Error).message;
 	} finally {
@@ -478,9 +429,7 @@ async function loadSimilarImages(id: string) {
 			status: 'inferred',
 		});
 		similarImages.value = result.similar;
-		if (result.similar.length > 0) {
-			await loadFavoritesForImages(result.similar.map((sim) => sim.id));
-		}
+		hydrateFromImages(result.similar);
 	} catch (e) {
 		similarError.value = (e as Error).message;
 	} finally {
@@ -500,7 +449,7 @@ async function loadImage(id: string) {
 	activeSimilarTab.value = 'overall';
 	try {
 		image.value = await fetchImageById(id);
-		await loadFavoritesForImages([id]);
+		hydrateFromImages([image.value]);
 	} catch (e) {
 		error.value = (e as Error).message;
 	} finally {
@@ -594,23 +543,11 @@ onMounted(() => {
 						</div>
 						<!-- Favorite + Source links below image -->
 						<div class="mt-2 flex items-center justify-between">
-							<button
-								type="button"
-								@click="(e) => handleToggleFavorite(e, image!.id)"
-								:disabled="savingFavoriteIds.has(image!.id)"
-								:class="[
-									'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
-									isFavorite(image!.id)
-										? 'bg-red-500 hover:bg-red-600 text-white'
-										: 'bg-white border border-gray-300 hover:border-red-400 hover:text-red-500 text-gray-700',
-								]"
-							>
-								<Heart
-									:size="15"
-									:fill="isFavorite(image!.id) ? 'currentColor' : 'none'"
-								/>
-								{{ isFavorite(image!.id) ? 'Favorited' : 'Favorite' }}
-							</button>
+							<FavoriteButton
+								:image-id="image!.id"
+								:size="15"
+								variant="inline"
+							/>
 						</div>
 						<div
 							v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru' || sourceUrl"

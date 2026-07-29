@@ -16,7 +16,8 @@ NGINX_ENABLED="/etc/nginx/sites-enabled/$API_DOMAIN"
 echo "Installing Python dependencies ..."
 "$REPO_DIR/worker/venv/bin/pip" install -q \
     "fastapi>=0.110.0" \
-    "uvicorn[standard]>=0.29.0"
+    "uvicorn[standard]>=0.29.0" \
+    "firebase-admin>=6.2.0"
 
 # ── 2. Install systemd user service ───────────────────────────────────────────
 mkdir -p "$SYSTEMD_USER_DIR"

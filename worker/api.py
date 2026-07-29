@@ -16,16 +16,19 @@ import time
 import urllib.parse
 import uuid
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Literal, Optional
 
 import requests as http_requests
 from dotenv import load_dotenv
 
 load_dotenv()
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient, ASCENDING, DESCENDING
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field, field_validator
+from pymongo import MongoClient, ASCENDING, DESCENDING, UpdateOne
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +48,14 @@ ALLOWED_ORIGIN_REGEX = r"https://danbooru-ml-classifier--[\w-]+\.web\.app"
 
 PAGE_SIZE_DEFAULT = 50
 PAGE_SIZE_MAX     = 200
+
+# Firebase auth (used by /favorites/* write & read endpoints, which are
+# private -- everything else in this API remains public and unauthenticated)
+ALLOWED_EMAIL = os.environ.get("ALLOWED_EMAIL", "hakatasiloving@gmail.com")
+FIREBASE_CRED_PATH = os.environ.get(
+    "FIREBASE_CRED_PATH",
+    str(Path(__file__).resolve().parent.parent / "danbooru-ml-classifier-firebase-adminsdk-uivsj-3a07a63db5.json"),
+)
 
 DANBOORU_API_USER = os.environ.get("DANBOORU_API_USER", "")
 DANBOORU_API_KEY  = os.environ.get("DANBOORU_API_KEY", "")
@@ -103,6 +114,61 @@ def _get_qdrant_client():
 def _mongo_id_to_qdrant_uuid(mongo_id: str) -> str:
     """Deterministically convert a MongoDB ObjectId hex string to a UUID string."""
     return str(uuid.uuid5(uuid.NAMESPACE_OID, mongo_id))
+
+
+# ── Firebase auth (lazy singleton) ───────────────────────────────────────────
+# Protects /favorites/* only. Initialising firebase_admin eagerly at import
+# time would make every local import (tests, other scripts) touch Firebase,
+# so this mirrors the _get_qdrant_client() lazy-init idiom above.
+
+_firebase_app = None
+
+
+def _get_firebase_app():
+    global _firebase_app
+    if _firebase_app is None:
+        import firebase_admin
+        from firebase_admin import credentials
+
+        if firebase_admin._apps:
+            _firebase_app = firebase_admin.get_app()
+        else:
+            _firebase_app = firebase_admin.initialize_app(credentials.Certificate(FIREBASE_CRED_PATH))
+    return _firebase_app
+
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_admin(
+    cred: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> dict:
+    """FastAPI dependency: require a valid Firebase ID token for ALLOWED_EMAIL.
+
+    Applied to every /favorites/* route (reads included -- the favorites list
+    is private taste data, not a public resource like /images).
+    """
+    if cred is None or not cred.credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    from firebase_admin import auth as fb_auth
+
+    _get_firebase_app()
+    try:
+        decoded = fb_auth.verify_id_token(cred.credentials)
+    except fb_auth.ExpiredIdTokenError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if not decoded.get("email_verified") or decoded.get("email") != ALLOWED_EMAIL:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    return decoded
 
 
 # ── Rank cache ────────────────────────────────────────────────────────────────
@@ -182,6 +248,101 @@ def _validate_date(value: str) -> str:
     return value
 
 
+# ── Image id resolution (favorites-only helpers) ─────────────────────────────
+# `images._id` is an ObjectId for cron-ingested docs and a plain string (the
+# original Firestore document id) for legacy Firestore imports -- see
+# publisher/scripts/import-firestore.ts. No 24-hex id is known to also exist
+# as a string `_id`, so trying ObjectId first is unambiguous.
+
+_OBJECT_ID_HEX_RE = re.compile(r"^[0-9a-f]{24}$")
+
+
+def _resolve_image_id(col, image_id: str):
+    """Return the actual `_id` value (ObjectId or str) present in `images`, or None."""
+    if _OBJECT_ID_HEX_RE.match(image_id):
+        oid = ObjectId(image_id)
+        if col.count_documents({"_id": oid}, limit=1):
+            return oid
+    if col.count_documents({"_id": image_id}, limit=1):
+        return image_id
+    return None
+
+
+def _resolve_image_ids(col, image_ids: list) -> tuple:
+    """Bulk-resolve a list of id strings.
+
+    Returns (mapping, not_found) where mapping maps each resolvable original
+    id string to the actual `_id` value stored in Mongo (ObjectId or str).
+    """
+    hex_ids = [i for i in image_ids if _OBJECT_ID_HEX_RE.match(i)]
+    other_ids = [i for i in image_ids if not _OBJECT_ID_HEX_RE.match(i)]
+
+    mapping: dict = {}
+    if hex_ids:
+        oid_by_orig = {i: ObjectId(i) for i in hex_ids}
+        found = col.find({"_id": {"$in": list(oid_by_orig.values())}}, {"_id": 1})
+        matched_oids = {doc["_id"] for doc in found}
+        for orig, oid in oid_by_orig.items():
+            if oid in matched_oids:
+                mapping[orig] = oid
+            else:
+                # Not found as ObjectId -- fall back to a string `_id` match.
+                other_ids.append(orig)
+
+    if other_ids:
+        found = col.find({"_id": {"$in": other_ids}}, {"_id": 1})
+        matched_strs = {doc["_id"] for doc in found}
+        for orig in other_ids:
+            if orig in matched_strs:
+                mapping[orig] = orig
+
+    not_found = [i for i in image_ids if i not in mapping]
+    return mapping, not_found
+
+
+def _get_path(doc: dict, path: str):
+    """Resolve a dotted field path against a (possibly nested) dict."""
+    cur = doc
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+# ── Favorites sort field validation & projections ────────────────────────────
+
+_FAVORITES_EXTRA_SORT_FIELDS = {"favorites.favoritedAt", "favorites.updatedAt", "date"}
+
+
+def _validate_favorites_sort_field(field: str) -> str:
+    """Extend (never loosen) _validate_sort_field with favorites-only fields."""
+    if field in _FAVORITES_EXTRA_SORT_FIELDS:
+        return field
+    return _validate_sort_field(field)
+
+
+# Lean projections: favorites queries scan the whole (small) favorited set
+# in-process, so keep documents small by dropping large fields (raw tag
+# scores, captions, etc.) that the favorites/gallery UI never renders.
+_FAVORITES_PROJECTION = {
+    "key": 1,
+    "type": 1,
+    "status": 1,
+    "date": 1,
+    "width": 1,
+    "height": 1,
+    "postId": 1,
+    "favorites": 1,
+    "inferences": 1,
+    "importantTagProbs": 1,
+    "moderations": 1,
+    "ageEstimations": 1,
+    "source": 1,
+}
+_FAVORITES_POOL_PROJECTION = {"key": 1, "type": 1, "width": 1, "height": 1}
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -195,7 +356,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=False,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -307,14 +468,14 @@ def get_image(image_id: str):
     date sorted descending by that field, plus the total count.
     Ranks are derived from a cache (TTL = 1 hour) to avoid repeated DB scans.
     """
-    try:
-        oid = ObjectId(image_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid image id")
-
     db  = get_db()
     col = db["images"]
-    doc = col.find_one({"_id": oid}, _EXCLUDED_FIELDS)
+
+    resolved_id = _resolve_image_id(col, image_id)
+    if resolved_id is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    doc = col.find_one({"_id": resolved_id}, _EXCLUDED_FIELDS)
     if doc is None:
         raise HTTPException(status_code=404, detail="Image not found")
 
@@ -589,6 +750,326 @@ def get_similar_images(
     return {"similar": result_docs, "total": len(result_docs)}
 
 
+# ── Favorites ─────────────────────────────────────────────────────────────────
+# All /favorites* routes require Depends(require_admin) -- see the startup
+# assertion at the bottom of this file, which fails fast if any route here
+# is missing it.
+
+
+@app.get("/favorites")
+def list_favorites(
+    _admin: dict = Depends(require_admin),
+    sort_field: str = Query("favorites.favoritedAt"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+    category: Optional[str] = Query(None, max_length=100, description="Category name, or '__none__' for uncategorized"),
+    image_type: Optional[str] = Query(None, alias="type", pattern="^[a-z]+$"),
+    date_from: Optional[str] = Query(None, description="Filter by date >= (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter by date <= (YYYY-MM-DD)"),
+    include_undated: bool = Query(False, description="Include favorites with no `date` field when a date range is set"),
+    page: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """
+    Return the caller's favorited images.
+
+    Unlike GET /images, this endpoint does NOT force status == "inferred" and
+    does NOT require the sort field to exist on every document -- doing so
+    would silently drop legacy Twitter favorites (status="liked", no `date`
+    or `inferences`). Sorting happens in-process over the (small) favorited
+    set rather than via a MongoDB blocking sort, since documents can be up to
+    ~45KB each and there are 100+ candidate sort fields (inference model
+    scores, tag probabilities) that are impractical to all index.
+    """
+    validated_field = _validate_favorites_sort_field(sort_field)
+
+    mongo_filter: dict = {"favorites.isFavorited": True}
+    if image_type:
+        mongo_filter["type"] = image_type
+    if category == "__none__":
+        mongo_filter["favorites.categories"] = {"$size": 0}
+    elif category:
+        mongo_filter["favorites.categories"] = category
+
+    date_range: dict = {}
+    if date_from:
+        date_range["$gte"] = _validate_date(date_from)
+    if date_to:
+        date_range["$lte"] = _validate_date(date_to)
+    if date_range:
+        if include_undated:
+            mongo_filter["$or"] = [{"date": date_range}, {"date": {"$exists": False}}]
+        else:
+            mongo_filter["date"] = date_range
+
+    db  = get_db()
+    col = db["images"]
+
+    docs = list(col.find(mongo_filter, _FAVORITES_PROJECTION))
+
+    has_field = [d for d in docs if _get_path(d, validated_field) is not None]
+    missing_field = [d for d in docs if _get_path(d, validated_field) is None]
+    has_field.sort(key=lambda d: _get_path(d, validated_field), reverse=(sort_dir == "desc"))
+    docs = has_field + missing_field
+
+    total = len(docs)
+    paged = docs[page * limit : page * limit + limit]
+    images = [_doc_to_dict(doc) for doc in paged]
+
+    return {
+        "images": images,
+        "page": page,
+        "limit": limit,
+        "count": len(images),
+        "total": total,
+    }
+
+
+@app.get("/favorites/categories")
+def list_favorite_categories(_admin: dict = Depends(require_admin)):
+    """Return category counts and source-type counts among favorited images."""
+    db  = get_db()
+    col = db["images"]
+
+    category_rows = list(
+        col.aggregate(
+            [
+                {"$match": {"favorites.isFavorited": True}},
+                {"$unwind": "$favorites.categories"},
+                {"$sortByCount": "$favorites.categories"},
+            ]
+        )
+    )
+    categories = [{"name": row["_id"], "count": row["count"]} for row in category_rows]
+
+    type_rows = list(
+        col.aggregate(
+            [
+                {"$match": {"favorites.isFavorited": True}},
+                {"$group": {"_id": "$type", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}},
+            ]
+        )
+    )
+    types = [{"name": row["_id"], "count": row["count"]} for row in type_rows if row["_id"]]
+
+    total = col.count_documents({"favorites.isFavorited": True})
+    uncategorized_count = col.count_documents({"favorites.isFavorited": True, "favorites.categories": {"$size": 0}})
+
+    return {
+        "categories": categories,
+        "uncategorizedCount": uncategorized_count,
+        "types": types,
+        "total": total,
+    }
+
+
+@app.get("/favorites/pool")
+def get_favorites_pool(
+    _admin: dict = Depends(require_admin),
+    image_type: Optional[str] = Query(None, alias="type", pattern="^[a-z]+$"),
+    category: Optional[str] = Query(None, max_length=100),
+):
+    """
+    Return the full favorited-image pool (lean projection: id/key/type/width/height).
+
+    Intended to be fetched once per session by the random Gallery viewer,
+    which shuffles it client-side for no-repeat, low-latency navigation.
+    """
+    mongo_filter: dict = {"favorites.isFavorited": True}
+    if image_type:
+        mongo_filter["type"] = image_type
+    if category:
+        mongo_filter["favorites.categories"] = category
+
+    db  = get_db()
+    col = db["images"]
+    docs = list(col.find(mongo_filter, _FAVORITES_POOL_PROJECTION))
+    images = [_doc_to_dict(doc) for doc in docs]
+    return {"images": images, "total": len(images)}
+
+
+@app.get("/favorites/random")
+def get_random_favorites(
+    _admin: dict = Depends(require_admin),
+    limit: int = Query(10, ge=1, le=100),
+    exclude: str = Query("", description="Comma-separated ids to exclude (max 5000)"),
+    image_type: Optional[str] = Query(None, alias="type", pattern="^[a-z]+$"),
+    category: Optional[str] = Query(None, max_length=100),
+):
+    """
+    Return `limit` random favorited images via $sample, excluding `exclude`.
+
+    Documented fallback for when the favorited pool outgrows a single
+    GET /favorites/pool response; the frontend's primary path is the pool.
+    """
+    mongo_filter: dict = {"favorites.isFavorited": True}
+    if image_type:
+        mongo_filter["type"] = image_type
+    if category:
+        mongo_filter["favorites.categories"] = category
+
+    db  = get_db()
+    col = db["images"]
+
+    exclude_ids = [i for i in exclude.split(",") if i][:5000]
+    if exclude_ids:
+        mapping, _ = _resolve_image_ids(col, exclude_ids)
+        resolved_ids = list(mapping.values())
+        if resolved_ids:
+            mongo_filter["_id"] = {"$nin": resolved_ids}
+
+    pipeline = [
+        {"$match": mongo_filter},
+        {"$sample": {"size": limit}},
+        {"$project": _FAVORITES_POOL_PROJECTION},
+    ]
+    docs = list(col.aggregate(pipeline))
+    images = [_doc_to_dict(doc) for doc in docs]
+    return {"images": images, "total": len(images)}
+
+
+class FavoritesLookupRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=500)
+
+
+@app.post("/favorites/lookup")
+def lookup_favorites(body: FavoritesLookupRequest, _admin: dict = Depends(require_admin)):
+    """
+    Return the favorites state for arbitrary image ids.
+
+    POST (not GET) because several legacy favorites have percent-encoded
+    string ids (e.g. "twitter%2Fabc.jpg") that make long query strings
+    unwieldy. Used by the Firestore-backed views to paint heart buttons.
+    """
+    db  = get_db()
+    col = db["images"]
+
+    mapping, not_found = _resolve_image_ids(col, body.ids)
+    orig_by_resolved = {v: k for k, v in mapping.items()}
+
+    favorites: dict = {}
+    if mapping:
+        docs = col.find({"_id": {"$in": list(mapping.values())}}, {"favorites": 1})
+        for doc in docs:
+            orig_id = orig_by_resolved.get(doc["_id"])
+            if orig_id is None:
+                continue
+            fav = doc.get("favorites")
+            if fav:
+                favorites[orig_id] = _doc_to_dict(fav)
+
+    return {"favorites": favorites, "notFound": not_found}
+
+
+class FavoritesUpdateRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=500)
+    op: Literal["toggle", "add", "remove", "set"]
+    categories: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("categories")
+    @classmethod
+    def _validate_categories(cls, v: list[str]) -> list[str]:
+        seen = set()
+        for c in v:
+            if not c or len(c) > 100 or c != c.strip():
+                raise ValueError("each category must be 1..100 chars with no leading/trailing whitespace")
+            if c in seen:
+                raise ValueError(f"duplicate category: {c!r}")
+            seen.add(c)
+        return v
+
+    @field_validator("ids")
+    @classmethod
+    def _validate_ids(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("duplicate ids")
+        return v
+
+
+@app.post("/favorites/update")
+def update_favorites(body: FavoritesUpdateRequest, _admin: dict = Depends(require_admin)):
+    """
+    Add/remove/set/toggle categories on one or many images in a single call.
+
+    Ids travel in the JSON body rather than as path parameters: several
+    legacy favorites have ids like "twitter%2Fabc.jpg", and Starlette
+    percent-decodes path parameters before routing, which would turn a path
+    like /favorites/twitter%2Fabc.jpg into the two-segment (and 404ing)
+    path /favorites/twitter/abc.jpg.
+
+    `favoritedAt` is preserved across category edits and only set on the
+    0 -> 1 "isFavorited" transition, so sorting by it means "first favorited".
+    Unfavoriting is expressed as `op: "set", categories: []`.
+    """
+    if body.op == "toggle" and (len(body.ids) != 1 or len(body.categories) != 1):
+        raise HTTPException(status_code=400, detail="'toggle' requires exactly 1 id and exactly 1 category")
+
+    db  = get_db()
+    col = db["images"]
+
+    mapping, not_found = _resolve_image_ids(col, body.ids)
+    if not mapping:
+        return {"updated": [], "notFound": not_found, "count": 0}
+
+    resolved_ids = list(mapping.values())
+    existing_by_resolved = {
+        doc["_id"]: (doc.get("favorites") or {}) for doc in col.find({"_id": {"$in": resolved_ids}}, {"favorites": 1})
+    }
+
+    now = datetime.utcnow()
+    orig_by_resolved = {v: k for k, v in mapping.items()}
+    ops = []
+    updated_by_orig: dict = {}
+
+    for resolved_id in resolved_ids:
+        existing = existing_by_resolved.get(resolved_id, {})
+        existing_categories = existing.get("categories") or []
+        existing_favorited_at = existing.get("favoritedAt")
+
+        if body.op == "toggle":
+            category = body.categories[0]
+            if category in existing_categories:
+                new_categories = [c for c in existing_categories if c != category]
+            else:
+                new_categories = [*existing_categories, category]
+        elif body.op == "add":
+            new_categories = list(existing_categories)
+            for c in body.categories:
+                if c not in new_categories:
+                    new_categories.append(c)
+        elif body.op == "remove":
+            remove_set = set(body.categories)
+            new_categories = [c for c in existing_categories if c not in remove_set]
+        else:  # "set"
+            new_categories = list(body.categories)
+
+        is_favorited = len(new_categories) > 0
+        favorites = {
+            "isFavorited": is_favorited,
+            "categories": new_categories,
+            "favoritedAt": (existing_favorited_at or now) if is_favorited else None,
+            "updatedAt": now,
+        }
+
+        ops.append(UpdateOne({"_id": resolved_id}, {"$set": {"favorites": favorites}}))
+
+        orig_id = orig_by_resolved[resolved_id]
+        updated_by_orig[orig_id] = {
+            "id": orig_id,
+            "isFavorited": favorites["isFavorited"],
+            "categories": favorites["categories"],
+            "favoritedAt": favorites["favoritedAt"].isoformat() if favorites["favoritedAt"] else None,
+            "updatedAt": favorites["updatedAt"].isoformat(),
+        }
+
+    if ops:
+        col.bulk_write(ops, ordered=False)
+
+    updated = [updated_by_orig[i] for i in body.ids if i in updated_by_orig]
+
+    return {"updated": updated, "notFound": not_found, "count": len(updated)}
+
+
 @app.get("/health")
 def health():
     """Simple health check."""
@@ -649,3 +1130,24 @@ def get_post_source(
             return {"source": None}
         source = posts[0].get("source") or None
         return {"source": _pixiv_image_url_to_artwork(source)}
+
+
+# ── Startup safety check ─────────────────────────────────────────────────────
+# Runs at import time (module load), before uvicorn starts accepting
+# connections. Fails fast if a /favorites route is ever added without
+# Depends(require_admin) -- one missed dependency would make the favorites
+# list world-readable.
+
+
+def _assert_favorites_routes_protected() -> None:
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith("/favorites"):
+            continue
+        dependant = getattr(route, "dependant", None)
+        deps = getattr(dependant, "dependencies", []) if dependant else []
+        if not any(getattr(d, "call", None) is require_admin for d in deps):
+            raise RuntimeError(f"Route {path} is missing Depends(require_admin)")
+
+
+_assert_favorites_routes_protected()

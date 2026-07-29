@@ -35,7 +35,7 @@
 			"**",
 			"!**/node_modules",
 			"!**/dist",
-			"!src/views/HomeView.vue",
+			"!src/views/ArchivesView.vue",
 			"!src/components/FilterBar.vue"
 		]
 	},
