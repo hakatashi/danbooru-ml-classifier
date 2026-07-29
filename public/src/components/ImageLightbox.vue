@@ -64,12 +64,7 @@ function handleBackdropClick(event: MouseEvent) {
 
 function handleImageClick(event: MouseEvent) {
 	event.stopPropagation();
-	// With prev/next navigation available, clicking the image would be an
-	// easy mis-click that closes the lightbox -- require the explicit close
-	// button or a backdrop click instead.
-	if (!hasNav.value) {
-		handleClose();
-	}
+	handleClose();
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -95,8 +90,7 @@ function handleKeydown(event: KeyboardEvent) {
 			<img
 				:src="src"
 				:alt="alt"
-				class="w-screen h-screen object-contain"
-				:class="hasNav ? 'cursor-default' : 'cursor-pointer'"
+				class="w-screen h-screen object-contain cursor-pointer"
 				@click="handleImageClick"
 			>
 

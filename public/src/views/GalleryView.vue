@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
-import {Info, Lock, Maximize, X} from 'lucide-vue-next';
-import {computed, onMounted, onUnmounted, ref, watch} from 'vue';
+import {Info, Lock, Maximize, RefreshCw, X} from 'lucide-vue-next';
+import {computed, nextTick, onMounted, onUnmounted, ref, watch} from 'vue';
 import {useRouter} from 'vue-router';
 import {
 	type FavoritePoolItem,
@@ -14,11 +14,12 @@ import {useFavorites} from '../composables/useFavorites';
 const props = defineProps<{user: User | null}>();
 
 const router = useRouter();
-const {getCategories, toggleFavorite} = useFavorites();
+const {getCategories, toggleFavorite, hydrateFromImages} = useFavorites();
 
-const SESSION_KEY = 'dmc-gallery-session-v1';
 const PREFETCH_AHEAD = 3;
 const PREFETCH_WINDOW = 8;
+const THUMBS_BEFORE = 2;
+const THUMBS_AFTER = 3;
 
 // ── Pool + shuffled order ─────────────────────────────────────────────────────
 
@@ -37,39 +38,6 @@ function shuffle(n: number): number[] {
 	return arr;
 }
 
-interface StoredSession {
-	poolLength: number;
-	order: number[];
-	cursor: number;
-}
-
-function loadStoredSession(poolLength: number): StoredSession | null {
-	try {
-		const raw = sessionStorage.getItem(SESSION_KEY);
-		if (!raw) return null;
-		const parsed = JSON.parse(raw) as StoredSession;
-		if (parsed.poolLength !== poolLength) return null;
-		if (!Array.isArray(parsed.order) || parsed.order.length !== poolLength)
-			return null;
-		return parsed;
-	} catch {
-		return null;
-	}
-}
-
-function persistSession() {
-	const session: StoredSession = {
-		poolLength: pool.value.length,
-		order: order.value,
-		cursor: cursor.value,
-	};
-	try {
-		sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-	} catch {
-		// ignore quota errors
-	}
-}
-
 const currentItem = computed<FavoritePoolItem | null>(() => {
 	if (pool.value.length === 0) return null;
 	const idx = order.value[cursor.value];
@@ -82,23 +50,21 @@ async function loadPool() {
 	try {
 		const result = await fetchFavoritesPool();
 		pool.value = result.images;
-		if (pool.value.length === 0) {
-			return;
-		}
-		const stored = loadStoredSession(pool.value.length);
-		if (stored) {
-			order.value = stored.order;
-			cursor.value = Math.min(stored.cursor, order.value.length - 1);
-		} else {
-			order.value = shuffle(pool.value.length);
-			cursor.value = 0;
-		}
-		persistSession();
+		hydrateFromImages(result.images);
+		// Every reload (and the manual shuffle button) gets a fresh random
+		// order -- no persistence across page loads is intentional here.
+		order.value = shuffle(pool.value.length);
+		cursor.value = 0;
 	} catch (e) {
 		error.value = (e as Error).message;
 	} finally {
 		loading.value = false;
 	}
+}
+
+function reshuffle() {
+	order.value = shuffle(pool.value.length);
+	cursor.value = 0;
 }
 
 function reshuffleAvoidingRepeat() {
@@ -119,13 +85,19 @@ function next() {
 	} else {
 		cursor.value++;
 	}
-	persistSession();
 }
 
 function prev() {
 	if (cursor.value > 0) {
 		cursor.value--;
-		persistSession();
+	}
+}
+
+function moveBy(delta: number) {
+	const steps = Math.abs(delta);
+	for (let i = 0; i < steps; i++) {
+		if (delta > 0) next();
+		else prev();
 	}
 }
 
@@ -135,7 +107,9 @@ const prefetched = new Map<string, HTMLImageElement>();
 
 function itemAt(offset: number): FavoritePoolItem | null {
 	if (order.value.length === 0) return null;
-	const idx = (cursor.value + offset) % order.value.length;
+	const idx =
+		(((cursor.value + offset) % order.value.length) + order.value.length) %
+		order.value.length;
 	const poolIdx = order.value[idx];
 	return pool.value[poolIdx] ?? null;
 }
@@ -165,6 +139,17 @@ function prefetch() {
 
 watch(cursor, prefetch);
 
+// Thumbnails shown in the right-edge strip (prev + next).
+const thumbItems = computed(() => {
+	const items: {item: FavoritePoolItem; offset: number}[] = [];
+	for (let o = -THUMBS_BEFORE; o <= THUMBS_AFTER; o++) {
+		if (o === 0) continue;
+		const item = itemAt(o);
+		if (item) items.push({item, offset: o});
+	}
+	return items;
+});
+
 // ── Rendering: keep the previous image visible until the new one loads ──────
 
 const displayedItem = ref<FavoritePoolItem | null>(null);
@@ -175,6 +160,7 @@ let brokenAdvanceTimer: number | null = null;
 watch(currentItem, (item) => {
 	imageLoaded.value = false;
 	imageBroken.value = false;
+	resetZoom();
 	if (brokenAdvanceTimer !== null) {
 		window.clearTimeout(brokenAdvanceTimer);
 		brokenAdvanceTimer = null;
@@ -186,8 +172,12 @@ watch(currentItem, (item) => {
 	}
 });
 
-function onImageLoad() {
+const naturalSize = ref<{w: number; h: number} | null>(null);
+
+function onImageLoad(event: Event) {
 	imageLoaded.value = true;
+	const img = event.target as HTMLImageElement;
+	naturalSize.value = {w: img.naturalWidth, h: img.naturalHeight};
 }
 
 function onImageError() {
@@ -195,6 +185,155 @@ function onImageError() {
 	console.warn('Gallery: broken image', currentItem.value?.id);
 	brokenAdvanceTimer = window.setTimeout(() => next(), 400);
 }
+
+// ── Zoom / pan ────────────────────────────────────────────────────────────────
+// scale === 'fit' -> CSS object-contain, no scrolling.
+// scale === number -> explicit pixel size (naturalSize * scale) inside a
+// scrollable viewport; 1 means pixel-for-pixel (1 image px = 1 screen px).
+
+const scale = ref<number | 'fit'>('fit');
+const viewportEl = ref<HTMLElement | null>(null);
+let isDragging = false;
+let didDrag = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragScrollLeft = 0;
+let dragScrollTop = 0;
+
+function resetZoom() {
+	scale.value = 'fit';
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.min(Math.max(value, min), max);
+}
+
+function getFitRect(containerRect: DOMRect, w: number, h: number) {
+	const containerRatio = containerRect.width / containerRect.height;
+	const imageRatio = w / h;
+	let renderW: number;
+	let renderH: number;
+	if (imageRatio > containerRatio) {
+		renderW = containerRect.width;
+		renderH = containerRect.width / imageRatio;
+	} else {
+		renderH = containerRect.height;
+		renderW = containerRect.height * imageRatio;
+	}
+	return {
+		renderW,
+		renderH,
+		offsetX: (containerRect.width - renderW) / 2,
+		offsetY: (containerRect.height - renderH) / 2,
+	};
+}
+
+function currentEffectiveScale(containerRect: DOMRect): number {
+	if (scale.value !== 'fit') return scale.value;
+	if (!naturalSize.value) return 1;
+	const {renderW} = getFitRect(
+		containerRect,
+		naturalSize.value.w,
+		naturalSize.value.h,
+	);
+	return renderW / naturalSize.value.w;
+}
+
+/** Natural-image-pixel coordinate under a given viewport-relative client point. */
+function naturalPointFromClient(
+	clientX: number,
+	clientY: number,
+): {nx: number; ny: number} | null {
+	if (!viewportEl.value || !naturalSize.value) return null;
+	const rect = viewportEl.value.getBoundingClientRect();
+	const {w, h} = naturalSize.value;
+	if (scale.value === 'fit') {
+		const {renderW, renderH, offsetX, offsetY} = getFitRect(rect, w, h);
+		const localX = clientX - rect.left - offsetX;
+		const localY = clientY - rect.top - offsetY;
+		return {
+			nx: clamp(localX / renderW, 0, 1) * w,
+			ny: clamp(localY / renderH, 0, 1) * h,
+		};
+	}
+	const localX = clientX - rect.left + viewportEl.value.scrollLeft;
+	const localY = clientY - rect.top + viewportEl.value.scrollTop;
+	return {nx: localX / scale.value, ny: localY / scale.value};
+}
+
+function setScaleCenteredOn(
+	newScale: number,
+	clientX: number,
+	clientY: number,
+) {
+	const point = naturalPointFromClient(clientX, clientY);
+	if (!point) return;
+	scale.value = clamp(newScale, 0.1, 8);
+	nextTick(() => {
+		if (!viewportEl.value) return;
+		const rect = viewportEl.value.getBoundingClientRect();
+		viewportEl.value.scrollLeft =
+			point.nx * (scale.value as number) - (clientX - rect.left);
+		viewportEl.value.scrollTop =
+			point.ny * (scale.value as number) - (clientY - rect.top);
+	});
+}
+
+function onImageAreaClick(event: MouseEvent) {
+	if (didDrag) {
+		didDrag = false;
+		return;
+	}
+	if (scale.value === 'fit') {
+		// Snap to exactly 100% (1 image pixel = 1 screen pixel), centered on
+		// the clicked point.
+		setScaleCenteredOn(1, event.clientX, event.clientY);
+	} else {
+		resetZoom();
+	}
+}
+
+function onWheel(event: WheelEvent) {
+	if (!viewportEl.value || !naturalSize.value) return;
+	event.preventDefault();
+	const rect = viewportEl.value.getBoundingClientRect();
+	const current = currentEffectiveScale(rect);
+	const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+	setScaleCenteredOn(current * factor, event.clientX, event.clientY);
+}
+
+function onMouseDown(event: MouseEvent) {
+	if (scale.value === 'fit' || !viewportEl.value) return;
+	isDragging = true;
+	didDrag = false;
+	dragStartX = event.clientX;
+	dragStartY = event.clientY;
+	dragScrollLeft = viewportEl.value.scrollLeft;
+	dragScrollTop = viewportEl.value.scrollTop;
+}
+
+function onMouseMove(event: MouseEvent) {
+	if (!isDragging || !viewportEl.value) return;
+	const dx = event.clientX - dragStartX;
+	const dy = event.clientY - dragStartY;
+	if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didDrag = true;
+	viewportEl.value.scrollLeft = dragScrollLeft - dx;
+	viewportEl.value.scrollTop = dragScrollTop - dy;
+}
+
+function onMouseUp() {
+	isDragging = false;
+}
+
+const imageStyle = computed(() => {
+	if (scale.value === 'fit' || !naturalSize.value) return {};
+	return {
+		width: `${naturalSize.value.w * scale.value}px`,
+		height: `${naturalSize.value.h * scale.value}px`,
+		maxWidth: 'none',
+		maxHeight: 'none',
+	};
+});
 
 // ── Keyboard ────────────────────────────────────────────────────────────────
 
@@ -250,7 +389,7 @@ function handleKeydown(event: KeyboardEvent) {
 	}
 }
 
-// ── Touch swipe ───────────────────────────────────────────────────────────────
+// ── Touch swipe (navigation only; zoom/pan is mouse-driven) ─────────────────
 
 let touchStartX = 0;
 let touchStartY = 0;
@@ -262,19 +401,13 @@ function onTouchStart(event: TouchEvent) {
 }
 
 function onTouchEnd(event: TouchEvent) {
+	if (scale.value !== 'fit') return;
 	const t = event.changedTouches[0];
 	const dx = t.clientX - touchStartX;
 	const dy = t.clientY - touchStartY;
 	if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
 		if (dx < 0) next();
 		else prev();
-		return;
-	}
-	// Tap on the left/right third of the screen for one-handed navigation.
-	if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
-		const width = window.innerWidth;
-		if (t.clientX < width / 3) prev();
-		else if (t.clientX > (width * 2) / 3) next();
 	}
 }
 
@@ -297,12 +430,16 @@ function onFullscreenChange() {
 
 onMounted(() => {
 	window.addEventListener('keydown', handleKeydown);
+	window.addEventListener('mousemove', onMouseMove);
+	window.addEventListener('mouseup', onMouseUp);
 	document.addEventListener('fullscreenchange', onFullscreenChange);
 	if (props.user) loadPool();
 });
 
 onUnmounted(() => {
 	window.removeEventListener('keydown', handleKeydown);
+	window.removeEventListener('mousemove', onMouseMove);
+	window.removeEventListener('mouseup', onMouseUp);
 	document.removeEventListener('fullscreenchange', onFullscreenChange);
 	if (brokenAdvanceTimer !== null) window.clearTimeout(brokenAdvanceTimer);
 });
@@ -384,33 +521,96 @@ watch(
 					Image unavailable, skipping…
 				</div>
 
-				<img
-					v-if="displayedItem"
-					:key="displayedItem.id"
-					:src="getImageUrl(displayedItem, false)"
-					:alt="displayedItem.id"
-					class="w-full h-full object-contain select-none"
-					@load="onImageLoad"
-					@error="onImageError"
+				<!-- Fit mode: simple flex-centered, no scrolling -->
+				<div
+					v-if="scale === 'fit'"
+					ref="viewportEl"
+					class="w-full h-full flex items-center justify-center"
+					@wheel.prevent="onWheel"
 				>
+					<img
+						v-if="displayedItem"
+						:key="displayedItem.id"
+						:src="getImageUrl(displayedItem, false)"
+						:alt="displayedItem.id"
+						class="max-w-full max-h-full object-contain select-none cursor-zoom-in"
+						@load="onImageLoad"
+						@error="onImageError"
+						@click="onImageAreaClick"
+					>
+				</div>
+				<!-- Zoomed mode: explicit pixel size inside a scrollable/pannable viewport -->
+				<div
+					v-else
+					ref="viewportEl"
+					class="w-full h-full overflow-auto"
+					:class="isDragging ? 'cursor-grabbing' : 'cursor-zoom-out'"
+					@wheel.prevent="onWheel"
+					@mousedown="onMouseDown"
+				>
+					<img
+						v-if="displayedItem"
+						:key="displayedItem.id"
+						:src="getImageUrl(displayedItem, false)"
+						:alt="displayedItem.id"
+						class="select-none"
+						:style="imageStyle"
+						@load="onImageLoad"
+						@error="onImageError"
+						@click="onImageAreaClick"
+					>
+				</div>
 
-				<!-- Left/right tap zones (invisible, for one-handed nav) -->
+				<!-- Left/right click zones for prev/next (disabled while zoomed, so
+				     dragging near the edges pans instead of navigating) -->
 				<button
+					v-if="scale === 'fit'"
 					type="button"
-					class="absolute inset-y-0 left-0 w-16 sm:hidden"
+					class="absolute inset-y-0 left-0 w-1/5 sm:w-32 z-10"
 					aria-label="Previous"
 					@click="prev"
 				/>
 				<button
+					v-if="scale === 'fit'"
 					type="button"
-					class="absolute inset-y-0 right-0 w-16 sm:hidden"
+					class="absolute inset-y-0 right-0 w-1/5 z-10 sm:hidden"
+					aria-label="Next"
+					@click="next"
+				/>
+				<button
+					v-if="scale === 'fit'"
+					type="button"
+					class="hidden sm:block absolute inset-y-0 right-20 w-32 z-10"
 					aria-label="Next"
 					@click="next"
 				/>
 
+				<!-- Right-edge thumbnail strip (prev + next) -->
+				<div
+					v-if="thumbItems.length > 0"
+					class="hidden sm:flex absolute inset-y-0 right-0 w-20 flex-col items-center justify-center gap-2 py-4 z-20 bg-gradient-to-l from-black/40 to-transparent"
+				>
+					<button
+						v-for="{ item, offset } in thumbItems"
+						:key="item.id"
+						type="button"
+						class="w-14 h-14 rounded-md overflow-hidden border-2 transition-all hover:scale-105"
+						:class="offset < 0 ? 'border-white/20 opacity-60' : 'border-white/40 opacity-90'"
+						:title="offset < 0 ? `${-offset} back` : `${offset} ahead`"
+						@click="moveBy(offset)"
+					>
+						<img
+							:src="getImageUrl(item, true)"
+							:alt="item.id"
+							class="w-full h-full object-cover"
+							loading="lazy"
+						>
+					</button>
+				</div>
+
 				<!-- Chrome -->
 				<div
-					class="absolute top-3 left-3 right-3 flex items-center justify-between z-20"
+					class="absolute top-3 left-3 right-3 flex items-center justify-between z-30"
 				>
 					<span
 						class="px-2 py-1 bg-black/50 text-white text-xs rounded-md font-mono"
@@ -431,6 +631,14 @@ watch(
 							:size="18"
 							variant="overlay"
 						/>
+						<button
+							type="button"
+							class="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+							title="Shuffle"
+							@click="reshuffle"
+						>
+							<RefreshCw :size="18" />
+						</button>
 						<button
 							type="button"
 							class="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
@@ -460,10 +668,9 @@ watch(
 
 				<!-- Desktop prev/next arrows -->
 				<button
+					v-if="scale === 'fit'"
 					type="button"
-					class="hidden sm:flex absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-20"
-					title="Previous"
-					@click="prev"
+					class="hidden sm:flex absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-20 pointer-events-none"
 				>
 					<svg
 						aria-hidden="true"
@@ -481,10 +688,9 @@ watch(
 					</svg>
 				</button>
 				<button
+					v-if="scale === 'fit'"
 					type="button"
-					class="hidden sm:flex absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-20"
-					title="Next"
-					@click="next"
+					class="hidden sm:flex absolute right-24 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-20 pointer-events-none"
 				>
 					<svg
 						aria-hidden="true"
@@ -503,7 +709,8 @@ watch(
 				</button>
 			</div>
 			<p class="text-center text-xs text-gray-400 mt-2">
-				←/→ or Space to navigate · F to favorite · D for details · Esc to exit
+				←/→ or Space to navigate · F to favorite · D for details · click image
+				to zoom to 100%, click/drag to pan · Esc to exit
 			</p>
 		</template>
 	</div>

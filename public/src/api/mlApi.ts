@@ -464,6 +464,7 @@ export interface FavoritePoolItem {
 	type: string;
 	width?: number;
 	height?: number;
+	favorites?: FavoritesData;
 }
 
 export interface FavoritesPoolResponse {

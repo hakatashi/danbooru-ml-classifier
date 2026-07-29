@@ -1,6 +1,5 @@
 import {ref} from 'vue';
 import {
-	type ApiImageDocument,
 	type FavoriteCategoryCount,
 	fetchFavoriteCategories,
 	lookupFavorites,
@@ -41,12 +40,17 @@ export function useFavorites() {
 	}
 
 	/**
-	 * Synchronous, no-network hydration from ApiImageDocument.favorites, which
-	 * is already embedded in every /images and /favorites response. Use this
-	 * whenever images come from the Mongo-backed API; it makes the previous
-	 * per-page Firestore round trip disappear entirely.
+	 * Synchronous, no-network hydration from a `favorites` field already
+	 * embedded in the API response -- every /images and /favorites document
+	 * carries one, and so does /favorites/pool since it's used to seed the
+	 * Gallery viewer's heart-button state. Use this whenever images come from
+	 * the Mongo-backed API; it makes the previous per-page Firestore round
+	 * trip disappear entirely. The parameter type is a structural minimum
+	 * (not ApiImageDocument) so FavoritePoolItem also satisfies it.
 	 */
-	function hydrateFromImages(images: ApiImageDocument[]): void {
+	function hydrateFromImages(
+		images: {id: string; favorites?: FavoritesData}[],
+	): void {
 		for (const image of images) {
 			if (image.favorites) {
 				favoritesCache.value.set(image.id, {

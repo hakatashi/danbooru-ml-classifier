@@ -340,7 +340,13 @@ _FAVORITES_PROJECTION = {
     "ageEstimations": 1,
     "source": 1,
 }
-_FAVORITES_POOL_PROJECTION = {"key": 1, "type": 1, "width": 1, "height": 1}
+_FAVORITES_POOL_PROJECTION = {
+    "key": 1,
+    "type": 1,
+    "width": 1,
+    "height": 1,
+    "favorites": 1,
+}
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

@@ -345,11 +345,16 @@ async function unfavoriteSelected() {
 }
 
 // ── Lightbox with prev/next ──────────────────────────────────────────────────
+// The lightbox navigates within whichever array the clicked image came from
+// -- the flat `images` page, or a single category's `sectionImages` when
+// grouped by category (grouped mode never populates `images`).
 
 const lightboxIndex = ref<number | null>(null);
+const lightboxSourceImages = ref<ApiImageDocument[]>([]);
 
-function openLightbox(image: ApiImageDocument) {
-	lightboxIndex.value = images.value.findIndex((img) => img.id === image.id);
+function openLightbox(image: ApiImageDocument, sourceList: ApiImageDocument[]) {
+	lightboxSourceImages.value = sourceList;
+	lightboxIndex.value = sourceList.findIndex((img) => img.id === image.id);
 }
 
 function closeLightbox() {
@@ -357,7 +362,9 @@ function closeLightbox() {
 }
 
 const lightboxImage = computed(() =>
-	lightboxIndex.value !== null ? images.value[lightboxIndex.value] : null,
+	lightboxIndex.value !== null
+		? lightboxSourceImages.value[lightboxIndex.value]
+		: null,
 );
 const lightboxCanPrev = computed(
 	() => lightboxIndex.value !== null && lightboxIndex.value > 0,
@@ -365,7 +372,7 @@ const lightboxCanPrev = computed(
 const lightboxCanNext = computed(
 	() =>
 		lightboxIndex.value !== null &&
-		lightboxIndex.value < images.value.length - 1,
+		lightboxIndex.value < lightboxSourceImages.value.length - 1,
 );
 
 function lightboxPrev() {
@@ -377,17 +384,20 @@ function lightboxPrev() {
 function lightboxNext() {
 	if (
 		lightboxIndex.value !== null &&
-		lightboxIndex.value < images.value.length - 1
+		lightboxIndex.value < lightboxSourceImages.value.length - 1
 	) {
 		lightboxIndex.value++;
 	}
 }
 
-function handleImageClick(image: ApiImageDocument) {
+function handleImageClick(
+	image: ApiImageDocument,
+	sourceList: ApiImageDocument[],
+) {
 	if (selectionMode.value) {
 		toggleSelect(image);
 	} else {
-		openLightbox(image);
+		openLightbox(image, sourceList);
 	}
 }
 </script>
@@ -708,7 +718,7 @@ function handleImageClick(image: ApiImageDocument) {
 						:images="sectionImages"
 						:selectable="selectionMode"
 						:selected-ids="selectedIds"
-						@image-click="handleImageClick"
+						@image-click="(img) => handleImageClick(img, sectionImages)"
 						@toggle-select="toggleSelect"
 					>
 						<template #overlay-top-left="{image}">
@@ -723,7 +733,10 @@ function handleImageClick(image: ApiImageDocument) {
 								:categories="categoriesResponse?.categories ?? []"
 								:initial-selected="image.favorites?.categories ?? []"
 								align="right"
-								@apply="(cats) => applyBulkOp('set', cats)"
+								@apply="
+									(cats) =>
+										bulkUpdateCategories([image.id], 'set', cats).then(refresh)
+								"
 							/>
 						</template>
 					</JustifiedGallery>
@@ -736,7 +749,7 @@ function handleImageClick(image: ApiImageDocument) {
 					:images="images"
 					:selectable="selectionMode"
 					:selected-ids="selectedIds"
-					@image-click="handleImageClick"
+					@image-click="(img) => handleImageClick(img, images)"
 					@toggle-select="toggleSelect"
 				>
 					<template #overlay-top-left="{image}">
