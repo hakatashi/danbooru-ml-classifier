@@ -41,6 +41,8 @@ ALLOWED_ORIGINS = [
     # Allow localhost for local development
     "http://localhost:5173",
     "http://localhost:4173",
+    # Local network device testing
+    "http://192.168.10.112:5173",
 ]
 
 # Firebase Hosting preview deploy URLs (e.g. https://danbooru-ml-classifier--pr196-feature-qdrant-simil-bfwdlmhi.web.app)

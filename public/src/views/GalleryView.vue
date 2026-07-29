@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
-import {Info, Lock, Maximize, RefreshCw, X} from 'lucide-vue-next';
+import {ExternalLink, Info, Lock, Maximize, RefreshCw} from 'lucide-vue-next';
 import {computed, nextTick, onMounted, onUnmounted, ref, watch} from 'vue';
 import {useRouter} from 'vue-router';
 import {
 	type FavoritePoolItem,
 	fetchFavoritesPool,
+	fetchPostSource,
 	getImageUrl,
 } from '../api/mlApi';
 import FavoriteButton from '../components/FavoriteButton.vue';
@@ -139,11 +140,10 @@ function prefetch() {
 
 watch(cursor, prefetch);
 
-// Thumbnails shown in the right-edge strip (prev + next).
+// Thumbnails shown in the right-edge strip: current + prev + next.
 const thumbItems = computed(() => {
 	const items: {item: FavoritePoolItem; offset: number}[] = [];
 	for (let o = -THUMBS_BEFORE; o <= THUMBS_AFTER; o++) {
-		if (o === 0) continue;
 		const item = itemAt(o);
 		if (item) items.push({item, offset: o});
 	}
@@ -190,6 +190,13 @@ function onImageError() {
 // scale === 'fit' -> CSS object-contain, no scrolling.
 // scale === number -> explicit pixel size (naturalSize * scale) inside a
 // scrollable viewport; 1 means pixel-for-pixel (1 image px = 1 screen px).
+//
+// The zoomed image sits inside a "content" box sized to at least the
+// viewport (Math.max(imageSize, viewportSize)), with the image centered
+// within that box via an explicit offset. Without this, a zoomed image
+// narrower/shorter than the viewport would be laid out flush at the
+// scrollable area's top-left corner (scrollLeft/Top can't go negative to
+// compensate), which reads as the image "jumping" to a corner on zoom.
 
 const scale = ref<number | 'fit'>('fit');
 const viewportEl = ref<HTMLElement | null>(null);
@@ -228,6 +235,26 @@ function getFitRect(containerRect: DOMRect, w: number, h: number) {
 	};
 }
 
+/** Layout of the zoomed image: its pixel size plus its centering offset
+ * within the (possibly larger) scrollable content box. */
+const zoomedLayout = computed(() => {
+	if (scale.value === 'fit' || !naturalSize.value) return null;
+	const imageW = naturalSize.value.w * scale.value;
+	const imageH = naturalSize.value.h * scale.value;
+	const containerW = viewportEl.value?.clientWidth ?? imageW;
+	const containerH = viewportEl.value?.clientHeight ?? imageH;
+	const contentW = Math.max(imageW, containerW);
+	const contentH = Math.max(imageH, containerH);
+	return {
+		imageW,
+		imageH,
+		contentW,
+		contentH,
+		offsetX: (contentW - imageW) / 2,
+		offsetY: (contentH - imageH) / 2,
+	};
+});
+
 function currentEffectiveScale(containerRect: DOMRect): number {
 	if (scale.value !== 'fit') return scale.value;
 	if (!naturalSize.value) return 1;
@@ -256,8 +283,12 @@ function naturalPointFromClient(
 			ny: clamp(localY / renderH, 0, 1) * h,
 		};
 	}
-	const localX = clientX - rect.left + viewportEl.value.scrollLeft;
-	const localY = clientY - rect.top + viewportEl.value.scrollTop;
+	const layout = zoomedLayout.value;
+	if (!layout) return null;
+	const localX =
+		clientX - rect.left + viewportEl.value.scrollLeft - layout.offsetX;
+	const localY =
+		clientY - rect.top + viewportEl.value.scrollTop - layout.offsetY;
 	return {nx: localX / scale.value, ny: localY / scale.value};
 }
 
@@ -271,11 +302,14 @@ function setScaleCenteredOn(
 	scale.value = clamp(newScale, 0.1, 8);
 	nextTick(() => {
 		if (!viewportEl.value) return;
+		const layout = zoomedLayout.value;
+		if (!layout) return;
 		const rect = viewportEl.value.getBoundingClientRect();
+		const newScaleValue = scale.value as number;
 		viewportEl.value.scrollLeft =
-			point.nx * (scale.value as number) - (clientX - rect.left);
+			point.nx * newScaleValue + layout.offsetX - (clientX - rect.left);
 		viewportEl.value.scrollTop =
-			point.ny * (scale.value as number) - (clientY - rect.top);
+			point.ny * newScaleValue + layout.offsetY - (clientY - rect.top);
 	});
 }
 
@@ -304,6 +338,7 @@ function onWheel(event: WheelEvent) {
 
 function onMouseDown(event: MouseEvent) {
 	if (scale.value === 'fit' || !viewportEl.value) return;
+	event.preventDefault(); // suppress native image drag-ghost
 	isDragging = true;
 	didDrag = false;
 	dragStartX = event.clientX;
@@ -325,15 +360,80 @@ function onMouseUp() {
 	isDragging = false;
 }
 
-const imageStyle = computed(() => {
-	if (scale.value === 'fit' || !naturalSize.value) return {};
-	return {
-		width: `${naturalSize.value.w * scale.value}px`,
-		height: `${naturalSize.value.h * scale.value}px`,
-		maxWidth: 'none',
-		maxHeight: 'none',
-	};
+// ── Source link ───────────────────────────────────────────────────────────────
+// Derived entirely from `key` (provider/filename), matching the logic in
+// DailyRecommendationView.vue -- the lean /favorites/pool projection doesn't
+// carry Twitter's `source.tweetId`, so Twitter items have no derivable
+// source link here (same as elsewhere in the app when that field is absent).
+
+function getProvider(item: FavoritePoolItem): string {
+	return item.key?.split('/')[0] ?? item.type;
+}
+
+function getStem(item: FavoritePoolItem): string {
+	const parts = item.key?.split('/') ?? [];
+	if (parts.length < 2) return '';
+	return parts[parts.length - 1].replace(/\.[^.]+$/, '');
+}
+
+function getPostPageUrl(
+	provider: 'danbooru' | 'gelbooru',
+	stem: string,
+): string {
+	if (provider === 'danbooru')
+		return `https://danbooru.donmai.us/posts/${stem}`;
+	return `https://gelbooru.com/index.php?page=post&s=view&id=${stem}`;
+}
+
+const directSourceUrl = computed((): string | null => {
+	if (!displayedItem.value) return null;
+	const provider = getProvider(displayedItem.value);
+	const stem = getStem(displayedItem.value);
+	if (provider === 'pixiv') {
+		const id = stem.replace(/(-[0-9a-f]{32})?_p\d+$/, '');
+		return `https://www.pixiv.net/artworks/${id}`;
+	}
+	if (provider === 'sankaku')
+		return `https://chan.sankakucomplex.com/ja/posts/${stem}`;
+	return null;
 });
+
+const canViewSource = computed(() => {
+	if (!displayedItem.value) return false;
+	const provider = getProvider(displayedItem.value);
+	return ['pixiv', 'sankaku', 'danbooru', 'gelbooru'].includes(provider);
+});
+
+const sourceLoading = ref(false);
+
+async function openSource() {
+	if (!displayedItem.value) return;
+	const provider = getProvider(displayedItem.value);
+
+	if (provider === 'danbooru' || provider === 'gelbooru') {
+		const stem = getStem(displayedItem.value);
+		const fallback = getPostPageUrl(provider, stem);
+		sourceLoading.value = true;
+		try {
+			const source = await fetchPostSource(provider, stem);
+			const url =
+				source &&
+				(source.startsWith('http://') || source.startsWith('https://'))
+					? source
+					: fallback;
+			window.open(url, '_blank', 'noopener,noreferrer');
+		} catch {
+			window.open(fallback, '_blank', 'noopener,noreferrer');
+		} finally {
+			sourceLoading.value = false;
+		}
+		return;
+	}
+
+	if (directSourceUrl.value) {
+		window.open(directSourceUrl.value, '_blank', 'noopener,noreferrer');
+	}
+}
 
 // ── Keyboard ────────────────────────────────────────────────────────────────
 
@@ -382,9 +482,6 @@ function handleKeydown(event: KeyboardEvent) {
 			break;
 		case 'd':
 			openDetails();
-			break;
-		case 'Escape':
-			router.back();
 			break;
 	}
 }
@@ -533,13 +630,15 @@ watch(
 						:key="displayedItem.id"
 						:src="getImageUrl(displayedItem, false)"
 						:alt="displayedItem.id"
+						draggable="false"
 						class="max-w-full max-h-full object-contain select-none cursor-zoom-in"
 						@load="onImageLoad"
 						@error="onImageError"
 						@click="onImageAreaClick"
+						@dragstart.prevent
 					>
 				</div>
-				<!-- Zoomed mode: explicit pixel size inside a scrollable/pannable viewport -->
+				<!-- Zoomed mode: explicit pixel size, centered within a scrollable/pannable content box -->
 				<div
 					v-else
 					ref="viewportEl"
@@ -548,55 +647,69 @@ watch(
 					@wheel.prevent="onWheel"
 					@mousedown="onMouseDown"
 				>
-					<img
-						v-if="displayedItem"
-						:key="displayedItem.id"
-						:src="getImageUrl(displayedItem, false)"
-						:alt="displayedItem.id"
-						class="select-none"
-						:style="imageStyle"
-						@load="onImageLoad"
-						@error="onImageError"
-						@click="onImageAreaClick"
+					<div
+						v-if="zoomedLayout"
+						class="relative"
+						:style="{width: `${zoomedLayout.contentW}px`, height: `${zoomedLayout.contentH}px`}"
 					>
+						<img
+							v-if="displayedItem"
+							:key="displayedItem.id"
+							:src="getImageUrl(displayedItem, false)"
+							:alt="displayedItem.id"
+							draggable="false"
+							class="absolute select-none"
+							:style="{
+								left: `${zoomedLayout.offsetX}px`,
+								top: `${zoomedLayout.offsetY}px`,
+								width: `${zoomedLayout.imageW}px`,
+								height: `${zoomedLayout.imageH}px`,
+							}"
+							@load="onImageLoad"
+							@error="onImageError"
+							@click="onImageAreaClick"
+							@dragstart.prevent
+						>
+					</div>
 				</div>
 
-				<!-- Left/right click zones for prev/next (disabled while zoomed, so
-				     dragging near the edges pans instead of navigating) -->
+				<!-- Left/right click zones for prev/next, overlaid on the image area
+				     (disabled while zoomed, so edge-dragging pans instead of
+				     navigating). Clamped to at most 30% of the width each so the
+				     center click-to-zoom area always survives. -->
 				<button
 					v-if="scale === 'fit'"
 					type="button"
-					class="absolute inset-y-0 left-0 w-1/5 sm:w-32 z-10"
+					class="absolute inset-y-0 left-0 w-[min(384px,30%)] z-10"
 					aria-label="Previous"
 					@click="prev"
 				/>
 				<button
 					v-if="scale === 'fit'"
 					type="button"
-					class="absolute inset-y-0 right-0 w-1/5 z-10 sm:hidden"
-					aria-label="Next"
-					@click="next"
-				/>
-				<button
-					v-if="scale === 'fit'"
-					type="button"
-					class="hidden sm:block absolute inset-y-0 right-20 w-32 z-10"
+					class="absolute inset-y-0 right-0 w-[min(384px,30%)] z-10 sm:right-36"
 					aria-label="Next"
 					@click="next"
 				/>
 
-				<!-- Right-edge thumbnail strip (prev + next) -->
+				<!-- Right-edge thumbnail strip (prev, current, next) -->
 				<div
 					v-if="thumbItems.length > 0"
-					class="hidden sm:flex absolute inset-y-0 right-0 w-20 flex-col items-center justify-center gap-2 py-4 z-20 bg-gradient-to-l from-black/40 to-transparent"
+					class="hidden sm:flex absolute inset-y-0 right-0 w-36 flex-col items-center justify-center gap-2 py-4 z-20 bg-gradient-to-l from-black/40 to-transparent"
 				>
 					<button
 						v-for="{ item, offset } in thumbItems"
 						:key="item.id"
 						type="button"
-						class="w-14 h-14 rounded-md overflow-hidden border-2 transition-all hover:scale-105"
-						:class="offset < 0 ? 'border-white/20 opacity-60' : 'border-white/40 opacity-90'"
-						:title="offset < 0 ? `${-offset} back` : `${offset} ahead`"
+						class="w-28 h-28 flex-shrink-0 rounded-md overflow-hidden border-2 transition-all hover:scale-105"
+						:class="
+							offset === 0
+								? 'border-blue-400 ring-2 ring-blue-400/50'
+								: offset < 0
+									? 'border-white/20 opacity-60'
+									: 'border-white/40 opacity-90'
+						"
+						:title="offset === 0 ? 'Current' : offset < 0 ? `${-offset} back` : `${offset} ahead`"
 						@click="moveBy(offset)"
 					>
 						<img
@@ -640,6 +753,16 @@ watch(
 							<RefreshCw :size="18" />
 						</button>
 						<button
+							v-if="canViewSource"
+							type="button"
+							:disabled="sourceLoading"
+							class="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-50 disabled:cursor-wait"
+							title="View Source"
+							@click="openSource"
+						>
+							<ExternalLink :size="18" />
+						</button>
+						<button
 							type="button"
 							class="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
 							title="Details"
@@ -655,18 +778,10 @@ watch(
 						>
 							<Maximize :size="18" />
 						</button>
-						<button
-							type="button"
-							class="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
-							title="Exit"
-							@click="router.back()"
-						>
-							<X :size="18" />
-						</button>
 					</div>
 				</div>
 
-				<!-- Desktop prev/next arrows -->
+				<!-- Desktop prev/next arrow icons (decorative -- the click zones above handle the actual clicks) -->
 				<button
 					v-if="scale === 'fit'"
 					type="button"
@@ -690,7 +805,7 @@ watch(
 				<button
 					v-if="scale === 'fit'"
 					type="button"
-					class="hidden sm:flex absolute right-24 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-20 pointer-events-none"
+					class="hidden sm:flex absolute right-40 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-20 pointer-events-none"
 				>
 					<svg
 						aria-hidden="true"
@@ -710,7 +825,7 @@ watch(
 			</div>
 			<p class="text-center text-xs text-gray-400 mt-2">
 				←/→ or Space to navigate · F to favorite · D for details · click image
-				to zoom to 100%, click/drag to pan · Esc to exit
+				to zoom to 100%, drag to pan
 			</p>
 		</template>
 	</div>
