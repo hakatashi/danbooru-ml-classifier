@@ -2,11 +2,13 @@
 import type {User} from 'firebase/auth';
 import {collection, getDocs, orderBy, query, where} from 'firebase/firestore';
 import {httpsCallable} from 'firebase/functions';
-import {BookOpen, ChevronLeft, Heart} from 'lucide-vue-next';
+import {BookOpen, ChevronLeft} from 'lucide-vue-next';
 import {computed, onMounted, ref} from 'vue';
 import {useRoute, useRouter} from 'vue-router';
+import FavoriteButton from '../components/FavoriteButton.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
+import {useFavorites} from '../composables/useFavorites';
 import {useImages} from '../composables/useImages';
 import {db, functions} from '../firebase';
 import type {ImageDocument, NovelDocument, TagData, TagList} from '../types';
@@ -20,9 +22,10 @@ defineProps<{
 
 const route = useRoute();
 const router = useRouter();
-const {getImageById, toggleFavorite, isFavorite, loadFavoritesForImages} =
-	useImages();
-const isSavingFavorite = ref(false);
+const {getImageById} = useImages();
+// This view sources the image from Firestore, so favorites state isn't
+// embedded and must be fetched over the network.
+const {loadFavoritesForImages} = useFavorites();
 
 function goBack() {
 	// If there's history, go back, otherwise go to home
@@ -119,24 +122,6 @@ onMounted(async () => {
 		}
 	}
 });
-
-async function handleToggleFavorite() {
-	if (!image.value || isSavingFavorite.value) return;
-
-	isSavingFavorite.value = true;
-	try {
-		await toggleFavorite(image.value.id);
-		// Refetch image data to update favorites state
-		const updatedImage = await getImageById(image.value.id);
-		if (updatedImage) {
-			image.value = updatedImage;
-		}
-	} catch (e) {
-		console.error('Failed to toggle favorite:', e);
-	} finally {
-		isSavingFavorite.value = false;
-	}
-}
 
 // Tag display state
 const tagConfidenceFilter = ref<ConfidenceLevel>('medium');
@@ -338,7 +323,7 @@ function viewNovel(novelId: string) {
 			class="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
 		>
 			<ChevronLeft :size="20" />
-			Back to Gallery
+			Back
 		</button>
 
 		<!-- Loading -->
@@ -368,24 +353,12 @@ function viewNovel(novelId: string) {
 						@click="showLightbox = true"
 					>
 					<!-- Favorite button overlay -->
-					<button
-						type="button"
-						@click="handleToggleFavorite"
-						:disabled="isSavingFavorite"
-						:class="[
-							'absolute top-4 left-4 p-3 rounded-lg shadow-lg transition-all',
-							isFavorite(image.id)
-								? 'bg-red-500 text-white hover:bg-red-600'
-								: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-							isSavingFavorite && 'opacity-50 cursor-not-allowed',
-						]"
-						:title="isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'"
-					>
-						<Heart
-							:size="24"
-							:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
-						/>
-					</button>
+					<FavoriteButton
+						:image-id="image.id"
+						:size="24"
+						variant="overlay"
+						class="absolute top-4 left-4"
+					/>
 				</div>
 
 				<!-- Image Meta -->
@@ -588,11 +561,11 @@ function viewNovel(novelId: string) {
 							<!-- Filter by user link (always show if user ID exists) -->
 							<router-link
 								v-if="image.source.user.id_str"
-								:to="`/?twitterUserId=${image.source.user.id_str}`"
+								:to="`/archives?twitterUserId=${image.source.user.id_str}`"
 								class="text-purple-600 hover:text-purple-800 hover:underline text-xs"
 								title="Filter by this user"
 							>
-								View in Gallery →
+								View in Archives →
 							</router-link>
 
 							<!-- View tweet link -->

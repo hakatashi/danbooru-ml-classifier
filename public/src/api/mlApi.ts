@@ -1,3 +1,4 @@
+import {auth} from '../firebase';
 import type {
 	AgeEstimationData,
 	CaptionData,
@@ -8,6 +9,31 @@ import type {
 } from '../types';
 
 const BASE_URL = 'https://danbooru-api.matrix.hakatashi.com';
+
+// ---------------------------------------------------------------------------
+// 認証つき fetch — /favorites/* エンドポイント専用
+// ---------------------------------------------------------------------------
+
+async function authHeaders(): Promise<HeadersInit> {
+	const user = auth.currentUser;
+	if (!user) throw new Error('Not signed in');
+	return {Authorization: `Bearer ${await user.getIdToken()}`};
+}
+
+async function authedFetch(
+	url: string,
+	init: RequestInit = {},
+): Promise<Response> {
+	const res = await fetch(url, {
+		...init,
+		headers: {...(init.headers ?? {}), ...(await authHeaders())},
+	});
+	if (res.status === 401)
+		throw new Error('Session expired — please sign in again');
+	if (res.status === 403) throw new Error('Not authorised');
+	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	return res;
+}
 
 // ---------------------------------------------------------------------------
 // metadata フィールド — 画像取得時にソースAPIから得られたデータをそのまま保存
@@ -275,6 +301,9 @@ export async function fetchImages(params: {
 	sort_field: string;
 	sort_dir?: 'asc' | 'desc';
 	date?: string;
+	date_from?: string;
+	date_to?: string;
+	type?: string;
 	page?: number;
 	limit?: number;
 }): Promise<ImagesResponse> {
@@ -282,6 +311,9 @@ export async function fetchImages(params: {
 	url.searchParams.set('sort_field', params.sort_field);
 	if (params.sort_dir) url.searchParams.set('sort_dir', params.sort_dir);
 	if (params.date) url.searchParams.set('date', params.date);
+	if (params.date_from) url.searchParams.set('date_from', params.date_from);
+	if (params.date_to) url.searchParams.set('date_to', params.date_to);
+	if (params.type) url.searchParams.set('type', params.type);
 	if (params.page !== undefined)
 		url.searchParams.set('page', String(params.page));
 	if (params.limit !== undefined)
@@ -293,7 +325,10 @@ export async function fetchImages(params: {
 }
 
 export async function fetchImageById(id: string): Promise<ApiImageDocument> {
-	const res = await fetch(`${BASE_URL}/images/${id}`);
+	// encodeURIComponent so legacy string ids containing a literal "%2F"
+	// (e.g. "twitter%2Fabc.jpg") survive Starlette's single percent-decode
+	// pass as one path segment rather than being split into two.
+	const res = await fetch(`${BASE_URL}/images/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`API error: ${res.status}`);
 	return res.json();
 }
@@ -339,7 +374,7 @@ export async function fetchSimilarImages(
 		axis?: string;
 	},
 ): Promise<SimilarImagesResponse> {
-	const url = new URL(`${BASE_URL}/images/${id}/similar`);
+	const url = new URL(`${BASE_URL}/images/${encodeURIComponent(id)}/similar`);
 	if (params?.limit !== undefined)
 		url.searchParams.set('limit', String(params.limit));
 	if (params?.status) url.searchParams.set('status', params.status);
@@ -364,12 +399,179 @@ export async function fetchPostSource(
 	return data.source;
 }
 
+const DMC_IMAGE_BASE_URL =
+	'https://matrix-images.hakatashi.com/danbooru-ml-classifier/';
+const ARCHIVE_IMAGE_BASE_URL =
+	'https://matrix-images.hakatashi.com/hakataarchive/twitter/';
+const OBJECT_ID_RE = /^[0-9a-f]{24}$/;
+
+/**
+ * 旧 hakataarchive 画像かどうかを判定する。Firestore 期の twitter インポートは
+ * `_id` が percent-encode された key ("twitter%2Fabc.jpg") で ObjectId ではない。
+ * バイト列は /hakataarchive/twitter/{basename} にのみ存在しサムネイル版もない
+ * (/danbooru-ml-classifier/images/twitter/... は 404)。将来のクローラが twitter
+ * 画像を新バケットに ObjectId _id で書いても壊れないよう、type だけでなく
+ * ID の形も見る。
+ */
+export function isLegacyArchiveImage(image: {
+	id: string;
+	type?: string;
+}): boolean {
+	return image.type === 'twitter' && !OBJECT_ID_RE.test(image.id);
+}
+
 export function getImageUrl(
-	image: ApiImageDocument,
+	image: {id: string; key?: string; type?: string},
 	thumbnail = false,
 ): string {
-	const BASE = 'https://matrix-images.hakatashi.com/danbooru-ml-classifier/';
+	if (isLegacyArchiveImage(image)) {
+		const basename = (image.key ?? decodeURIComponent(image.id))
+			.split('/')
+			.pop();
+		return ARCHIVE_IMAGE_BASE_URL + basename;
+	}
 	const path = thumbnail ? 'thumbnails/' : 'images/';
-	if (image.key) return `${BASE}${path}${image.key}`;
-	return `${BASE}${path}twitter/${image.id}`;
+	return `${DMC_IMAGE_BASE_URL}${path}${image.key}`;
+}
+
+// ---------------------------------------------------------------------------
+// Favorites (MongoDB 経由、要認証)
+// ---------------------------------------------------------------------------
+
+export interface FavoritesListResponse {
+	images: ApiImageDocument[];
+	page: number;
+	limit: number;
+	count: number;
+	total: number;
+}
+
+export interface FavoriteCategoryCount {
+	name: string;
+	count: number;
+}
+
+export interface FavoriteCategoriesResponse {
+	categories: FavoriteCategoryCount[];
+	uncategorizedCount: number;
+	types: FavoriteCategoryCount[];
+	total: number;
+}
+
+export interface FavoritePoolItem {
+	id: string;
+	key: string;
+	type: string;
+	width?: number;
+	height?: number;
+	favorites?: FavoritesData;
+}
+
+export interface FavoritesPoolResponse {
+	images: FavoritePoolItem[];
+	total: number;
+}
+
+export interface FavoritesLookupResponse {
+	favorites: Record<string, FavoritesData>;
+	notFound: string[];
+}
+
+export interface FavoritesUpdateEntry {
+	id: string;
+	isFavorited: boolean;
+	categories: string[];
+	favoritedAt: string | null;
+	updatedAt: string;
+}
+
+export interface FavoritesUpdateResponse {
+	updated: FavoritesUpdateEntry[];
+	notFound: string[];
+	count: number;
+}
+
+export async function fetchFavorites(params: {
+	sort_field?: string;
+	sort_dir?: 'asc' | 'desc';
+	category?: string;
+	type?: string;
+	date_from?: string;
+	date_to?: string;
+	include_undated?: boolean;
+	page?: number;
+	limit?: number;
+}): Promise<FavoritesListResponse> {
+	const url = new URL(`${BASE_URL}/favorites`);
+	if (params.sort_field) url.searchParams.set('sort_field', params.sort_field);
+	if (params.sort_dir) url.searchParams.set('sort_dir', params.sort_dir);
+	if (params.category) url.searchParams.set('category', params.category);
+	if (params.type) url.searchParams.set('type', params.type);
+	if (params.date_from) url.searchParams.set('date_from', params.date_from);
+	if (params.date_to) url.searchParams.set('date_to', params.date_to);
+	if (params.include_undated) url.searchParams.set('include_undated', 'true');
+	if (params.page !== undefined)
+		url.searchParams.set('page', String(params.page));
+	if (params.limit !== undefined)
+		url.searchParams.set('limit', String(params.limit));
+
+	const res = await authedFetch(url.toString());
+	return res.json();
+}
+
+export async function fetchFavoriteCategories(): Promise<FavoriteCategoriesResponse> {
+	const res = await authedFetch(`${BASE_URL}/favorites/categories`);
+	return res.json();
+}
+
+export async function fetchFavoritesPool(params?: {
+	type?: string;
+	category?: string;
+}): Promise<FavoritesPoolResponse> {
+	const url = new URL(`${BASE_URL}/favorites/pool`);
+	if (params?.type) url.searchParams.set('type', params.type);
+	if (params?.category) url.searchParams.set('category', params.category);
+	const res = await authedFetch(url.toString());
+	return res.json();
+}
+
+export async function fetchRandomFavorites(params?: {
+	limit?: number;
+	exclude?: string[];
+	type?: string;
+	category?: string;
+}): Promise<FavoritesPoolResponse> {
+	const url = new URL(`${BASE_URL}/favorites/random`);
+	if (params?.limit !== undefined)
+		url.searchParams.set('limit', String(params.limit));
+	if (params?.exclude && params.exclude.length > 0)
+		url.searchParams.set('exclude', params.exclude.join(','));
+	if (params?.type) url.searchParams.set('type', params.type);
+	if (params?.category) url.searchParams.set('category', params.category);
+	const res = await authedFetch(url.toString());
+	return res.json();
+}
+
+export async function lookupFavorites(
+	ids: string[],
+): Promise<FavoritesLookupResponse> {
+	const res = await authedFetch(`${BASE_URL}/favorites/lookup`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({ids}),
+	});
+	return res.json();
+}
+
+export async function updateFavorites(params: {
+	ids: string[];
+	op: 'toggle' | 'add' | 'remove' | 'set';
+	categories: string[];
+}): Promise<FavoritesUpdateResponse> {
+	const res = await authedFetch(`${BASE_URL}/favorites/update`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify(params),
+	});
+	return res.json();
 }

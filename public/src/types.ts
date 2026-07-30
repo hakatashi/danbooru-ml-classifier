@@ -35,6 +35,8 @@ export interface ModerationData {
 export interface FavoritesData {
 	isFavorited: boolean;
 	categories: string[];
+	favoritedAt?: string | null;
+	updatedAt?: string;
 }
 
 export interface AgeEstimationCharacter {

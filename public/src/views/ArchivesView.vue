@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type {User} from 'firebase/auth';
-import {Heart, Image as ImageIcon, Lock, TrendingUp} from 'lucide-vue-next';
+import {Image as ImageIcon, Lock, TrendingUp} from 'lucide-vue-next';
 import {computed, onMounted, ref, watch} from 'vue';
 import FilterBar from '../components/FilterBar.vue';
+import FavoriteButton from '../components/FavoriteButton.vue';
 import ImageCard from '../components/ImageCard.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
+import {useFavorites} from '../composables/useFavorites';
 import {useFilterSync} from '../composables/useFilterSync';
 import {useGallery} from '../composables/useGallery';
 import {useImages} from '../composables/useImages';
@@ -19,15 +21,11 @@ const {sortValue, sort, page, filters, updateSort, updatePage, updateFilters} =
 	useFilterSync();
 
 // Image loading
-const {
-	loading,
-	error,
-	hasNextPage,
-	hasPrevPage,
-	loadPage,
-	toggleFavorite,
-	isFavorite,
-} = useImages();
+const {loading, error, hasNextPage, hasPrevPage, loadPage} = useImages();
+
+// Favorites — this view sources images from Firestore, so favorites state
+// must be fetched over the network via POST /favorites/lookup.
+const {loadFavoritesForImages} = useFavorites();
 
 // Gallery functionality
 const {
@@ -46,7 +44,6 @@ const currentImages = ref<ImageDocument[]>([]);
 const galleryMode = ref(false);
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref<string>('');
-const savingFavorites = ref<Set<string>>(new Set());
 
 // Watch for user authentication and query parameter changes
 watch(
@@ -58,6 +55,8 @@ watch(
 
 			// Reset gallery state when images change
 			resetGallery();
+
+			await loadFavoritesForImages(result.images.map((img) => img.id));
 		}
 	},
 	{immediate: true, deep: true},
@@ -131,22 +130,6 @@ function openLightbox(image: ImageDocument) {
 function closeLightbox() {
 	lightboxImage.value = null;
 	lightboxAlt.value = '';
-}
-
-async function handleToggleFavorite(event: Event, imageId: string) {
-	event.preventDefault();
-	event.stopPropagation();
-
-	if (savingFavorites.value.has(imageId)) return;
-
-	savingFavorites.value.add(imageId);
-	try {
-		await toggleFavorite(imageId);
-	} catch (err) {
-		console.error('Failed to toggle favorite:', err);
-	} finally {
-		savingFavorites.value.delete(imageId);
-	}
 }
 
 // Handle image load in gallery mode
@@ -270,25 +253,7 @@ onMounted(() => {
 								class="absolute top-3 left-3 flex gap-2 z-10"
 							>
 								<!-- Favorite button -->
-								<button
-									@click="(e) => handleToggleFavorite(e, image.id)"
-									:disabled="savingFavorites.has(image.id)"
-									:class="[
-										'p-2 rounded-lg shadow-lg transition-all',
-										isFavorite(image.id)
-											? 'bg-red-500 text-white hover:bg-red-600'
-											: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-										savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
-									]"
-									:title="
-										isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'
-									"
-								>
-									<Heart
-										:size="16"
-										:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
-									/>
-								</button>
+								<FavoriteButton :image-id="image.id" :size="16" variant="overlay"/>
 								<!-- Detail page button -->
 								<RouterLink
 									:to="`/image/${getDecodedId(image)}`"
@@ -346,25 +311,7 @@ onMounted(() => {
 							class="absolute top-3 left-3 flex gap-2 z-10"
 						>
 							<!-- Favorite button -->
-							<button
-								@click="(e) => handleToggleFavorite(e, image.id)"
-								:disabled="savingFavorites.has(image.id)"
-								:class="[
-									'p-2 rounded-lg shadow-lg transition-all',
-									isFavorite(image.id)
-										? 'bg-red-500 text-white hover:bg-red-600'
-										: 'bg-white/90 text-gray-600 hover:bg-white hover:text-red-500',
-									savingFavorites.has(image.id) && 'opacity-50 cursor-not-allowed',
-								]"
-								:title="
-									isFavorite(image.id) ? 'Remove from favorites' : 'Add to favorites'
-								"
-							>
-								<Heart
-									:size="16"
-									:fill="isFavorite(image.id) ? 'currentColor' : 'none'"
-								/>
-							</button>
+							<FavoriteButton :image-id="image.id" :size="16" variant="overlay"/>
 							<!-- Detail page button -->
 							<RouterLink
 								:to="`/image/${getDecodedId(image)}`"
