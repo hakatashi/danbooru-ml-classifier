@@ -34,6 +34,10 @@ Split into two parts:
 ML inference and image processing functions:
 - `main.py` - Local batch job that processes pending images in MongoDB and saves ML scores:
   - Queries MongoDB `images` collection for `status='pending'` documents with a `localPath` that exists on disk
+  - **Not manually scheduled**: this machine's GPU-exclusive apps (including this job) are managed by a separate
+    sibling project, `../HakataMatrix-app-controller-claude`, which runs `main.py` as its daily cronjob app at
+    05:00 JST, stopping/resuming the resident GPU app (a Slackbot's llama-server) around it. There is deliberately
+    no systemd timer for inference in this repo — adding one would race the controller and double-run/OOM the GPU.
   - Extracts three feature types per image:
     - DeepDanbooru ResNet50: 6000-dim tag probability vector
     - EVA02-Large encoder: 1024-dim visual embedding
@@ -46,6 +50,17 @@ ML inference and image processing functions:
   - `importantTagProbs` stores the top-50 important tags from two feature importance CSVs:
     - `deepdanbooru`: from `feature_importance_deepdanbooru_pixiv_private_elkan_noto_positive.csv`
     - `pixai`: from `feature_importance_pixai_pixiv_private_nnpu_positive.csv`
+  - After each run, recomputes the Virgo/Libra ensembles (see `ensembles.py`) for every date touched by that run, and writes deepdanbooru/eva02/pixai feature vectors to the HDF5 feature store (see `feature_store.py`) — both non-fatal (`log.warning` on failure, inference itself is unaffected)
+- `ensembles.py` - Rank-average ensembles materialized into `inferences.<key>.score`:
+  - `ensemble_virgo_v1` (♍) — rank-average of the 9 `pixiv_private` PU models (3 features × 3 methods); strongest within-page AUC on pages 0-1 (the pages actually browsed day to day)
+  - `ensemble_libra_v1` (♎) — rank-average of 5 hand-picked top models across feature types (incl. one twitter-trained model); strongest within-page AUC on deeper pages
+  - Both are pure re-aggregations of scores `main.py` already wrote (percentile rank per model within a day's population, then averaged) — no GPU, no new features. See `pu-learning/reports/recommendation_improvement_plan.md` sections 1.5-1.5.1 for why two ensembles ship instead of one (offline metrics disagree by page depth) and `compute_and_write_ensembles()` for the batch entry point
+- `compute_ensembles.py` - CLI to (re)compute ensembles for a date range or `--all`; `--dry-run` to preview
+- `feature_store.py` - Monthly-sharded HDF5 feature store (`{FEATURE_STORE_DIR}/{feature}/{YYYY-MM}.h5`, default `/mnt/cache2/danbooru-ml-classifier/features/`), same layout as `pu-learning/scripts/extract_features.py`'s `H5FeatureStore` so pu-learning's `build_dataset.py`/`train_pu.py` can read shards without modification. Keys are MongoDB `_id` hex strings. `write_features()` is idempotent (checks `existing_ids()` per shard) and returns which docs got a complete set of features so callers can set `images.features = {stored: true, shard: "YYYY-MM"}`
+- `backfill_features.py` - One-off/targeted backfill of the feature store for images `main.py` already scored:
+  - `--ids-file PATH` (one MongoDB `_id` per line, e.g. from `pu-learning/scripts/build_impressions.py --dump-ids`) or `--date-from/--date-to`
+  - Refuses to start unless `rocm-smi` reports enough free VRAM (`--min-free-vram-mb`, default 4000) — this machine's GPU-exclusive resident app (see `main.py` above) must be stopped first; `--skip-vram-check` bypasses this on non-ROCm hosts
+  - `--dry-run` to preview counts before touching the GPU
 - `api.py` - Thin REST API server that exposes MongoDB image data to the public website:
   - Serves images sorted by `importantTagProbs` or `inferences` values, filtered by date
   - Deployed at: https://danbooru-api.matrix.hakatashi.com (persisted via systemd user service)
@@ -60,12 +75,14 @@ ML inference and image processing functions:
     - `GET /daily-counts`, `GET /post-source` — daily image counts, source URL resolution
     - `GET /health` — health check
     - `GET /favorites`, `GET /favorites/categories`, `GET /favorites/pool`, `GET /favorites/random`, `POST /favorites/lookup`, `POST /favorites/update` — favorites CRUD (see below); require a Firebase ID token
+    - `POST /page-views/mark`, `POST /page-views/unmark`, `GET /page-views` — Daily Recommendation "page viewed" bookkeeping (see `pageViews` collection below); require a Firebase ID token
+    - `POST /image-views` — increments `images.views.{detail,zoom}Count` when a Detail page or zoom/fullscreen viewer is opened; require a Firebase ID token
   - `sort_field` parameter validated against allowlist patterns:
-    - `inferences.<model_key>.(score|not_bookmarked|bookmarked_public|bookmarked_private)`
+    - `inferences.<model_key>.(score|not_bookmarked|bookmarked_public|bookmarked_private)` (this also covers the Virgo/Libra ensemble keys, `ensemble_virgo_v1`/`ensemble_libra_v1`)
     - `importantTagProbs.(deepdanbooru|pixai).<tag>`
     - `/favorites` additionally accepts `favorites.favoritedAt`, `favorites.updatedAt`, `date`
-  - **Auth**: `/images*` and other read endpoints are public/unauthenticated. `/favorites/*` (reads included) require `Authorization: Bearer <Firebase ID token>` restricted to `hakatasiloving@gmail.com` (`require_admin` dependency, `ALLOWED_EMAIL` / `FIREBASE_CRED_PATH` env vars). A startup check (`_assert_favorites_routes_protected`) fails fast if any `/favorites` route is missing this dependency.
-  - CORS `allow_methods` includes `POST` (only used by `/favorites/update` and `/favorites/lookup`)
+  - **Auth**: `/images*` and other read endpoints are public/unauthenticated. `/favorites/*`, `/page-views*`, `/image-views` (reads included) require `Authorization: Bearer <Firebase ID token>` restricted to `hakatasiloving@gmail.com` (`require_admin` dependency, `ALLOWED_EMAIL` / `FIREBASE_CRED_PATH` env vars). A startup check (`_assert_protected_routes`, driven by `_PROTECTED_PREFIXES`) fails fast if any route under a protected prefix is missing this dependency.
+  - CORS `allow_methods` includes `POST` (used by `/favorites/update`, `/favorites/lookup`, `/page-views/mark`, `/page-views/unmark`, `/image-views`)
   - Systemd service and Nginx config templates in `worker/systemd/`; install via `bash worker/systemd/install-api.sh`
 - `vlm_captioner.py` - VLM-based captioning, moderation, age estimation, and tagging:
   - Supports multiple models: MiniCPM, JoyCaption, PixAI Tagger
@@ -108,8 +125,22 @@ PU Learning-based preference classifier for predicting image preference:
   - Saves manifest to `data/metadata/eval_manifest.parquet`
 - `scripts/eval_models.py` - Evaluates legacy multiclass and PU Learning models on the eval set:
   - Metrics: weighted NDCG@K, AUC-ROC, and AP with graded relevance scoring
+- `scripts/build_impressions.py` - Builds a labeled impression dataset for evaluating/improving recommendations, merging two sources:
+  - `explicit` — MongoDB `pageViews` marks (see below); every image on a marked page is a real impression, weight 1.0
+  - `reconstructed` — inferred from favorites: for each date, images ranked by `--sort-field` (default: Gemini's field); any page containing ≥1 favorite is treated as viewed, with negatives weighted by a confidence ladder (`--weight-profile {ladder,flat,explicit-only}`) based on page depth/contiguity/lag from `favoritedAt`
+  - Explicit wins over reconstructed for the same `(date, sort_field, page)`
+  - Cleaning (default on, `--no-clean` to skip): drops negatives sharing `artworkId` with a favorite, and drops any image overlapping `eval_manifest.parquet` (positive or negative)
+  - Outputs `data/metadata/impressions.parquet`; `--dump-ids PATH` writes one MongoDB `_id` per line for `worker/backfill_features.py --ids-file`
+  - See `reports/recommendation_improvement_plan.md` for the full derivation
+- `scripts/eval_impressions.py` - Evaluates every existing `inferences.*` model plus the Virgo/Libra ensembles (computed on the fly via `worker/ensembles.py`, or custom ones via `--ensemble name:model1,model2,...`) against `impressions.parquet`:
+  - No feature extraction, no joblib loading, no GPU — reads MongoDB `inferences.*` directly
+  - Primary metric: page-internal AUC (pooled Mann-Whitney within each `(date, sort_field, page)` group), reported overall and by page-depth band (p0-1/p0-4/p5-19/p20+) — the only metric immune to the range-restriction bias from the incumbent sort field dominating the impression population
+  - Recall@K is reported for reference only, flagged `biased_by_incumbent` for the sort field the impressions were built against (its Recall@K is structurally inflated — see the script docstring)
+  - Time-series holdout only (`--test-days`, default 30); no random-split option (would leak through preference drift/page correlation)
+  - Outputs `data/results/impression_metrics.csv` (upsert by `(model, test_days)`)
 - `reports/model_evaluation_report.md` - Summary of PU Learning model performance across feature types, methods, and labels
-- `scripts/config.py` - Shared configuration (paths, dimensions, constants)
+- `reports/recommendation_improvement_plan.md` - Plan for improving Daily Recommendation using accumulated favorites/impression data; background for `build_impressions.py`/`eval_impressions.py`/`worker/ensembles.py`
+- `scripts/config.py` - Shared configuration (paths, dimensions, constants, MongoDB URI/DB, `DAILY_PAGE_SIZE`)
 - `notebooks/` - Jupyter notebooks for sklearn and PyTorch classifier experiments
 
 ### Public Website (Vue 3 + TypeScript - `public/`)
@@ -118,14 +149,16 @@ Web application for browsing VLM-captioned images:
 - Firebase Authentication (Google Sign-In required)
 - Two parallel data paths: `/daily`, `/daily/image/:id`, `/favorites`, and `/gallery` read from the MongoDB-backed worker REST API (`src/api/mlApi.ts`); `/archives` and `/image/:id` read directly from Firestore `images/` (`src/composables/useImages.ts`)
 - Routes (`src/router.ts`):
-  - `/daily` — Daily Recommendation: MongoDB-backed gallery with named sort presets, calendar date picker, per-model/tag score sorting
-  - `/daily/image/:id` — Daily Recommendation image detail, with similar-image strips
+  - `/daily` — Daily Recommendation: MongoDB-backed gallery with named sort presets (Aries–Leo, plus ♍ Virgo/♎ Libra rank-average ensembles — see `worker/ensembles.py`), calendar date picker, per-model/tag score sorting; footer "Mark page as viewed" button records an explicit `pageViews` entry for the current `(date, sort, page)`
+  - `/daily/image/:id` — Daily Recommendation image detail, with similar-image strips; opening the page or its zoom/fullscreen viewer records an `images.views.{detail,zoom}Count` hit via `POST /image-views`
+  - `/daily/unviewed` — matrix of the top 3 pages × last 30 days on the Gemini sort, showing which `(date, page)` combinations are/aren't marked viewed yet; cells link into `/daily` at that exact date/sort/page
   - `/favorites` — manage favorited images: sort by favorited/updated date or any ML score, filter by source/date-range/category, group by category, single and bulk category editing, lightbox with prev/next
-  - `/gallery` — random full-screen viewer over favorited images (original, not thumbnail, URLs); no-repeat shuffle per session (`sessionStorage`), prefetches upcoming originals, keyboard (←/→/Space/F/D/Esc) and touch-swipe navigation
+  - `/gallery` — random full-screen viewer over favorited images (original, not thumbnail, URLs); no-repeat shuffle per session (`sessionStorage`), prefetches upcoming originals, keyboard (←/→/Space/F/D/Esc) and touch-swipe navigation; zooming in or entering fullscreen also records an `images.views.zoomCount` hit
   - `/archives` — Firestore-backed gallery/grid view with rating/age/PixAI-tag filters (formerly at `/gallery`, renamed when `/gallery` was repurposed for the random viewer — there is intentionally no redirect between the two)
   - `/image/:id(.*)` — Firestore-backed image detail
   - `/novels`, `/novels/:novelId` — generated novel list/detail
 - Favorites (`src/composables/useFavorites.ts`, `src/components/FavoriteButton.vue`): backed by MongoDB `images.favorites` via the worker API's authenticated `/favorites/*` endpoints (Firebase ID token). `hydrateFromImages()` reads `favorites` embedded in API responses for free; `loadFavoritesForImages()` calls `POST /favorites/lookup` for the Firestore-backed views where it isn't embedded. Categories default to `Uncategorized`.
+- Page views (`src/composables/usePageViews.ts`, `src/components/PageViewedButton.vue`): backed by MongoDB `pageViews`/`images.views` via the worker API's authenticated `/page-views/*` and `/image-views` endpoints. `markViewed()`/`unmarkViewed()` mirror the favorites composable's optimistic-update pattern; `recordView(imageId, kind)` is a fire-and-forget wrapper around `POST /image-views` used for automatic detail/zoom tracking. This is a personal-use app, so viewing is tracked via explicit marks and these automatic detail/zoom signals rather than passive impression logging.
 - Shared gallery layout: `src/components/JustifiedGallery.vue` (justified-row + mobile grid, used by `/favorites`; `/daily` and `/archives` still have their own inline copies) and `src/composables/useGallery.ts`
 - Image URLs (`src/api/mlApi.ts` `getImageUrl`): `https://matrix-images.hakatashi.com/danbooru-ml-classifier/{images,thumbnails}/{key}` for current-scheme images; legacy Firestore-era Twitter imports (`type: 'twitter'` with a non-ObjectId `_id`) resolve to `https://matrix-images.hakatashi.com/hakataarchive/twitter/{basename}` instead (no thumbnail variant exists for those)
 - Other features:
@@ -246,6 +279,25 @@ venv/bin/python main.py
 #   IMAGE_CACHE_DIR - Local image directory (default: /mnt/cache2/danbooru-ml-classifier/images)
 #   MONGODB_URI     - MongoDB URI (default: mongodb://localhost:27017)
 #   MONGODB_DB      - Database name (default: danbooru-ml-classifier)
+```
+
+**Ensembles** (`ensembles.py` / `compute_ensembles.py`): (Re)compute the Virgo/Libra rank-average ensembles. No GPU — pure re-aggregation of scores `main.py` already wrote.
+```bash
+cd worker
+venv/bin/python compute_ensembles.py --date-from 2026-07-01 --date-to 2026-08-04
+venv/bin/python compute_ensembles.py --all                    # every date with inferred docs
+venv/bin/python compute_ensembles.py --all --dry-run           # preview counts only
+venv/bin/python compute_ensembles.py --date-from 2026-08-01 --date-to 2026-08-04 \
+  --ensembles ensemble_virgo_v1                                # single ensemble
+```
+
+**Feature store backfill** (`backfill_features.py`): Persists deepdanbooru/eva02/pixai vectors for already-inferred images into the HDF5 feature store. GPU-heavy — confirm with the user and stop the resident GPU app first (see External Dependencies).
+```bash
+cd worker
+venv/bin/python backfill_features.py --ids-file /path/to/ids.txt --dry-run   # preview
+venv/bin/python backfill_features.py --ids-file /path/to/ids.txt             # e.g. from
+  # pu-learning/scripts/build_impressions.py --dump-ids
+venv/bin/python backfill_features.py --date-from 2026-04-10 --date-to 2026-08-03
 ```
 
 **API server** (`api.py`): REST API exposing ML scores and tag probabilities to the public website
@@ -391,6 +443,20 @@ python scripts/eval_models.py
 # See reports/model_evaluation_report.md for results summary
 ```
 
+**Impression-based evaluation** (favorites + explicit "page viewed" marks, no GPU):
+```bash
+cd pu-learning
+venv/bin/python scripts/build_impressions.py                       # data/metadata/impressions.parquet
+venv/bin/python scripts/build_impressions.py --weight-profile flat # ablation: no confidence downweighting
+venv/bin/python scripts/build_impressions.py --dump-ids /tmp/viewed_ids.txt  # for backfill_features.py --ids-file
+
+venv/bin/python scripts/eval_impressions.py                        # data/results/impression_metrics.csv
+venv/bin/python scripts/eval_impressions.py --test-days 14
+venv/bin/python scripts/eval_impressions.py \
+  --ensemble my_combo:eva02_pixiv_private_nnpu_joblib,pixai_pixiv_private_elkan_noto_joblib
+# See reports/recommendation_improvement_plan.md for background/derivation
+```
+
 **Manual labeling tool** (`labeler/`):
 ```bash
 cd pu-learning
@@ -441,7 +507,7 @@ firebase emulators:start
 
 1. Local cron job (`src/cron.ts`) fetches rankings → saves to MongoDB (`pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`)
 2. Cron job downloads images to `IMAGE_CACHE_DIR`, creates doc in MongoDB `images` with `status: 'pending'`
-3. Worker function batches 100+ pending images, runs inference, updates status to `inferred`
+3. Worker function batches 100+ pending images, runs inference, updates status to `inferred`, recomputes the Virgo/Libra ensembles for touched dates, and persists feature vectors to the HDF5 feature store
 4. VLM captioner processes images:
    - Generates captions (JoyCaption/MiniCPM)
    - Generates moderation ratings with explanations (0-10 scale)
@@ -465,7 +531,9 @@ Main collection storing image metadata and ML results (mirrors Firestore `images
 - `twitterSource`: Twitter metadata (tweetId, text, user, retweetedTweet) if image is from Twitter
 - `favorites`: `{isFavorited: bool, categories: string[], favoritedAt: Date | null, updatedAt: Date}` — canonical source of truth for favorites (migrated from the Firestore `favorites/` collection; see `publisher/scripts/migrate-favorites-to-mongo.ts`). `favoritedAt` is set once on the 0→1 transition and preserved across later category edits, so "newest favorited" sorts correctly. `isFavorited === (categories.length > 0)`. Written only via `worker/api.py`'s authenticated `POST /favorites/update`.
 - `importantTagProbs`: Top-50 important tags per feature type — `{deepdanbooru: {tag: prob}, pixai: {tag: prob}}`
-- `inferences`: ML model scores keyed by model filename — PU models: `{score: float}`, legacy multiclass: `{not_bookmarked, bookmarked_public, bookmarked_private}`
+- `inferences`: ML model scores keyed by model filename — PU models: `{score: float}`, legacy multiclass: `{not_bookmarked, bookmarked_public, bookmarked_private}`. Also holds the Virgo/Libra ensemble scores under `ensemble_virgo_v1`/`ensemble_libra_v1` (same `{score: float}` shape), written by `worker/ensembles.py`/`compute_ensembles.py`.
+- `views`: `{detailCount, detailLastAt, zoomCount, zoomLastAt, firstViewedAt}` — automatic intermediate-label counters, incremented by `worker/api.py`'s `POST /image-views` when the Daily image Detail page or a zoom/fullscreen viewer is opened. `firstViewedAt` is set once via a MongoDB `$min` update (only writes if absent).
+- `features`: `{stored: bool, shard: "YYYY-MM"}` — pointer into the HDF5 feature store (`worker/feature_store.py`); set once all three feature vectors (deepdanbooru/eva02/pixai) are persisted for that image.
 
 ### `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`
 Source ranking data from external APIs. Document `_id` = Firestore document ID (string).
@@ -473,10 +541,19 @@ Source ranking data from external APIs. Document `_id` = Firestore document ID (
 ### `pixivPages`
 Pixiv per-artwork page URL data. Document `_id` = Pixiv artwork ID.
 
+### `pageViews`
+Explicit "this Daily Recommendation page has been viewed" marks (personal-use app, so viewing is tracked by explicit user action rather than passive impression logging):
+- `date`, `sortField`, `page`: identify the marked page (matches `/daily`'s URL query params)
+- `imageIds`: ObjectId[] snapshot of exactly which images were on the page at mark time — day-level rankings can shift later (new images inferred, new models added), so this snapshot is what makes a mark usable as a training label after the fact
+- `markedAt`: Date
+- Unique on `(date, sortField, page)`; written only via `worker/api.py`'s authenticated `POST /page-views/mark` / `POST /page-views/unmark`
+- Consumed by `pu-learning/scripts/build_impressions.py` as the `explicit` label source (see PU Learning section) and by the `/daily/unviewed` page
+
 ## MongoDB Indexes
 
-- `images`: `favorites_favoritedAt_desc` — `{"favorites.favoritedAt": -1}`, partial index on `{"favorites.isFavorited": true}`. Makes every `/favorites*` query an IXSCAN over the (small) favorited set instead of a full collection scan; deliberately the *only* extra index — sorting by an arbitrary `inferences.*`/`importantTagProbs.*` field is done in-process in `worker/api.py` over the pre-filtered favorited set rather than indexed, since there are 100+ possible sort fields.
-- Managed by `publisher/scripts/ensure-indexes.ts` (idempotent; run manually or called from the favorites migration script). There is no automatic index creation at API startup.
+- `images`: `favorites_favoritedAt_desc` — `{"favorites.favoritedAt": -1}`, partial index on `{"favorites.isFavorited": true}`. Makes every `/favorites*` query an IXSCAN over the (small) favorited set instead of a full collection scan; deliberately the *only* extra index on `images` — sorting by an arbitrary `inferences.*`/`importantTagProbs.*` field is done in-process in `worker/api.py` over the pre-filtered favorited set rather than indexed, since there are 100+ possible sort fields.
+- `pageViews`: `pageViews_date_sortField_page_unique` — unique `{date: 1, sortField: 1, page: 1}`; `pageViews_sortField_date_desc` — `{sortField: 1, date: -1}` for the `/daily/unviewed` listing query.
+- Managed by `publisher/scripts/ensure-indexes.ts` (idempotent; run manually or called from the favorites migration script), grouped by collection via each `IndexSpec`'s `collection` field. There is no automatic index creation at API startup.
 
 ## Firestore Collections (Firebase — used by public website and Firebase Functions)
 
@@ -514,4 +591,6 @@ The project uses 20+ composite indexes for efficient querying:
 - Storage buckets: `danbooru-ml-classifier` (models), `danbooru-ml-classifier-images` (images, legacy)
 - Local MongoDB: `danbooru-ml-classifier` database (default: `mongodb://localhost:27017`)
 - Local image cache: `/mnt/cache2/danbooru-ml-classifier/images` (configurable via `IMAGE_CACHE_DIR`)
+- Local feature store: `/mnt/cache2/danbooru-ml-classifier/features` (configurable via `FEATURE_STORE_DIR`, see `worker/feature_store.py`)
+- GPU scheduling: this machine runs one GPU-exclusive app at a time, managed by the sibling project `../HakataMatrix-app-controller-claude` (a resident Slackbot with llama-server, plus scheduled cronjob apps including this repo's `worker/main.py`). Any manual GPU work here (`worker/backfill_features.py`, `pu-learning/scripts/extract_features.py`, training, etc.) needs the resident app stopped first — confirm with the user before doing so, and check free VRAM with `rocm-smi --showmeminfo vram --json`.
 - Required secrets (publisher cron): `PIXIV_SESSION_ID`, `DANBOORU_API_USER`, `DANBOORU_API_KEY`, `GELBOORU_API_USER`, `GELBOORU_API_KEY`

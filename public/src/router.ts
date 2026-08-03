@@ -7,6 +7,7 @@ import GalleryView from './views/GalleryView.vue';
 import ImageDetailView from './views/ImageDetailView.vue';
 import NovelsListView from './views/NovelsListView.vue';
 import NovelView from './views/NovelView.vue';
+import UnviewedPagesView from './views/UnviewedPagesView.vue';
 
 const router = createRouter({
 	history: createWebHistory(),
@@ -24,6 +25,11 @@ const router = createRouter({
 			path: '/daily/image/:id',
 			name: 'daily-image-detail',
 			component: DailyImageDetailView,
+		},
+		{
+			path: '/daily/unviewed',
+			name: 'daily-unviewed',
+			component: UnviewedPagesView,
 		},
 		{
 			path: '/favorites',

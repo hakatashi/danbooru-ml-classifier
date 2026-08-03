@@ -28,6 +28,9 @@ from PIL import Image, UnidentifiedImageError
 from pymongo import MongoClient, UpdateOne
 from torchvision import models, transforms
 
+from ensembles import compute_and_write_ensembles
+from feature_store import write_features
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 WORKER_DIR = Path(__file__).parent
 REPO_ROOT  = WORKER_DIR.parent
@@ -649,9 +652,10 @@ def main():
     dd_indices     = [idx for _, idx in dd_tags]
     pxai_indices   = [idx for _, idx in pxai_tags]
 
-    n_total    = len(processable)
-    n_done     = 0
-    n_error    = 0
+    n_total       = len(processable)
+    n_done        = 0
+    n_error       = 0
+    touched_dates: set[str] = set()
 
     for batch_start in range(0, n_total, args.batch_size):
         batch_docs = processable[batch_start:batch_start + args.batch_size]
@@ -724,12 +728,43 @@ def main():
             "  Saved %d  (total done=%d  error=%d)",
             result.modified_count, n_done, n_error,
         )
+        touched_dates.update(doc["date"] for doc in loaded_docs if doc.get("date"))
 
         # Upsert EVA02 embeddings to Qdrant (non-fatal if Qdrant is unavailable)
         upsert_eva02_to_qdrant(loaded_docs, X_eva, status="inferred")
         upsert_multiaxis_to_qdrant(loaded_docs, X_eva, X_pxai, status="inferred")
 
+        # Persist raw feature vectors to the monthly-sharded HDF5 store
+        # (non-fatal -- feeds pu-learning retraining, must not block inference).
+        try:
+            fs_result = write_features(
+                loaded_docs,
+                {"deepdanbooru": X_dd, "eva02": X_eva, "pixai": X_pxai},
+            )
+            if fs_result["complete"]:
+                pointer_ops = [
+                    UpdateOne(
+                        {"_id": doc_id},
+                        {"$set": {"features": {"stored": True, "shard": month}}},
+                    )
+                    for doc_id, month in fs_result["complete"].items()
+                ]
+                col.bulk_write(pointer_ops, ordered=False)
+            log.info("[FeatureStore] wrote %s", fs_result["written"])
+        except Exception as exc:
+            log.warning("[FeatureStore] write failed (non-fatal): %s", exc)
+
     log.info("Done. processed=%d  error=%d", n_done, n_error)
+
+    # Recompute the Virgo/Libra ensembles for every date touched by this run
+    # (non-fatal: pure re-aggregation of scores already written above, but a
+    # failure here must not make the run look like it failed inference).
+    if touched_dates:
+        log.info("Recomputing ensembles for %d date(s) ...", len(touched_dates))
+        try:
+            compute_and_write_ensembles(db, sorted(touched_dates))
+        except Exception as exc:
+            log.warning("Ensemble computation failed (non-fatal): %s", exc)
 
 
 if __name__ == "__main__":

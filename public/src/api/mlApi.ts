@@ -575,3 +575,83 @@ export async function updateFavorites(params: {
 	});
 	return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Page views (MongoDB 経由、要認証) — Daily Recommendation の「閲覧済み」記録
+// ---------------------------------------------------------------------------
+
+export interface PageViewMarkResponse {
+	date: string;
+	sortField: string;
+	page: number;
+	count: number;
+	markedAt: string;
+	notFound: string[];
+}
+
+export interface PageViewEntry {
+	date: string;
+	sortField: string;
+	page: number;
+	markedAt: string;
+}
+
+export interface PageViewsListResponse {
+	views: PageViewEntry[];
+}
+
+export async function markPageViewed(params: {
+	date: string;
+	sortField: string;
+	page: number;
+	imageIds: string[];
+}): Promise<PageViewMarkResponse> {
+	const res = await authedFetch(`${BASE_URL}/page-views/mark`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify(params),
+	});
+	return res.json();
+}
+
+export async function unmarkPageViewed(params: {
+	date: string;
+	sortField: string;
+	page: number;
+}): Promise<{deleted: boolean}> {
+	const res = await authedFetch(`${BASE_URL}/page-views/unmark`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify(params),
+	});
+	return res.json();
+}
+
+export async function fetchPageViews(params: {
+	sortField: string;
+	dateFrom?: string;
+	dateTo?: string;
+}): Promise<PageViewsListResponse> {
+	const url = new URL(`${BASE_URL}/page-views`);
+	url.searchParams.set('sort_field', params.sortField);
+	if (params.dateFrom) url.searchParams.set('date_from', params.dateFrom);
+	if (params.dateTo) url.searchParams.set('date_to', params.dateTo);
+	const res = await authedFetch(url.toString());
+	return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Image views (MongoDB 経由、要認証) — Detail/拡大表示による自動中間ラベル
+// ---------------------------------------------------------------------------
+
+export async function recordImageViews(params: {
+	ids: string[];
+	kind: 'detail' | 'zoom';
+}): Promise<{updated: number; notFound: string[]}> {
+	const res = await authedFetch(`${BASE_URL}/image-views`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify(params),
+	});
+	return res.json();
+}

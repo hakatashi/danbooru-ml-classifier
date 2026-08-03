@@ -6,14 +6,17 @@ import {RouterLink, RouterView} from 'vue-router';
 import AuthButton from './components/AuthButton.vue';
 import {useFavorites} from './composables/useFavorites';
 import {useImages} from './composables/useImages';
+import {usePageViews} from './composables/usePageViews';
 
 const user = ref<User | null>(null);
 const {clearCache} = useImages();
 const {clearFavoritesCache} = useFavorites();
+const {clearPageViewsCache} = usePageViews();
 const mobileMenuOpen = ref(false);
 
 const NAV_LINKS = [
 	{to: '/daily', label: 'Daily Recommendation'},
+	{to: '/daily/unviewed', label: 'Unviewed Pages'},
 	{to: '/favorites', label: 'Favorites'},
 	{to: '/gallery', label: 'Gallery'},
 	{to: '/archives', label: 'Archives'},
@@ -25,6 +28,7 @@ function onAuthChange(newUser: User | null) {
 	if (!newUser) {
 		clearCache();
 		clearFavoritesCache();
+		clearPageViewsCache();
 	}
 }
 </script>

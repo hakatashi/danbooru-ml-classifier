@@ -12,10 +12,14 @@ Pillow>=10.0
 h5py>=3.10
 pandas>=2.0
 pyarrow>=14.0
+pymongo>=4.6
 
 # Training (Phase 3+)
 scikit-learn>=1.4
 pulearn>=0.0.7
+
+# Evaluation
+scipy>=1.11
 
 # Utilities
 tqdm>=4.66

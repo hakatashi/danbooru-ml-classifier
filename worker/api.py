@@ -27,7 +27,7 @@ from bson import ObjectId
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pymongo import MongoClient, ASCENDING, DESCENDING, UpdateOne
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -1078,6 +1078,164 @@ def update_favorites(body: FavoritesUpdateRequest, _admin: dict = Depends(requir
     return {"updated": updated, "notFound": not_found, "count": len(updated)}
 
 
+# ── Page views ────────────────────────────────────────────────────────────────
+# Explicit "mark this page as viewed" bookkeeping for the Daily Recommendation
+# grid. Personal-use app, so no automatic impression logging -- the user
+# marks a page viewed once they've actually looked at it. All /page-views*
+# routes require Depends(require_admin) -- see the startup assertion at the
+# bottom of this file.
+
+
+class PageViewMarkRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    date: str
+    sort_field: str = Field(alias="sortField")
+    page: int = Field(ge=0)
+    # The image ids actually rendered on the page at mark time. Stored as a
+    # snapshot rather than re-derived later, since day-level rankings shift
+    # as pending images get inferred or new models get added -- without the
+    # snapshot, a label built from this mark later would silently point at a
+    # different set of images than what the user actually looked at.
+    image_ids: list[str] = Field(alias="imageIds", min_length=1, max_length=PAGE_SIZE_MAX)
+
+
+@app.post("/page-views/mark")
+def mark_page_viewed(body: PageViewMarkRequest, _admin: dict = Depends(require_admin)):
+    """Record that a Daily Recommendation page has been viewed."""
+    validated_field = _validate_sort_field(body.sort_field)
+    validated_date = _validate_date(body.date)
+
+    db  = get_db()
+    col = db["images"]
+
+    mapping, not_found = _resolve_image_ids(col, body.image_ids)
+    resolved_ids = list(mapping.values())
+
+    now = datetime.utcnow()
+    db["pageViews"].update_one(
+        {"date": validated_date, "sortField": validated_field, "page": body.page},
+        {"$set": {"imageIds": resolved_ids, "markedAt": now}},
+        upsert=True,
+    )
+
+    return {
+        "date": validated_date,
+        "sortField": validated_field,
+        "page": body.page,
+        "count": len(resolved_ids),
+        "markedAt": now.isoformat(),
+        "notFound": not_found,
+    }
+
+
+class PageViewUnmarkRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    date: str
+    sort_field: str = Field(alias="sortField")
+    page: int = Field(ge=0)
+
+
+@app.post("/page-views/unmark")
+def unmark_page_viewed(body: PageViewUnmarkRequest, _admin: dict = Depends(require_admin)):
+    """Clear a previously-recorded "page viewed" mark."""
+    validated_field = _validate_sort_field(body.sort_field)
+    validated_date = _validate_date(body.date)
+
+    db = get_db()
+    result = db["pageViews"].delete_one(
+        {"date": validated_date, "sortField": validated_field, "page": body.page}
+    )
+    return {"deleted": result.deleted_count > 0}
+
+
+@app.get("/page-views")
+def list_page_views(
+    _admin: dict = Depends(require_admin),
+    sort_field: str = Query(..., description="Sort field the pages were marked against"),
+    date_from: Optional[str] = Query(None, description="Filter by date >= (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter by date <= (YYYY-MM-DD)"),
+):
+    """
+    Return which (date, page) combinations have been marked viewed for a sort field.
+
+    Does not return the underlying `imageIds` snapshot -- callers (e.g. the
+    unviewed-pages listing) only need to know whether a page was marked.
+    """
+    validated_field = _validate_sort_field(sort_field)
+
+    mongo_filter: dict = {"sortField": validated_field}
+    date_range: dict = {}
+    if date_from:
+        date_range["$gte"] = _validate_date(date_from)
+    if date_to:
+        date_range["$lte"] = _validate_date(date_to)
+    if date_range:
+        mongo_filter["date"] = date_range
+
+    db = get_db()
+    docs = (
+        db["pageViews"]
+        .find(mongo_filter, {"imageIds": 0})
+        .sort([("date", DESCENDING), ("page", ASCENDING)])
+    )
+    views = [
+        {
+            "date": d["date"],
+            "sortField": d["sortField"],
+            "page": d["page"],
+            "markedAt": d["markedAt"].isoformat(),
+        }
+        for d in docs
+    ]
+    return {"views": views}
+
+
+# ── Image views ───────────────────────────────────────────────────────────────
+# Automatic intermediate-label recording: opening an image's detail page or
+# its zoom/fullscreen viewer is a weaker-than-favorite signal that the image
+# caught the user's attention. All /image-views* routes require
+# Depends(require_admin) -- see the startup assertion at the bottom of this
+# file.
+
+
+class ImageViewsRequest(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=50)
+    kind: Literal["detail", "zoom"]
+
+
+@app.post("/image-views")
+def record_image_views(body: ImageViewsRequest, _admin: dict = Depends(require_admin)):
+    """Increment the detail/zoom view counters on `images.views` for the given ids."""
+    db  = get_db()
+    col = db["images"]
+
+    mapping, not_found = _resolve_image_ids(col, body.ids)
+    if not mapping:
+        return {"updated": 0, "notFound": not_found}
+
+    now = datetime.utcnow()
+    count_field   = f"views.{body.kind}Count"
+    last_at_field = f"views.{body.kind}LastAt"
+
+    ops = [
+        UpdateOne(
+            {"_id": resolved_id},
+            {
+                "$inc": {count_field: 1},
+                "$set": {last_at_field: now},
+                # $min sets the field only if absent (first time) or the new
+                # value is smaller -- effectively "set once, keep earliest".
+                "$min": {"views.firstViewedAt": now},
+            },
+        )
+        for resolved_id in mapping.values()
+    ]
+    result = col.bulk_write(ops, ordered=False)
+    return {"updated": result.modified_count, "notFound": not_found}
+
+
 @app.get("/health")
 def health():
     """Simple health check."""
@@ -1142,15 +1300,17 @@ def get_post_source(
 
 # ── Startup safety check ─────────────────────────────────────────────────────
 # Runs at import time (module load), before uvicorn starts accepting
-# connections. Fails fast if a /favorites route is ever added without
-# Depends(require_admin) -- one missed dependency would make the favorites
-# list world-readable.
+# connections. Fails fast if a route under one of these prefixes is ever
+# added without Depends(require_admin) -- one missed dependency would make
+# private data (favorites, page-view marks) world-readable.
+
+_PROTECTED_PREFIXES = ("/favorites", "/page-views", "/image-views")
 
 
-def _assert_favorites_routes_protected() -> None:
+def _assert_protected_routes() -> None:
     for route in app.routes:
         path = getattr(route, "path", "")
-        if not path.startswith("/favorites"):
+        if not any(path.startswith(prefix) for prefix in _PROTECTED_PREFIXES):
             continue
         dependant = getattr(route, "dependant", None)
         deps = getattr(dependant, "dependencies", []) if dependant else []
@@ -1158,4 +1318,4 @@ def _assert_favorites_routes_protected() -> None:
             raise RuntimeError(f"Route {path} is missing Depends(require_admin)")
 
 
-_assert_favorites_routes_protected()
+_assert_protected_routes()
