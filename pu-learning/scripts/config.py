@@ -2,6 +2,7 @@
 Shared configuration for PU Learning project.
 """
 
+import os
 from pathlib import Path
 
 # ── Directory layout ─────────────────────────────────────────────────────────
@@ -13,6 +14,17 @@ DATA_DIR     = PROJECT_ROOT / "data"
 FEATURES_DIR = DATA_DIR / "features"
 METADATA_DIR = DATA_DIR / "metadata"
 MODELS_DIR   = DATA_DIR / "models"
+LABELS_DIR   = DATA_DIR / "labels"
+RESULTS_DIR  = DATA_DIR / "results"
+
+# ── MongoDB (used by scripts that read live inference/favorites data,
+#    e.g. build_impressions.py, eval_impressions.py) ───────────────────────────
+MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
+MONGODB_DB  = os.environ.get("MONGODB_DB", "danbooru-ml-classifier")
+
+# Daily Recommendation page size (public/src/views/DailyRecommendationView.vue's
+# PAGE_SIZE) -- needed to reconstruct which images a "page N" mark covered.
+DAILY_PAGE_SIZE = 50
 
 # ── Source image directories ──────────────────────────────────────────────────
 HAKATAARCHIVE_PIXIV_DIR    = Path("/mnt/cache/hakataarchive/pixiv")

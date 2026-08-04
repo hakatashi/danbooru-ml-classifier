@@ -23,8 +23,10 @@ import {
 import DailyCalendar from '../components/DailyCalendar.vue';
 import FavoriteButton from '../components/FavoriteButton.vue';
 import ImageLightbox from '../components/ImageLightbox.vue';
+import PageViewedButton from '../components/PageViewedButton.vue';
 import {useFavorites} from '../composables/useFavorites';
 import {useGallery} from '../composables/useGallery';
+import {usePageViews} from '../composables/usePageViews';
 import {
 	NAMED_SORT_FIELDS as NAMED_FIELDS,
 	NAMED_SORTS,
@@ -115,6 +117,8 @@ const {
 // Favorites — embedded in every ApiImageDocument, no network round trip needed
 const {hydrateFromImages} = useFavorites();
 
+const {recordView, loadPageViews} = usePageViews();
+
 const lightboxImage = ref<string | null>(null);
 const lightboxAlt = ref('');
 
@@ -144,6 +148,16 @@ async function loadImages() {
 
 		// Favorites are already embedded in each ApiImageDocument
 		hydrateFromImages(result.images);
+
+		// Hydrate the "page viewed" mark for this date/sort so the footer
+		// button reflects prior state.
+		loadPageViews({
+			sortField: selectedSort.value,
+			dateFrom: selectedDate.value,
+			dateTo: selectedDate.value,
+		}).catch(() => {
+			// ignore -- button just falls back to "not viewed"
+		});
 
 		// Pre-calculate gallery layout from image dimensions if available
 		let allHaveDimensions = true;
@@ -310,6 +324,7 @@ function onImageLoad(e: Event, imageId: string) {
 function openLightbox(image: ApiImageDocument) {
 	lightboxImage.value = getImageUrl(image, false);
 	lightboxAlt.value = image.id;
+	recordView(image.id, 'zoom');
 }
 
 function closeLightbox() {
@@ -903,6 +918,16 @@ async function openSource(
 						Next
 						<ChevronRight :size="16" />
 					</button>
+				</div>
+
+				<!-- Mark page as viewed -->
+				<div class="flex justify-center pb-4">
+					<PageViewedButton
+						:date="selectedDate"
+						:sort-field="selectedSort"
+						:page="currentPage"
+						:image-ids="images.map((image) => image.id)"
+					/>
 				</div>
 			</div>
 		</template>

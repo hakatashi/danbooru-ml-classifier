@@ -27,6 +27,7 @@ import SimilarImageStrip from '../components/SimilarImageStrip.vue';
 import ThinkBlock from '../components/ThinkBlock.vue';
 import TwitterSourcePanel from '../components/TwitterSourcePanel.vue';
 import {useFavorites} from '../composables/useFavorites';
+import {usePageViews} from '../composables/usePageViews';
 import {useScoreDisplay} from '../composables/useScoreDisplay';
 import {NAMED_SORTS} from '../config/namedSorts';
 import type {TagData, TagList} from '../types';
@@ -40,6 +41,7 @@ const route = useRoute();
 const router = useRouter();
 
 const {hydrateFromImages} = useFavorites();
+const {recordView} = usePageViews();
 const {
 	getScoreBarWidth,
 	getScoreColorClass,
@@ -450,12 +452,18 @@ async function loadImage(id: string) {
 	try {
 		image.value = await fetchImageById(id);
 		hydrateFromImages([image.value]);
+		if (props.user) recordView(id, 'detail');
 	} catch (e) {
 		error.value = (e as Error).message;
 	} finally {
 		loading.value = false;
 	}
 	loadSimilarImages(id);
+}
+
+function openZoomLightbox() {
+	showLightbox.value = true;
+	if (props.user && image.value) recordView(image.value.id, 'zoom');
 }
 
 watch(
@@ -526,7 +534,7 @@ onMounted(() => {
 					<div class="lg:col-span-2">
 						<div
 							class="bg-black rounded-xl overflow-hidden cursor-pointer relative"
-							@click="showLightbox = true"
+							@click="openZoomLightbox"
 						>
 							<img
 								:src="imageUrl"

@@ -11,11 +11,13 @@ import {
 } from '../api/mlApi';
 import FavoriteButton from '../components/FavoriteButton.vue';
 import {useFavorites} from '../composables/useFavorites';
+import {usePageViews} from '../composables/usePageViews';
 
 const props = defineProps<{user: User | null}>();
 
 const router = useRouter();
 const {getCategories, toggleFavorite, hydrateFromImages} = useFavorites();
+const {recordView} = usePageViews();
 
 const PREFETCH_AHEAD = 3;
 const PREFETCH_WINDOW = 8;
@@ -322,6 +324,8 @@ function onImageAreaClick(event: MouseEvent) {
 		// Snap to exactly 100% (1 image pixel = 1 screen pixel), centered on
 		// the clicked point.
 		setScaleCenteredOn(1, event.clientX, event.clientY);
+		if (props.user && currentItem.value)
+			recordView(currentItem.value.id, 'zoom');
 	} else {
 		resetZoom();
 	}
@@ -518,6 +522,8 @@ function toggleFullscreen() {
 		document.exitFullscreen().catch(() => {});
 	} else {
 		containerEl.value?.requestFullscreen().catch(() => {});
+		if (props.user && currentItem.value)
+			recordView(currentItem.value.id, 'zoom');
 	}
 }
 
