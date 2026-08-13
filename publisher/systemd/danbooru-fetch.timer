@@ -1,8 +1,8 @@
 [Unit]
-Description=Danbooru ML Classifier - Daily fetch timer (15:00 JST)
+Description=Danbooru ML Classifier - Daily fetch timer (12:00 JST)
 
 [Timer]
-OnCalendar=*-*-* 15:00:00 Asia/Tokyo
+OnCalendar=*-*-* 12:00:00 Asia/Tokyo
 Persistent=true
 
 [Install]
