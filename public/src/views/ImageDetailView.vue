@@ -493,7 +493,9 @@ function viewNovel(novelId: string) {
 												{{ novel.status }}
 											</span>
 											<span class="text-xs text-gray-500">
-												{{ novel.mode === 'image' ? 'From Image' : `From ${novel.captionProvider}` }}
+												{{
+													novel.mode === 'image' ? 'From Image' : `From ${novel.captionProvider}`
+												}}
 											</span>
 										</div>
 										<p class="text-sm text-gray-700 line-clamp-2">
@@ -504,9 +506,9 @@ function viewNovel(novelId: string) {
 										>
 											<span>{{ novel.scenes.length }}scenes</span>
 											<span>•</span>
-											<span
-												>{{ new Date(novel.createdAt.seconds * 1000).toLocaleDateString() }}</span
-											>
+											<span>{{
+												new Date(novel.createdAt.seconds * 1000).toLocaleDateString()
+											}}</span>
 											<span v-if="novel.estimatedCost">•</span>
 											<span
 												v-if="novel.estimatedCost"
@@ -614,9 +616,9 @@ function viewNovel(novelId: string) {
 							:key="model"
 							class="flex items-center justify-between"
 						>
-							<span class="font-medium text-gray-700 capitalize"
-								>{{ model }}</span
-							>
+							<span class="font-medium text-gray-700 capitalize">{{
+								model
+							}}</span>
 							<div class="flex items-center gap-2">
 								<span
 									:class="[
@@ -627,7 +629,9 @@ function viewNovel(novelId: string) {
 									{{ image.moderations?.[model]?.result ?? 'N/A' }}
 								</span>
 								<span class="text-sm text-gray-500">
-									{{ getRatingLabel(image.moderations?.[model]?.result ?? null) }}
+									{{
+										getRatingLabel(image.moderations?.[model]?.result ?? null)
+									}}
 								</span>
 							</div>
 						</div>
@@ -649,11 +653,13 @@ function viewNovel(novelId: string) {
 							class="border-b border-gray-200 last:border-0 pb-4 last:pb-0"
 						>
 							<div class="flex items-center justify-between mb-3">
-								<span class="font-medium text-gray-700 capitalize"
-									>{{ model }}</span
-								>
+								<span class="font-medium text-gray-700 capitalize">{{
+									model
+								}}</span>
 								<span class="text-sm text-gray-500">
-									{{ image.ageEstimations?.[model]?.result.characters_detected ?? 0 }}
+									{{
+										image.ageEstimations?.[model]?.result.characters_detected ?? 0
+									}}
 									character(s) detected
 								</span>
 							</div>
@@ -737,11 +743,13 @@ function viewNovel(novelId: string) {
 						class="space-y-3"
 					>
 						<div class="flex items-center justify-between">
-							<span class="font-medium text-gray-700 capitalize"
-								>{{ model }}</span
-							>
+							<span class="font-medium text-gray-700 capitalize">{{
+								model
+							}}</span>
 							<span class="text-xs text-gray-500">
-								{{ image.tags?.[model] ? getFilteredTags(image.tags[model]).length : 0 }}
+								{{
+									image.tags?.[model] ? getFilteredTags(image.tags[model]).length : 0
+								}}
 								tags
 							</span>
 						</div>
@@ -798,7 +806,9 @@ function viewNovel(novelId: string) {
 							</div>
 						</div>
 						<p class="text-xs text-gray-500 mt-1">
-							{{ image.captions?.[model]?.metadata?.repository || 'Unknown model' }}
+							{{
+								image.captions?.[model]?.metadata?.repository || 'Unknown model'
+							}}
 						</p>
 					</div>
 

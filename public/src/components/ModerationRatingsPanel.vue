@@ -19,9 +19,9 @@ const {getRatingColorClass, getRatingLabel} = useScoreDisplay();
 				class="border border-gray-100 rounded-lg p-3"
 			>
 				<div class="flex items-center justify-between mb-2">
-					<span class="font-medium text-gray-700 capitalize text-sm"
-						>{{ model }}</span
-					>
+					<span class="font-medium text-gray-700 capitalize text-sm">{{
+						model
+					}}</span>
 					<span
 						:class="[
 							getRatingColorClass(modData.result),
