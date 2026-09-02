@@ -115,9 +115,9 @@ function openLightbox() {
 				>
 					{{ filename }}
 				</RouterLink>
-				<span class="bg-gray-100 px-2 py-0.5 rounded text-xs"
-					>{{ image.type || 'unknown' }}</span
-				>
+				<span class="bg-gray-100 px-2 py-0.5 rounded text-xs">{{
+					image.type || 'unknown'
+				}}</span>
 			</div>
 
 			<div class="flex gap-1.5 mb-2 flex-wrap">

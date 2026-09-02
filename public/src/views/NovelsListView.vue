@@ -168,7 +168,9 @@ function viewImage(imageId: string) {
 									{{ novel.status }}
 								</span>
 								<span class="text-sm text-gray-500">
-									{{ novel.mode === 'image' ? 'From Image' : `From ${novel.captionProvider}` }}
+									{{
+										novel.mode === 'image' ? 'From Image' : `From ${novel.captionProvider}`
+									}}
 								</span>
 							</div>
 							<button
@@ -184,7 +186,9 @@ function viewImage(imageId: string) {
 						<div class="mb-4">
 							<h3 class="text-lg font-semibold text-gray-900 mb-2">Preview</h3>
 							<p class="text-gray-700 line-clamp-3">
-								{{ novel.scenes?.[0]?.content?.substring(0, 200) || 'Generating...' }}
+								{{
+									novel.scenes?.[0]?.content?.substring(0, 200) || 'Generating...'
+								}}
 								{{ novel.scenes?.[0]?.content ? '...' : '' }}
 							</p>
 						</div>
@@ -216,7 +220,9 @@ function viewImage(imageId: string) {
 								<div>
 									<div class="text-gray-500 text-xs">Cost</div>
 									<div class="font-semibold text-green-600">
-										{{ novel.estimatedCost?.totalCost ? `$${novel.estimatedCost.totalCost.toFixed(4)}` : '-' }}
+										{{
+											novel.estimatedCost?.totalCost ? `$${novel.estimatedCost.totalCost.toFixed(4)}` : '-'
+										}}
 									</div>
 								</div>
 							</div>
@@ -226,7 +232,9 @@ function viewImage(imageId: string) {
 								<div>
 									<div class="text-gray-500 text-xs">Created</div>
 									<div class="font-semibold text-gray-900">
-										{{ novel.createdAt?.seconds ? new Date(novel.createdAt.seconds * 1000).toLocaleDateString() : '-' }}
+										{{
+											novel.createdAt?.seconds ? new Date(novel.createdAt.seconds * 1000).toLocaleDateString() : '-'
+										}}
 									</div>
 								</div>
 							</div>

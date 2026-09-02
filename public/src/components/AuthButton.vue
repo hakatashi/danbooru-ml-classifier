@@ -47,9 +47,9 @@ async function logout() {
 			<div class="animate-pulse bg-gray-200 h-8 w-24 rounded-lg"></div>
 		</template>
 		<template v-else-if="user">
-			<span class="text-sm text-gray-600 hidden sm:inline"
-				>{{ user.email }}</span
-			>
+			<span class="text-sm text-gray-600 hidden sm:inline">{{
+				user.email
+			}}</span>
 			<img
 				v-if="user.photoURL"
 				:src="user.photoURL"
