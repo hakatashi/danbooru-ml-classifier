@@ -11,6 +11,7 @@ import {useFilterSync} from '../composables/useFilterSync';
 import {useGallery} from '../composables/useGallery';
 import {useImages} from '../composables/useImages';
 import type {ImageDocument} from '../types';
+import {useImagePlaceholderFallback} from '../utils/placeholderImage';
 
 const props = defineProps<{
 	user: User | null;
@@ -247,6 +248,7 @@ onMounted(() => {
 								:style="getGalleryImageStyle(image.id, image.height)"
 								loading="lazy"
 								@load="(e) => onImageLoad(e, image.id)"
+								@error="useImagePlaceholderFallback"
 							>
 							<!-- Top-left buttons -->
 							<div
@@ -305,6 +307,7 @@ onMounted(() => {
 							:style="getGalleryImageStyle(image.id, 480)"
 							loading="lazy"
 							@load="(e) => onImageLoad(e, image.id)"
+							@error="useImagePlaceholderFallback"
 						>
 						<!-- Top-left buttons -->
 						<div

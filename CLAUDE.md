@@ -51,6 +51,7 @@ ML inference and image processing functions:
     - `deepdanbooru`: from `feature_importance_deepdanbooru_pixiv_private_elkan_noto_positive.csv`
     - `pixai`: from `feature_importance_pixai_pixiv_private_nnpu_positive.csv`
   - After each run, recomputes the Virgo/Libra ensembles (see `ensembles.py`) for every date touched by that run, and writes deepdanbooru/eva02/pixai feature vectors to the HDF5 feature store (see `feature_store.py`) — both non-fatal (`log.warning` on failure, inference itself is unaffected)
+  - Also tops up `images.features.stored` for the oldest already-inferred images that still lack it (up to `PRUNE_BACKFILL_BATCH_SIZE` per run, default 2000), reusing the extractors this run already loaded — no extra model inference, feature-extraction only. Runs inside this script's existing GPU window rather than a separate timer, so it never races `../HakataMatrix-app-controller-claude`. This is what lets `prune_old_images.py` (below) gradually delete more old images over time without conflicting with the feature-store rollout in `pu-learning/reports/recommendation_improvement_plan.md` section 3.2 — non-fatal, same as the two steps above
 - `ensembles.py` - Rank-average ensembles materialized into `inferences.<key>.score`:
   - `ensemble_virgo_v1` (♍) — rank-average of the 9 `pixiv_private` PU models (3 features × 3 methods); strongest within-page AUC on pages 0-1 (the pages actually browsed day to day)
   - `ensemble_libra_v1` (♎) — rank-average of 5 hand-picked top models across feature types (incl. one twitter-trained model); strongest within-page AUC on deeper pages
@@ -61,6 +62,13 @@ ML inference and image processing functions:
   - `--ids-file PATH` (one MongoDB `_id` per line, e.g. from `pu-learning/scripts/build_impressions.py --dump-ids`) or `--date-from/--date-to`
   - Refuses to start unless `rocm-smi` reports enough free VRAM (`--min-free-vram-mb`, default 4000) — this machine's GPU-exclusive resident app (see `main.py` above) must be stopped first; `--skip-vram-check` bypasses this on non-ROCm hosts
   - `--dry-run` to preview counts before touching the GPU
+- `prune_old_images.py` - Deletes on-disk image files for old, low-ranked images to reclaim disk space, keeping the MongoDB doc (source/metadata, `inferences`, `favorites`, ...) intact:
+  - For each date older than the cutoff (`--older-than-days`, default 30), keeps ~10% of that day's images and deletes the local file for the rest, marking the doc `imageDeleted: true, imageDeletedAt: <date>, localPath: null`
+  - Kept images: favorited images (always), images without `images.features.stored=true` (always — deleting before the feature store has a copy would permanently drop that image from the recommendation-improvement plan's backfill, see `pu-learning/reports/recommendation_improvement_plan.md` section 3.2), and from the remaining quota, a weighted rank-union across the seven named-sort tabs (`public/src/config/namedSorts.ts`) favoring the tabs actually browsed day to day (Gemini ×5, Libra ×3, the rest ×1 each)
+  - Only ever deletes images with `features.stored=true` — this is what keeps it from conflicting with the feature-store backfill rollout; coverage (and therefore how much space this reclaims) grows over time via `main.py`'s incremental top-up (below) and manual `backfill_features.py` sprints
+  - Safe to re-run: already-pruned images (`localPath: null`) are skipped, the keep/delete split is recomputed fresh from current state each run, and a file is never "un-deleted"
+  - `--dry-run` to preview per-date counts; `--date-from/--date-to` to target a specific range instead of `--older-than-days`
+  - Installed as a daily systemd user timer (06:00 JST, after `main.py`'s GPU window) via `bash worker/systemd/install-prune.sh` — no GPU dependency, so unlike inference this is safe as an independent timer
 - `api.py` - Thin REST API server that exposes MongoDB image data to the public website:
   - Serves images sorted by `importantTagProbs` or `inferences` values, filtered by date
   - Deployed at: https://danbooru-api.matrix.hakatashi.com (persisted via systemd user service)
@@ -300,6 +308,18 @@ venv/bin/python backfill_features.py --ids-file /path/to/ids.txt             # e
 venv/bin/python backfill_features.py --date-from 2026-04-10 --date-to 2026-08-03
 ```
 
+**Prune old images** (`prune_old_images.py`): Deletes on-disk files for old, low-ranked images to reclaim disk space (MongoDB metadata is kept). No GPU needed.
+```bash
+cd worker
+venv/bin/python prune_old_images.py --dry-run                                # preview
+venv/bin/python prune_old_images.py                                          # older than 30 days (default)
+venv/bin/python prune_old_images.py --older-than-days 60
+venv/bin/python prune_old_images.py --date-from 2026-01-01 --date-to 2026-03-31
+
+# Install as a daily systemd user timer (06:00 JST)
+bash systemd/install-prune.sh
+```
+
 **API server** (`api.py`): REST API exposing ML scores and tag probabilities to the public website
 ```bash
 cd worker
@@ -534,6 +554,7 @@ Main collection storing image metadata and ML results (mirrors Firestore `images
 - `inferences`: ML model scores keyed by model filename — PU models: `{score: float}`, legacy multiclass: `{not_bookmarked, bookmarked_public, bookmarked_private}`. Also holds the Virgo/Libra ensemble scores under `ensemble_virgo_v1`/`ensemble_libra_v1` (same `{score: float}` shape), written by `worker/ensembles.py`/`compute_ensembles.py`.
 - `views`: `{detailCount, detailLastAt, zoomCount, zoomLastAt, firstViewedAt}` — automatic intermediate-label counters, incremented by `worker/api.py`'s `POST /image-views` when the Daily image Detail page or a zoom/fullscreen viewer is opened. `firstViewedAt` is set once via a MongoDB `$min` update (only writes if absent).
 - `features`: `{stored: bool, shard: "YYYY-MM"}` — pointer into the HDF5 feature store (`worker/feature_store.py`); set once all three feature vectors (deepdanbooru/eva02/pixai) are persisted for that image.
+- `imageDeleted` / `imageDeletedAt`: Set by `worker/prune_old_images.py` when the on-disk file for an old, low-ranked image has been deleted to reclaim disk space; `localPath` is cleared to `null` at the same time, everything else (source/metadata, `inferences`, `favorites`, ...) is left untouched. The public website reads `imageDeleted` to show a placeholder instead of requesting the (now-404) image/thumbnail.
 
 ### `pixivRanking`, `danbooruRanking`, `gelbooruImage`, `sankakuImage`
 Source ranking data from external APIs. Document `_id` = Firestore document ID (string).

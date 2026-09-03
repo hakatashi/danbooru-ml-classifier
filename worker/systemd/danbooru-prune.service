@@ -1,0 +1,12 @@
+[Unit]
+Description=Danbooru ML Classifier - Prune old images
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=REPO_DIR/worker
+EnvironmentFile=-REPO_DIR/worker/.env
+ExecStart=REPO_DIR/worker/venv/bin/python prune_old_images.py
+StandardOutput=journal
+StandardError=journal

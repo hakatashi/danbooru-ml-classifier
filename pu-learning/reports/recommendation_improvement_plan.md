@@ -289,6 +289,7 @@ Mongo の `images` ドキュメントには `features: {stored: true, shard: "20
 2. お気に入り 1,783 件全部（date なしの Twitter 42 件含む）
 3. 直近 90 日の全画像（評価・再スコア用）
 4. 残り全体（バックグラウンドで段階的に）
+5. **ディスク逼迫による古い画像削除の対象**（`worker/prune_old_images.py`、30日超・低ランク画像）— 本来は4に含まれる最低優先度の画像だが、ディスク容量問題（`/mnt/cache2` 88%使用）により早期にバックフィルしないとファイル削除で永久に特徴抽出できなくなる。`prune_old_images.py` は `features.stored=true` の画像しか削除しないため計画とは非衝突だが、現状カバレッジは30日超の画像の3.5%程度（4.7万/135万件、2026-09時点）しかなく、このままでは削除が進まない。最古の日付から`backfill_features.py --date-from/--date-to`で数日〜1週間規模の先行バックフィルスプリントを都度ユーザー確認のうえ実行し、優先度4の消化を前倒しする運用とする。以降は `worker/main.py` が毎日の GPU ウィンドウ内で `PRUNE_BACKFILL_BATCH_SIZE`(既定2000件/日)ずつ最古の未バックフィル画像を段階的に処理し続ける。
 
 `backfill_qdrant.py` / `backfill_multiaxis_qdrant.py` が既に同型の処理をしているので、これを拡張するのが最短。
 

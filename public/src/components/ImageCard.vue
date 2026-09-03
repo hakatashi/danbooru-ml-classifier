@@ -2,6 +2,7 @@
 import {computed, ref} from 'vue';
 import {RouterLink} from 'vue-router';
 import type {ImageDocument} from '../types';
+import {useImagePlaceholderFallback} from '../utils/placeholderImage';
 import FavoriteButton from './FavoriteButton.vue';
 import ImageLightbox from './ImageLightbox.vue';
 import ThinkBlock from './ThinkBlock.vue';
@@ -74,7 +75,7 @@ function openLightbox() {
 				class="max-w-full max-h-full object-contain cursor-pointer hover:opacity-90 transition-opacity"
 				loading="lazy"
 				@click="openLightbox"
-				@error="($event.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 fill=%22%23999%22>Image not found</text></svg>'"
+				@error="useImagePlaceholderFallback"
 			>
 			<!-- Favorite button (top-left) -->
 			<FavoriteButton
@@ -115,9 +116,9 @@ function openLightbox() {
 				>
 					{{ filename }}
 				</RouterLink>
-				<span class="bg-gray-100 px-2 py-0.5 rounded text-xs">{{
-					image.type || 'unknown'
-				}}</span>
+				<span class="bg-gray-100 px-2 py-0.5 rounded text-xs"
+					>{{ image.type || 'unknown' }}</span
+				>
 			</div>
 
 			<div class="flex gap-1.5 mb-2 flex-wrap">

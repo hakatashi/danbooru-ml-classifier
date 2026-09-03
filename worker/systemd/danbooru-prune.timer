@@ -1,0 +1,9 @@
+[Unit]
+Description=Danbooru ML Classifier - Daily prune timer (06:00 JST)
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Tokyo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

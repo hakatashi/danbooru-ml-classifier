@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import {onMounted, onUnmounted, watch} from 'vue';
-import {type ApiImageDocument, getImageUrl} from '../api/mlApi';
+import {type ApiImageDocument, getImageSrc} from '../api/mlApi';
 import {useGallery} from '../composables/useGallery';
 import type {ImageDocument} from '../types';
+import {useImagePlaceholderFallback} from '../utils/placeholderImage';
 
 const props = withDefaults(
 	defineProps<{
@@ -91,11 +92,11 @@ function handleTileClick(image: ApiImageDocument, event: MouseEvent) {
 				@click="handleTileClick(image, $event)"
 			>
 				<img
-					:src="getImageUrl(image, thumbnail)"
+					:src="getImageSrc(image, thumbnail)"
 					:alt="image.id"
 					class="w-full h-full object-cover"
 					loading="lazy"
-					@error="emit('imageError', image)"
+					@error="(e) => { useImagePlaceholderFallback(e); emit('imageError', image); }"
 				>
 				<div
 					v-if="selectable"
@@ -154,13 +155,13 @@ function handleTileClick(image: ApiImageDocument, event: MouseEvent) {
 					@click="handleTileClick(image as unknown as ApiImageDocument, $event)"
 				>
 					<img
-						:src="getImageUrl(image as unknown as ApiImageDocument, thumbnail)"
+						:src="getImageSrc(image as unknown as ApiImageDocument, thumbnail)"
 						:alt="image.id"
 						class="justified-gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 						:style="getGalleryImageStyle(image.id, image.height)"
 						loading="lazy"
 						@load="(e) => onImageLoad(e, image.id)"
-						@error="emit('imageError', image as unknown as ApiImageDocument)"
+						@error="(e) => { useImagePlaceholderFallback(e); emit('imageError', image as unknown as ApiImageDocument); }"
 					>
 					<div
 						v-if="selectable"
@@ -218,13 +219,13 @@ function handleTileClick(image: ApiImageDocument, event: MouseEvent) {
 				@click="handleTileClick(image, $event)"
 			>
 				<img
-					:src="getImageUrl(image, thumbnail)"
+					:src="getImageSrc(image, thumbnail)"
 					:alt="image.id"
 					class="justified-gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 					:style="getGalleryImageStyle(image.id, 320)"
 					loading="lazy"
 					@load="(e) => onImageLoad(e, image.id)"
-					@error="emit('imageError', image)"
+					@error="(e) => { useImagePlaceholderFallback(e); emit('imageError', image); }"
 				>
 				<div class="absolute top-2 left-2 z-10">
 					<slot name="overlay-top-left" :image="image" />

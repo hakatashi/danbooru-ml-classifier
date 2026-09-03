@@ -17,7 +17,7 @@ import {
 	fetchImportantTags,
 	fetchInferenceModels,
 	fetchPostSource,
-	getImageUrl,
+	getImageSrc,
 	type InferenceModel,
 } from '../api/mlApi';
 import DailyCalendar from '../components/DailyCalendar.vue';
@@ -32,6 +32,7 @@ import {
 	NAMED_SORTS,
 } from '../config/namedSorts';
 import type {ImageDocument} from '../types';
+import {useImagePlaceholderFallback} from '../utils/placeholderImage';
 
 const props = defineProps<{user: User | null}>();
 
@@ -322,7 +323,7 @@ function onImageLoad(e: Event, imageId: string) {
 }
 
 function openLightbox(image: ApiImageDocument) {
-	lightboxImage.value = getImageUrl(image, false);
+	lightboxImage.value = getImageSrc(image, false);
 	lightboxAlt.value = image.id;
 	recordView(image.id, 'zoom');
 }
@@ -705,10 +706,11 @@ async function openSource(
 						@click="openLightbox(image)"
 					>
 						<img
-							:src="getImageUrl(image, true)"
+							:src="getImageSrc(image, true)"
 							:alt="image.id"
 							class="w-full h-full object-cover"
 							loading="lazy"
+							@error="useImagePlaceholderFallback"
 						>
 						<div
 							class="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"
@@ -760,12 +762,13 @@ async function openSource(
 							@click="openLightbox(image)"
 						>
 							<img
-								:src="getImageUrl(image, true)"
+								:src="getImageSrc(image, true)"
 								:alt="image.id"
 								class="daily-gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 								:style="getGalleryImageStyle(image.id, image.height)"
 								loading="lazy"
 								@load="(e) => onImageLoad(e, image.id)"
+								@error="useImagePlaceholderFallback"
 							>
 							<div
 								class="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors"
@@ -833,12 +836,13 @@ async function openSource(
 						@click="openLightbox(image)"
 					>
 						<img
-							:src="getImageUrl(image, true)"
+							:src="getImageSrc(image, true)"
 							:alt="image.id"
 							class="daily-gallery-image bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50"
 							:style="getGalleryImageStyle(image.id, 480)"
 							loading="lazy"
 							@load="(e) => onImageLoad(e, image.id)"
+							@error="useImagePlaceholderFallback"
 						>
 						<!-- Top-left buttons -->
 						<div class="absolute top-2 left-2 flex gap-1.5 z-10">

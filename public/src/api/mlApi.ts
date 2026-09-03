@@ -7,6 +7,7 @@ import type {
 	TagData,
 	TwitterSourceData,
 } from '../types';
+import {IMAGE_PLACEHOLDER_DATA_URL} from '../utils/placeholderImage';
 
 const BASE_URL = 'https://danbooru-api.matrix.hakatashi.com';
 
@@ -258,6 +259,10 @@ export interface ApiImageDocument {
 		deepdanbooru?: Record<string, number>;
 		pixai?: Record<string, number>;
 	};
+	// Set once worker/prune_old_images.py has deleted the on-disk file to
+	// reclaim disk space; the MongoDB doc (and localPath-less metadata) is
+	// kept, so the image is still listed but its file (and thumbnail) 404s.
+	imageDeleted?: boolean;
 	// Present only on single-image GET /images/{id}
 	scoreRanks?: Record<string, ScoreRankInfo>;
 }
@@ -432,6 +437,21 @@ export function getImageUrl(
 	}
 	const path = thumbnail ? 'thumbnails/' : 'images/';
 	return `${DMC_IMAGE_BASE_URL}${path}${image.key}`;
+}
+
+/**
+ * getImageUrl() のラッパー。worker/prune_old_images.py が既にファイルを
+ * 削除済み(imageDeleted: true)と分かっている場合は無駄なリクエストを送らず
+ * 直接プレースホルダーを返す。それ以外は `<img @error>` 側のフォールバックで拾う。
+ */
+export function getImageSrc(
+	image: {id: string; key?: string; type?: string; imageDeleted?: boolean},
+	thumbnail = false,
+): string {
+	if (image.imageDeleted) {
+		return IMAGE_PLACEHOLDER_DATA_URL;
+	}
+	return getImageUrl(image, thumbnail);
 }
 
 // ---------------------------------------------------------------------------

@@ -49,6 +49,11 @@ QDRANT_PORT     = int(os.environ.get("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION           = "image_embeddings"
 QDRANT_COLLECTION_MULTIAXIS = "image_embeddings_multiaxis"
 
+# Incremental top-up of images.features.stored for old already-inferred images,
+# run at the end of main() using the extractors this run already loaded (see
+# prune_old_images.py's docstring for why this exists).
+PRUNE_BACKFILL_BATCH_SIZE = int(os.environ.get("PRUNE_BACKFILL_BATCH_SIZE", "2000"))
+
 PIXAI_TAG_CATEGORIES_JSON = PU_DIR / "data" / "metadata" / "pixai_tag_categories.json"
 
 PIXAI_MODEL_DIR   = Path.home() / ".cache" / "pixai-tagger"
@@ -765,6 +770,74 @@ def main():
             compute_and_write_ensembles(db, sorted(touched_dates))
         except Exception as exc:
             log.warning("Ensemble computation failed (non-fatal): %s", exc)
+
+    # Incremental feature-store top-up for old images (oldest un-stored first).
+    # Reuses the extractors already loaded above -- no model inference needed,
+    # these docs already have `inferences` from a previous run. Bounded by
+    # PRUNE_BACKFILL_BATCH_SIZE so it can't blow out this run's time budget,
+    # and runs inside this script's existing GPU window rather than a separate
+    # timer (see CLAUDE.md: no independent GPU timer, to avoid racing
+    # ../HakataMatrix-app-controller-claude). Non-fatal: must not make an
+    # otherwise-successful inference run look failed. This is what lets
+    # prune_old_images.py gradually delete more old images over time without
+    # conflicting with the feature-store rollout in
+    # pu-learning/reports/recommendation_improvement_plan.md section 3.2.
+    try:
+        backfill_docs = list(
+            col.find(
+                {"status": "inferred", "features.stored": {"$ne": True}, "localPath": {"$exists": True}},
+                {"_id": 1, "localPath": 1, "date": 1},
+            )
+            .sort("date", 1)
+            .limit(PRUNE_BACKFILL_BATCH_SIZE)
+        )
+        backfill_processable = [
+            doc for doc in backfill_docs
+            if doc.get("localPath") and Path(doc["localPath"]).exists()
+        ]
+        log.info(
+            "[FeatureStore top-up] %d oldest un-stored docs found, %d on disk",
+            len(backfill_docs), len(backfill_processable),
+        )
+
+        n_topup_written = {"deepdanbooru": 0, "eva02": 0, "pixai": 0}
+        for batch_start in range(0, len(backfill_processable), args.batch_size):
+            batch_docs = backfill_processable[batch_start:batch_start + args.batch_size]
+
+            batch_imgs:  list[Image.Image] = []
+            loaded_docs: list[dict]        = []
+            for doc in batch_docs:
+                try:
+                    img = Image.open(doc["localPath"])
+                    img.load()
+                    batch_imgs.append(img)
+                    loaded_docs.append(doc)
+                except (UnidentifiedImageError, OSError, Exception) as exc:
+                    log.error("[FeatureStore top-up] Cannot open %s: %s", doc["localPath"], exc)
+
+            if not batch_imgs:
+                continue
+
+            X_dd          = dd_extractor.extract_batch(batch_imgs)
+            X_eva, X_pxai = pxai_extractor.extract_batch(batch_imgs)
+            batch_imgs.clear()
+
+            fs_result = write_features(
+                loaded_docs,
+                {"deepdanbooru": X_dd, "eva02": X_eva, "pixai": X_pxai},
+            )
+            for name, cnt in fs_result["written"].items():
+                n_topup_written[name] += cnt
+            if fs_result["complete"]:
+                pointer_ops = [
+                    UpdateOne({"_id": doc_id}, {"$set": {"features": {"stored": True, "shard": month}}})
+                    for doc_id, month in fs_result["complete"].items()
+                ]
+                col.bulk_write(pointer_ops, ordered=False)
+
+        log.info("[FeatureStore top-up] wrote %s", n_topup_written)
+    except Exception as exc:
+        log.warning("[FeatureStore top-up] failed (non-fatal): %s", exc)
 
 
 if __name__ == "__main__":
