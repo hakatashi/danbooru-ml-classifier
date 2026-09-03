@@ -17,9 +17,11 @@ pymongo>=4.6
 # Training (Phase 3+)
 scikit-learn>=1.4
 pulearn>=0.0.7
+lightgbm>=4.7.0  # Stage-2 re-ranker (worker/reranker.py, S4)
 
 # Evaluation
 scipy>=1.11
+qdrant-client>=1.9.0
 
 # Utilities
 tqdm>=4.66

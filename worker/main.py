@@ -28,7 +28,7 @@ from PIL import Image, UnidentifiedImageError
 from pymongo import MongoClient, UpdateOne
 from torchvision import models, transforms
 
-from ensembles import compute_and_write_ensembles
+from ensembles import ENSEMBLES, compute_and_write_ensembles
 from feature_store import write_features
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -770,6 +770,40 @@ def main():
             compute_and_write_ensembles(db, sorted(touched_dates))
         except Exception as exc:
             log.warning("Ensemble computation failed (non-fatal): %s", exc)
+
+        # Re-score the stage-2 re-ranker's Libra top-K pool for the same
+        # dates (S4 -- recommendation_improvement_plan.md Phase B). Depends
+        # on the ensemble scores just written above, so this must run after
+        # them. Skipped gracefully if no model has been trained yet
+        # (pu-learning/scripts/train_reranker.py).
+        try:
+            from bson import ObjectId
+
+            import reranker as _reranker
+
+            reranker_model_path = MODELS_DIR / f"{_reranker.MODEL_KEY}.joblib"
+            reranker_spec_path  = MODELS_DIR / f"{_reranker.MODEL_KEY}_feature_spec.json"
+            if reranker_model_path.exists() and reranker_spec_path.exists():
+                log.info("Scoring re-ranker for %d date(s) ...", len(touched_dates))
+                _reranker_model = joblib.load(reranker_model_path)
+                _reranker_spec  = _reranker.load_feature_spec(reranker_spec_path)
+                for _date in sorted(touched_dates):
+                    _pool_ids = _reranker.stage1_pool_ids(
+                        db, _date, ENSEMBLES, _reranker_spec["candidate_ensemble"], _reranker_spec["candidate_k"]
+                    )
+                    if not _pool_ids:
+                        continue
+                    _pool_docs = _reranker.fetch_pool_docs(db, _pool_ids)
+                    _X = _reranker.build_feature_matrix(_pool_ids, _pool_docs, _date, _reranker_spec)
+                    _scores = _reranker_model.predict_proba(_X)[:, 1]
+                    _ops = [
+                        UpdateOne({"_id": ObjectId(mid)}, {"$set": {f"inferences.{_reranker.MODEL_KEY}.score": float(s)}})
+                        for mid, s in zip(_pool_ids, _scores)
+                    ]
+                    if _ops:
+                        col.bulk_write(_ops, ordered=False)
+        except Exception as exc:
+            log.warning("Re-ranker scoring failed (non-fatal): %s", exc)
 
     # Incremental feature-store top-up for old images (oldest un-stored first).
     # Reuses the extractors already loaded above -- no model inference needed,
