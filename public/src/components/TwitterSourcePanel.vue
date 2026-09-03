@@ -20,9 +20,9 @@ defineProps<{source: TwitterSourceData}>();
 					@{{ source.user.screen_name }}
 					<ExternalLink :size="12" />
 				</a>
-				<span v-if="source.user.name" class="text-gray-600">{{
-					source.user.name
-				}}</span>
+				<span v-if="source.user.name" class="text-gray-600"
+					>{{ source.user.name }}</span
+				>
 			</div>
 			<div
 				v-if="source.text"

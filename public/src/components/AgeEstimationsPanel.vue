@@ -14,9 +14,9 @@ defineProps<{ageEstimations: Record<string, AgeEstimationData>}>();
 				class="border border-gray-100 rounded-lg p-3"
 			>
 				<div class="flex items-center justify-between mb-2">
-					<span class="font-medium text-gray-700 capitalize text-sm">{{
-						model
-					}}</span>
+					<span class="font-medium text-gray-700 capitalize text-sm"
+						>{{ model }}</span
+					>
 					<span class="text-xs text-gray-500">
 						{{ ageData.result.characters_detected }}
 						character(s)
