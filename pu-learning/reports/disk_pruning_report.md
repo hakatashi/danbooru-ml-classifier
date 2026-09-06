@@ -76,6 +76,8 @@ MongoDB更新: `localPath: null, imageDeleted: true, imageDeletedAt: <日時>`�
 ### 5.1 重要な前提: 自動timerが未インストール
 `worker/systemd/danbooru-prune.timer`は**現時点でインストール・有効化されていない**(`systemctl --user is-enabled`で`not-found`)。これまでの削除は全て手動実行。以下の予測はこの状態を前提に2パターン提示する。
 
+**追記(2026-09-07)**: `bash worker/systemd/install-prune.sh`を実行し、`danbooru-prune.timer`をインストール・有効化済み(次回実行: 2026-09-08 06:00 JST)。以降は5.3の「自動timerを稼働させた場合」シナリオ(約6.2年のrunway)が適用される。
+
 ### 5.2 直近30日間の流入実績
 - 平均 **7,774枚/日、19.11GB/日**(平均ファイルサイズ約2.4MB)
 
@@ -90,7 +92,7 @@ MongoDB更新: `localPath: null, imageDeleted: true, imageDeletedAt: <日時>`�
 
 ## 6. 未完了・フォローアップ項目
 
-- `worker/systemd/danbooru-prune.timer` のインストール(上記5.1)
-- `worker/prune_old_images.py` / `CLAUDE.md` へのScorpio保護・重み調整(Gemini 5→4, Aries 1→2)は**未コミット**(作業ツリー上の変更のみ)。コミットする場合は別途指示が必要
+- ~~`worker/systemd/danbooru-prune.timer` のインストール(上記5.1)~~ → **完了(2026-09-07)**。`install-prune.sh`実行によりtimerを有効化済み
+- ~~`worker/prune_old_images.py` / `CLAUDE.md` へのScorpio保護・重み調整(Gemini 5→4, Aries 1→2)は**未コミット**~~ → **完了**。コミット`0486a93`(「Protect Scorpio top pages from pruning and rebalance tab weights」)として反映済み
 - `features.stored`のカバレッジは30日超画像でほぼ100%に到達したが、直近30日以内の新着画像は今後main.pyの段階的トップアップ(`PRUNE_BACKFILL_BATCH_SIZE`既定2000件/日)で追いついていく想定。流入ペース(約7,774件/日)に対してこのバッチサイズで追従できているかは、しばらく運用してから`features.stored`のカバレッジ推移を確認するのが望ましい
 - サムネイル(`matrix-images.hakatashi.com`側)はこのリポジトリの管理外のため、削除後にサムネイルがどう振る舞うかは未検証。Web側のプレースホルダー実装はサムネイル404も想定した設計になっている
