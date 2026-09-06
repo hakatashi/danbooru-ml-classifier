@@ -16,9 +16,16 @@ Kept images are chosen by:
      backfill (see pu-learning/reports/recommendation_improvement_plan.md
      section 3.2) -- this is the rule that keeps this script from
      conflicting with that plan.
-  3. From the remaining quota, a weighted rank-union across the seven named
+  3. Images ranked in the top SCORPIO_PROTECTED_PAGES pages (default 3, i.e.
+     top 150) of the Scorpio tab (inferences.reranker_v1.score, see
+     worker/reranker.py) -- always kept. Scorpio only scores each day's
+     Libra top-500 pool, a small subset of the day, so unlike the other
+     seven named-sort tabs it isn't a good fit for the proportional
+     rank-union below; it's an absolute floor instead, same treatment as
+     favorites.
+  4. From the remaining quota, a weighted rank-union across the seven named
      sort tabs (public/src/config/namedSorts.ts), favoring the tabs actually
-     browsed day to day (Gemini x5, Libra x3, the rest x1 each).
+     browsed day to day (Gemini x4, Libra x3, Aries x2, the rest x1 each).
 
 Only images with status='inferred' and a non-null localPath are eligible for
 deletion; everything else (not yet inferred, already deduped/pruned) is left
@@ -64,17 +71,29 @@ DEFAULT_OLDER_THAN_DAYS = 30
 
 # Weighted rank-union across public/src/config/namedSorts.ts's seven tabs.
 # Gemini and Libra are the tabs actually browsed day to day (see CLAUDE.md /
-# recommendation_improvement_plan.md); the rest get equal, lower weight.
+# recommendation_improvement_plan.md); Aries gets a bump above the other
+# equal-weight tabs (2026-09, user request); the rest get equal, lower weight.
 TAB_WEIGHTS: dict[str, int] = {
-    "eva02_pixiv_private_nnpu_joblib":            5,  # Gemini
+    "eva02_pixiv_private_nnpu_joblib":            4,  # Gemini
     "ensemble_libra_v1":                          3,  # Libra
-    "eva02_twitter_elkan_noto_joblib":            1,  # Aries
+    "eva02_twitter_elkan_noto_joblib":            2,  # Aries
     "deepdanbooru_twitter_biased_svm_joblib":     1,  # Taurus
     "pixai_pixiv_private_elkan_noto_joblib":      1,  # Cancer
     "deepdanbooru_pixiv_private_elkan_noto_joblib": 1,  # Leo
     "ensemble_virgo_v1":                          1,  # Virgo
 }
 TOTAL_WEIGHT = sum(TAB_WEIGHTS.values())
+
+# Scorpio (inferences.reranker_v1.score, see worker/reranker.py) top-K
+# protection -- an absolute floor, not part of TAB_WEIGHTS (see module
+# docstring item 3). PAGE_SIZE duplicates public/src/views/
+# DailyRecommendationView.vue's PAGE_SIZE / pu-learning/scripts/config.py's
+# DAILY_PAGE_SIZE rather than importing across venvs (same convention as
+# worker/feature_store.py's H5FeatureStore).
+SCORPIO_MODEL_KEY       = "reranker_v1"
+SCORPIO_PROTECTED_PAGES = 3
+PAGE_SIZE               = 50
+SCORPIO_PROTECTED_TOP_K = SCORPIO_PROTECTED_PAGES * PAGE_SIZE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +117,17 @@ def process_date(col, date: str, dry_run: bool) -> dict | None:
         log.info("%s: no documents, skipping", date)
         return None
 
+    # Scorpio top-K protection (module docstring item 3): computed over the
+    # day's full population regardless of localPath/favorited/stored status,
+    # since it must match what a user browsing the Scorpio tab would see.
+    scorpio_scored = [
+        (doc["_id"], (doc.get("inferences", {}).get(SCORPIO_MODEL_KEY) or {}).get("score"))
+        for doc in docs
+    ]
+    scorpio_scored = [(id_, score) for id_, score in scorpio_scored if isinstance(score, (int, float))]
+    scorpio_scored.sort(key=lambda t: t[1], reverse=True)
+    scorpio_protected_ids = {id_ for id_, _ in scorpio_scored[:SCORPIO_PROTECTED_TOP_K]}
+
     forced_keep = 0
     eligible: list[dict] = []
     for doc in docs:
@@ -105,7 +135,8 @@ def process_date(col, date: str, dry_run: bool) -> dict | None:
             continue  # already pruned (or never had a file) -- not a candidate
         is_favorited    = bool((doc.get("favorites") or {}).get("isFavorited"))
         features_stored = bool((doc.get("features") or {}).get("stored"))
-        if is_favorited or not features_stored or doc.get("status") != "inferred":
+        is_scorpio_top  = doc["_id"] in scorpio_protected_ids
+        if is_favorited or not features_stored or doc.get("status") != "inferred" or is_scorpio_top:
             forced_keep += 1
             continue
         eligible.append(doc)
