@@ -694,7 +694,9 @@ onMounted(() => {
 											target="_blank"
 											rel="noopener noreferrer"
 											class="text-blue-600 hover:underline"
-											>{{ pixivMeta.pixiv.title }}</a
+											>{{
+												pixivMeta.pixiv.title
+											}}</a
 										>
 									</dd>
 								</div>
@@ -706,7 +708,9 @@ onMounted(() => {
 											target="_blank"
 											rel="noopener noreferrer"
 											class="text-blue-600 hover:underline text-sm"
-											>{{ pixivMeta.pixiv.user_name }}</a
+											>{{
+												pixivMeta.pixiv.user_name
+											}}</a
 										>
 									</dd>
 								</div>
@@ -751,7 +755,9 @@ onMounted(() => {
 											v-for="flag in pixivContentFlags"
 											:key="flag"
 											class="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs"
-											>{{ flag }}</span
+											>{{
+												flag
+											}}</span
 										>
 									</dd>
 								</div>
@@ -762,7 +768,9 @@ onMounted(() => {
 											v-for="tag in pixivMeta.pixiv.tags"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
-											>{{ tag }}</span
+											>{{
+												tag
+											}}</span
 										>
 									</dd>
 								</div>
@@ -784,7 +792,9 @@ onMounted(() => {
 								<div class="flex justify-between">
 									<dt class="text-gray-500">Rating</dt>
 									<dd class="font-medium text-gray-900">
-										{{ danbooruRatingLabels[danbooruMeta.danbooru.rating] ?? danbooruMeta.danbooru.rating }}
+										{{
+											danbooruRatingLabels[danbooruMeta.danbooru.rating] ?? danbooruMeta.danbooru.rating
+										}}
 									</dd>
 								</div>
 								<div class="flex justify-between">
@@ -810,7 +820,9 @@ onMounted(() => {
 											v-for="tag in danbooruMeta.danbooru.tag_string_artist.split(' ').filter(Boolean)"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-orange-50 text-orange-700 rounded text-xs"
-											>{{ tag }}</span
+											>{{
+												tag
+											}}</span
 										>
 									</dd>
 								</div>
@@ -821,7 +833,9 @@ onMounted(() => {
 											v-for="tag in danbooruMeta.danbooru.tag_string_character.split(' ').filter(Boolean)"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
-											>{{ tag }}</span
+											>{{
+												tag
+											}}</span
 										>
 									</dd>
 								</div>
@@ -832,7 +846,9 @@ onMounted(() => {
 											v-for="tag in danbooruMeta.danbooru.tag_string_copyright.split(' ').filter(Boolean)"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
-											>{{ tag }}</span
+											>{{
+												tag
+											}}</span
 										>
 									</dd>
 								</div>
@@ -860,11 +876,13 @@ onMounted(() => {
 											target="_blank"
 											rel="noopener noreferrer"
 											class="text-blue-600 hover:underline text-xs block truncate"
-											>{{ danbooruMeta.danbooru.source }}</a
+											>{{
+												danbooruMeta.danbooru.source
+											}}</a
 										>
-										<span v-else class="text-xs text-gray-700"
-											>{{ danbooruMeta.danbooru.source }}</span
-										>
+										<span v-else class="text-xs text-gray-700">{{
+											danbooruMeta.danbooru.source
+										}}</span>
 									</dd>
 								</div>
 								<div class="flex justify-between pt-1 border-t border-gray-100">
@@ -892,7 +910,9 @@ onMounted(() => {
 								<div class="flex justify-between">
 									<dt class="text-gray-500">Rating</dt>
 									<dd class="font-medium text-gray-900">
-										{{ gelbooruRatingLabels[gelbooruMeta.gelbooru.rating] ?? gelbooruMeta.gelbooru.rating }}
+										{{
+											gelbooruRatingLabels[gelbooruMeta.gelbooru.rating] ?? gelbooruMeta.gelbooru.rating
+										}}
 									</dd>
 								</div>
 								<div class="flex justify-between">
@@ -916,11 +936,13 @@ onMounted(() => {
 											target="_blank"
 											rel="noopener noreferrer"
 											class="text-blue-600 hover:underline text-xs block truncate"
-											>{{ gelbooruMeta.gelbooru.source }}</a
+											>{{
+												gelbooruMeta.gelbooru.source
+											}}</a
 										>
-										<span v-else class="text-xs text-gray-700"
-											>{{ gelbooruMeta.gelbooru.source }}</span
-										>
+										<span v-else class="text-xs text-gray-700">{{
+											gelbooruMeta.gelbooru.source
+										}}</span>
 									</dd>
 								</div>
 								<div class="flex justify-between pt-1 border-t border-gray-100">
@@ -953,7 +975,9 @@ onMounted(() => {
 								<div class="flex justify-between">
 									<dt class="text-gray-500">Rating</dt>
 									<dd class="font-medium text-gray-900">
-										{{ sankakuRatingLabels[sankakuMeta.sankaku.rating] ?? sankakuMeta.sankaku.rating }}
+										{{
+											sankakuRatingLabels[sankakuMeta.sankaku.rating] ?? sankakuMeta.sankaku.rating
+										}}
 									</dd>
 								</div>
 								<div class="flex justify-between">
@@ -975,7 +999,9 @@ onMounted(() => {
 											v-for="tag in sankakuTagsByType.artist"
 											:key="tag.id"
 											class="px-1.5 py-0.5 bg-orange-50 text-orange-700 rounded text-xs"
-											>{{ tag.tagName }}</span
+											>{{
+												tag.tagName
+											}}</span
 										>
 									</dd>
 								</div>
@@ -986,7 +1012,9 @@ onMounted(() => {
 											v-for="tag in sankakuTagsByType.character"
 											:key="tag.id"
 											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
-											>{{ tag.tagName }}</span
+											>{{
+												tag.tagName
+											}}</span
 										>
 									</dd>
 								</div>
@@ -997,7 +1025,9 @@ onMounted(() => {
 											v-for="tag in sankakuTagsByType.copyright"
 											:key="tag.id"
 											class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
-											>{{ tag.tagName }}</span
+											>{{
+												tag.tagName
+											}}</span
 										>
 									</dd>
 								</div>
@@ -1151,7 +1181,9 @@ onMounted(() => {
 								<span
 									class="text-xs text-gray-700 w-32 truncate text-right group-hover:text-indigo-700 transition-colors"
 									:title="tag"
-									>{{ tag }}</span
+									>{{
+										tag
+									}}</span
 								>
 								<span
 									class="text-xs font-mono text-gray-500 w-12 text-right tabular-nums"
@@ -1186,7 +1218,9 @@ onMounted(() => {
 								<span
 									class="text-xs text-gray-700 w-32 truncate text-right group-hover:text-pink-700 transition-colors"
 									:title="tag"
-									>{{ tag }}</span
+									>{{
+										tag
+									}}</span
 								>
 								<span
 									class="text-xs font-mono text-gray-500 w-12 text-right tabular-nums"
@@ -1278,9 +1312,9 @@ onMounted(() => {
 							<div
 								class="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between"
 							>
-								<span class="font-semibold text-gray-900 capitalize text-sm"
-									>{{ model }}</span
-								>
+								<span class="font-semibold text-gray-900 capitalize text-sm">{{
+									model
+								}}</span>
 								<span
 									v-if="image.moderations?.[model]?.result !== undefined"
 									:class="[
