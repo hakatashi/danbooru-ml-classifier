@@ -62,8 +62,8 @@ async function handleClick(event: Event) {
 		@click="handleClick"
 	>
 		<Heart :size="size" :fill="isFavorited ? 'currentColor' : 'none'" />
-		<span v-if="variant === 'inline'"
-			>{{ isFavorited ? 'Favorited' : 'Favorite' }}</span
-		>
+		<span v-if="variant === 'inline'">{{
+			isFavorited ? 'Favorited' : 'Favorite'
+		}}</span>
 	</button>
 </template>
