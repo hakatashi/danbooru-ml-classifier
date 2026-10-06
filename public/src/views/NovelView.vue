@@ -147,7 +147,9 @@ function getModelDisplayName(modelName: string): string {
 							<span class="text-sm text-gray-500">
 								Generated
 								{{
-									novel.mode === 'image' ? 'from image' : `from ${novel.captionProvider} caption`
+									novel.mode === 'image'
+										? 'from image'
+										: `from ${novel.captionProvider} caption`
 								}}
 							</span>
 						</div>

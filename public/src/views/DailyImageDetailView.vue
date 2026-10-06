@@ -793,7 +793,8 @@ onMounted(() => {
 									<dt class="text-gray-500">Rating</dt>
 									<dd class="font-medium text-gray-900">
 										{{
-											danbooruRatingLabels[danbooruMeta.danbooru.rating] ?? danbooruMeta.danbooru.rating
+											danbooruRatingLabels[danbooruMeta.danbooru.rating] ??
+												danbooruMeta.danbooru.rating
 										}}
 									</dd>
 								</div>
@@ -817,7 +818,9 @@ onMounted(() => {
 									<dt class="text-gray-500 text-xs mb-1">Artist</dt>
 									<dd class="flex flex-wrap gap-1">
 										<span
-											v-for="tag in danbooruMeta.danbooru.tag_string_artist.split(' ').filter(Boolean)"
+											v-for="tag in danbooruMeta.danbooru.tag_string_artist
+												.split(' ')
+												.filter(Boolean)"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-orange-50 text-orange-700 rounded text-xs"
 											>{{
@@ -830,7 +833,9 @@ onMounted(() => {
 									<dt class="text-gray-500 text-xs mb-1">Character</dt>
 									<dd class="flex flex-wrap gap-1">
 										<span
-											v-for="tag in danbooruMeta.danbooru.tag_string_character.split(' ').filter(Boolean)"
+											v-for="tag in danbooruMeta.danbooru.tag_string_character
+												.split(' ')
+												.filter(Boolean)"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
 											>{{
@@ -843,7 +848,9 @@ onMounted(() => {
 									<dt class="text-gray-500 text-xs mb-1">Copyright</dt>
 									<dd class="flex flex-wrap gap-1">
 										<span
-											v-for="tag in danbooruMeta.danbooru.tag_string_copyright.split(' ').filter(Boolean)"
+											v-for="tag in danbooruMeta.danbooru.tag_string_copyright
+												.split(' ')
+												.filter(Boolean)"
 											:key="tag"
 											class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
 											>{{
@@ -911,7 +918,8 @@ onMounted(() => {
 									<dt class="text-gray-500">Rating</dt>
 									<dd class="font-medium text-gray-900">
 										{{
-											gelbooruRatingLabels[gelbooruMeta.gelbooru.rating] ?? gelbooruMeta.gelbooru.rating
+											gelbooruRatingLabels[gelbooruMeta.gelbooru.rating] ??
+												gelbooruMeta.gelbooru.rating
 										}}
 									</dd>
 								</div>
@@ -976,7 +984,8 @@ onMounted(() => {
 									<dt class="text-gray-500">Rating</dt>
 									<dd class="font-medium text-gray-900">
 										{{
-											sankakuRatingLabels[sankakuMeta.sankaku.rating] ?? sankakuMeta.sankaku.rating
+											sankakuRatingLabels[sankakuMeta.sankaku.rating] ??
+												sankakuMeta.sankaku.rating
 										}}
 									</dd>
 								</div>

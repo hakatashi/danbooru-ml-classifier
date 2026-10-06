@@ -494,7 +494,9 @@ function viewNovel(novelId: string) {
 											</span>
 											<span class="text-xs text-gray-500">
 												{{
-													novel.mode === 'image' ? 'From Image' : `From ${novel.captionProvider}`
+													novel.mode === 'image'
+														? 'From Image'
+														: `From ${novel.captionProvider}`
 												}}
 											</span>
 										</div>
@@ -507,7 +509,9 @@ function viewNovel(novelId: string) {
 											<span>{{ novel.scenes.length }}scenes</span>
 											<span>•</span>
 											<span>{{
-												new Date(novel.createdAt.seconds * 1000).toLocaleDateString()
+												new Date(
+													novel.createdAt.seconds * 1000,
+												).toLocaleDateString()
 											}}</span>
 											<span v-if="novel.estimatedCost">•</span>
 											<span
@@ -658,7 +662,8 @@ function viewNovel(novelId: string) {
 								}}</span>
 								<span class="text-sm text-gray-500">
 									{{
-										image.ageEstimations?.[model]?.result.characters_detected ?? 0
+										image.ageEstimations?.[model]?.result.characters_detected ??
+											0
 									}}
 									character(s) detected
 								</span>
@@ -669,7 +674,8 @@ function viewNovel(novelId: string) {
 								class="space-y-3"
 							>
 								<div
-									v-for="character in (image.ageEstimations?.[model]?.result?.characters ?? [])"
+									v-for="character in image.ageEstimations?.[model]?.result
+										?.characters ?? []"
 									:key="character.id"
 									class="bg-gray-50 rounded-lg p-3"
 								>
@@ -748,7 +754,9 @@ function viewNovel(novelId: string) {
 							}}</span>
 							<span class="text-xs text-gray-500">
 								{{
-									image.tags?.[model] ? getFilteredTags(image.tags[model]).length : 0
+									image.tags?.[model]
+										? getFilteredTags(image.tags[model]).length
+										: 0
 								}}
 								tags
 							</span>
@@ -825,7 +833,9 @@ function viewNovel(novelId: string) {
 						<div class="mt-3 flex items-center gap-2 flex-wrap">
 							<span class="text-xs text-gray-500">Translate:</span>
 							<a
-								v-for="translator in getTranslateUrls(image.captions?.[model]?.caption || '')"
+								v-for="translator in getTranslateUrls(
+									image.captions?.[model]?.caption || '',
+								)"
 								:key="translator.name"
 								:href="translator.url"
 								target="_blank"
