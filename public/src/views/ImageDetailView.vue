@@ -626,8 +626,10 @@ function viewNovel(novelId: string) {
 							<div class="flex items-center gap-2">
 								<span
 									:class="[
-										getRatingColorClass(image.moderations?.[model]?.result ?? null),
-										'px-3 py-1 rounded-full text-white font-semibold text-sm'
+										getRatingColorClass(
+											image.moderations?.[model]?.result ?? null,
+										),
+										'px-3 py-1 rounded-full text-white font-semibold text-sm',
 									]"
 								>
 									{{ image.moderations?.[model]?.result ?? 'N/A' }}
@@ -644,7 +646,9 @@ function viewNovel(novelId: string) {
 
 				<!-- Age Estimations -->
 				<div
-					v-if="image.ageEstimations && Object.keys(image.ageEstimations).length > 0"
+					v-if="
+						image.ageEstimations && Object.keys(image.ageEstimations).length > 0
+					"
 					class="bg-white rounded-xl shadow-md p-4"
 				>
 					<h2 class="text-lg font-semibold text-gray-900 mb-4">
@@ -663,14 +667,17 @@ function viewNovel(novelId: string) {
 								<span class="text-sm text-gray-500">
 									{{
 										image.ageEstimations?.[model]?.result.characters_detected ??
-											0
+										0
 									}}
 									character(s) detected
 								</span>
 							</div>
 
 							<div
-								v-if="(image.ageEstimations?.[model]?.result.characters.length ?? 0) > 0"
+								v-if="
+									(image.ageEstimations?.[model]?.result.characters.length ??
+										0) > 0
+								"
 								class="space-y-3"
 							>
 								<div
@@ -707,7 +714,7 @@ function viewNovel(novelId: string) {
 										<div class="w-full bg-gray-200 rounded-full h-1.5">
 											<div
 												class="bg-blue-600 h-1.5 rounded-full"
-												:style="{ width: `${character.confidence * 100}%` }"
+												:style="{width: `${character.confidence * 100}%`}"
 											></div>
 										</div>
 									</div>
@@ -778,7 +785,9 @@ function viewNovel(novelId: string) {
 											? 'bg-purple-100 text-purple-800 hover:bg-purple-200'
 											: 'bg-green-100 text-green-800 hover:bg-green-200',
 								]"
-								:title="tag.score ? `Score: ${tag.score.toFixed(3)}` : undefined"
+								:title="
+									tag.score ? `Score: ${tag.score.toFixed(3)}` : undefined
+								"
 							>
 								<span v-if="tag.category === 'character'" class="text-[10px]"
 									>👤</span
@@ -805,8 +814,10 @@ function viewNovel(novelId: string) {
 							<div class="flex items-center gap-2">
 								<span
 									:class="[
-										getRatingColorClass(image.moderations?.[model]?.result ?? null),
-										'px-2 py-0.5 rounded text-white text-xs font-medium'
+										getRatingColorClass(
+											image.moderations?.[model]?.result ?? null,
+										),
+										'px-2 py-0.5 rounded text-white text-xs font-medium',
 									]"
 								>
 									Rating: {{ image.moderations?.[model]?.result ?? 'N/A' }}
@@ -824,7 +835,9 @@ function viewNovel(novelId: string) {
 						<h4 class="text-sm font-medium text-gray-700 mb-2">Caption</h4>
 						<div class="bg-gray-50 rounded-lg p-3 max-h-96 overflow-y-auto">
 							<ThinkBlock
-								:text="image.captions?.[model]?.caption || 'No caption available'"
+								:text="
+									image.captions?.[model]?.caption || 'No caption available'
+								"
 								class="text-sm text-gray-700 leading-relaxed"
 							/>
 						</div>
