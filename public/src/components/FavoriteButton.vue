@@ -57,7 +57,9 @@ async function handleClick(event: Event) {
 							: 'bg-white text-gray-600 border-gray-300 hover:border-red-400 hover:text-red-500',
 					],
 			isSaving && 'opacity-50 cursor-not-allowed',
-			hideWhenUnfavorited && !isFavorited && 'opacity-0 group-hover:opacity-100',
+			hideWhenUnfavorited &&
+				!isFavorited &&
+				'opacity-0 group-hover:opacity-100',
 		]"
 		@click="handleClick"
 	>
