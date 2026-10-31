@@ -27,11 +27,11 @@ function next() {
 			@click="prev"
 			:disabled="!canGoPrev"
 			:class="[
-        'px-6 py-2.5 rounded-lg font-medium transition-all',
-        canGoPrev
-          ? 'bg-white text-gray-700 shadow-md hover:shadow-lg hover:bg-gray-50'
-          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-      ]"
+				'px-6 py-2.5 rounded-lg font-medium transition-all',
+				canGoPrev
+					? 'bg-white text-gray-700 shadow-md hover:shadow-lg hover:bg-gray-50'
+					: 'bg-gray-100 text-gray-400 cursor-not-allowed',
+			]"
 		>
 			<span class="flex items-center gap-2">
 				<svg
@@ -61,11 +61,11 @@ function next() {
 			@click="next"
 			:disabled="!canGoNext"
 			:class="[
-        'px-6 py-2.5 rounded-lg font-medium transition-all',
-        canGoNext
-          ? 'bg-white text-gray-700 shadow-md hover:shadow-lg hover:bg-gray-50'
-          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-      ]"
+				'px-6 py-2.5 rounded-lg font-medium transition-all',
+				canGoNext
+					? 'bg-white text-gray-700 shadow-md hover:shadow-lg hover:bg-gray-50'
+					: 'bg-gray-100 text-gray-400 cursor-not-allowed',
+			]"
 		>
 			<span class="flex items-center gap-2">
 				Next
