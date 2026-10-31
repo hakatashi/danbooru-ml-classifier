@@ -656,7 +656,10 @@ watch(
 					<div
 						v-if="zoomedLayout"
 						class="relative"
-						:style="{width: `${zoomedLayout.contentW}px`, height: `${zoomedLayout.contentH}px`}"
+						:style="{
+							width: `${zoomedLayout.contentW}px`,
+							height: `${zoomedLayout.contentH}px`,
+						}"
 					>
 						<img
 							v-if="displayedItem"
@@ -715,7 +718,13 @@ watch(
 									? 'border-white/20 opacity-60'
 									: 'border-white/40 opacity-90'
 						"
-						:title="offset === 0 ? 'Current' : offset < 0 ? `${-offset} back` : `${offset} ahead`"
+						:title="
+							offset === 0
+								? 'Current'
+								: offset < 0
+									? `${-offset} back`
+									: `${offset} ahead`
+						"
 						@click="moveBy(offset)"
 					>
 						<img

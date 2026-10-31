@@ -663,7 +663,11 @@ function handleImageClick(
 
 			<!-- Loading -->
 			<div
-				v-if="(loading || categorySectionsLoading) && images.length === 0 && categorySections.size === 0"
+				v-if="
+					(loading || categorySectionsLoading) &&
+					images.length === 0 &&
+					categorySections.size === 0
+				"
 				class="flex justify-center items-center py-20"
 			>
 				<div class="flex flex-col items-center gap-4">
