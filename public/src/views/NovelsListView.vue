@@ -190,7 +190,7 @@ function viewImage(imageId: string) {
 							<p class="text-gray-700 line-clamp-3">
 								{{
 									novel.scenes?.[0]?.content?.substring(0, 200) ||
-										'Generating...'
+									'Generating...'
 								}}
 								{{ novel.scenes?.[0]?.content ? '...' : '' }}
 							</p>

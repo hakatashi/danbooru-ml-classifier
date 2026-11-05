@@ -96,13 +96,20 @@ function handleTileClick(image: ApiImageDocument, event: MouseEvent) {
 					:alt="image.id"
 					class="w-full h-full object-cover"
 					loading="lazy"
-					@error="(e) => { useImagePlaceholderFallback(e); emit('imageError', image); }"
+					@error="
+						(e) => {
+							useImagePlaceholderFallback(e);
+							emit('imageError', image);
+						}
+					"
 				>
 				<div
 					v-if="selectable"
 					:class="[
 						'absolute inset-0 transition-colors',
-						isSelected(image.id) ? 'bg-blue-500/30' : 'bg-black/0 group-hover:bg-black/10',
+						isSelected(image.id)
+							? 'bg-blue-500/30'
+							: 'bg-black/0 group-hover:bg-black/10',
 					]"
 				/>
 				<div
@@ -161,13 +168,20 @@ function handleTileClick(image: ApiImageDocument, event: MouseEvent) {
 						:style="getGalleryImageStyle(image.id, image.height)"
 						loading="lazy"
 						@load="(e) => onImageLoad(e, image.id)"
-						@error="(e) => { useImagePlaceholderFallback(e); emit('imageError', image as unknown as ApiImageDocument); }"
+						@error="
+							(e) => {
+								useImagePlaceholderFallback(e);
+								emit('imageError', image as unknown as ApiImageDocument);
+							}
+						"
 					>
 					<div
 						v-if="selectable"
 						:class="[
 							'absolute inset-0 transition-colors',
-							isSelected(image.id) ? 'bg-blue-500/30' : 'bg-black/0 group-hover:bg-black/10',
+							isSelected(image.id)
+								? 'bg-blue-500/30'
+								: 'bg-black/0 group-hover:bg-black/10',
 						]"
 					/>
 					<div
@@ -225,7 +239,12 @@ function handleTileClick(image: ApiImageDocument, event: MouseEvent) {
 					:style="getGalleryImageStyle(image.id, 320)"
 					loading="lazy"
 					@load="(e) => onImageLoad(e, image.id)"
-					@error="(e) => { useImagePlaceholderFallback(e); emit('imageError', image); }"
+					@error="
+						(e) => {
+							useImagePlaceholderFallback(e);
+							emit('imageError', image);
+						}
+					"
 				>
 				<div class="absolute top-2 left-2 z-10">
 					<slot name="overlay-top-left" :image="image" />
