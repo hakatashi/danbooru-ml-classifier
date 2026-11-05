@@ -177,7 +177,11 @@ defineExpose({currentYearMonth});
 							? 'bg-gray-50 text-gray-400 hover:bg-gray-100'
 							: '',
 				]"
-				:style="!isSelected(day) && (counts[formatDate(day)] ?? 0) > 0 ? getCountStyle(day) : undefined"
+				:style="
+					!isSelected(day) && (counts[formatDate(day)] ?? 0) > 0
+						? getCountStyle(day)
+						: undefined
+				"
 				:title="`${formatDate(day)}: ${counts[formatDate(day)] ?? 0} images`"
 			>
 				{{ day }}

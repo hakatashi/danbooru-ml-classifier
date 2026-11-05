@@ -558,11 +558,17 @@ onMounted(() => {
 							/>
 						</div>
 						<div
-							v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru' || sourceUrl"
+							v-if="
+								imageProvider === 'danbooru' ||
+								imageProvider === 'gelbooru' ||
+								sourceUrl
+							"
 							class="mt-2 flex justify-end"
 						>
 							<button
-								v-if="imageProvider === 'danbooru' || imageProvider === 'gelbooru'"
+								v-if="
+									imageProvider === 'danbooru' || imageProvider === 'gelbooru'
+								"
 								type="button"
 								:disabled="sourceLoading"
 								class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait"
@@ -794,7 +800,7 @@ onMounted(() => {
 									<dd class="font-medium text-gray-900">
 										{{
 											danbooruRatingLabels[danbooruMeta.danbooru.rating] ??
-												danbooruMeta.danbooru.rating
+											danbooruMeta.danbooru.rating
 										}}
 									</dd>
 								</div>
@@ -919,7 +925,7 @@ onMounted(() => {
 									<dd class="font-medium text-gray-900">
 										{{
 											gelbooruRatingLabels[gelbooruMeta.gelbooru.rating] ??
-												gelbooruMeta.gelbooru.rating
+											gelbooruMeta.gelbooru.rating
 										}}
 									</dd>
 								</div>
@@ -985,7 +991,7 @@ onMounted(() => {
 									<dd class="font-medium text-gray-900">
 										{{
 											sankakuRatingLabels[sankakuMeta.sankaku.rating] ??
-												sankakuMeta.sankaku.rating
+											sankakuMeta.sankaku.rating
 										}}
 									</dd>
 								</div>
@@ -1083,7 +1089,11 @@ onMounted(() => {
 								:images="currentSimilarImages"
 								:loading="currentSimilarLoading"
 								:error="currentSimilarError"
-								:empty-message="activeSimilarTab === 'overall' ? 'No similar images found. (Qdrant index may not include this image yet.)' : 'No similar images found for this axis.'"
+								:empty-message="
+									activeSimilarTab === 'overall'
+										? 'No similar images found. (Qdrant index may not include this image yet.)'
+										: 'No similar images found for this axis.'
+								"
 								@hover-enter="hoveredSimilar = $event"
 								@hover-leave="hoveredSimilar = null"
 							/>
@@ -1248,7 +1258,9 @@ onMounted(() => {
 
 				<!-- Age Estimations -->
 				<AgeEstimationsPanel
-					v-if="image.ageEstimations && Object.keys(image.ageEstimations).length > 0"
+					v-if="
+						image.ageEstimations && Object.keys(image.ageEstimations).length > 0
+					"
 					:age-estimations="image.ageEstimations"
 				/>
 
@@ -1297,7 +1309,9 @@ onMounted(() => {
 												? 'bg-purple-100 text-purple-800'
 												: 'bg-green-100 text-green-800',
 									]"
-									:title="tag.score ? `Score: ${tag.score.toFixed(3)}` : undefined"
+									:title="
+										tag.score ? `Score: ${tag.score.toFixed(3)}` : undefined
+									"
 								>
 									<span v-if="tag.category === 'character'" class="text-[9px]"
 										>👤</span
