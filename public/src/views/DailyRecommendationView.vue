@@ -790,7 +790,10 @@ async function openSource(
 									Details
 								</RouterLink>
 								<button
-									v-if="getImageProvider(image) === 'danbooru' || getImageProvider(image) === 'gelbooru'"
+									v-if="
+										getImageProvider(image) === 'danbooru' ||
+										getImageProvider(image) === 'gelbooru'
+									"
 									type="button"
 									:disabled="sourceLoadingIds.has(image.id)"
 									class="px-4 py-2 bg-black/20 hover:bg-black/90 text-white text-sm rounded-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
@@ -861,7 +864,10 @@ async function openSource(
 								Details
 							</RouterLink>
 							<button
-								v-if="getImageProvider(image) === 'danbooru' || getImageProvider(image) === 'gelbooru'"
+								v-if="
+									getImageProvider(image) === 'danbooru' ||
+									getImageProvider(image) === 'gelbooru'
+								"
 								type="button"
 								:disabled="sourceLoadingIds.has(image.id)"
 								class="px-2 py-1 bg-black/70 hover:bg-black/90 text-white text-xs rounded-md flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait"
