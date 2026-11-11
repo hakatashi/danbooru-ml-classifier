@@ -80,7 +80,10 @@ function isExpanded(index: number) {
 			<span v-if="part.type === 'text'"
 				>{{ part.content }}
 				<span
-					v-if="i < parsedContent.length - 1 && parsedContent[i + 1]?.type === 'text'"
+					v-if="
+						i < parsedContent.length - 1 &&
+						parsedContent[i + 1]?.type === 'text'
+					"
 				> </span></span
 			>
 			<div v-else class="my-2">
